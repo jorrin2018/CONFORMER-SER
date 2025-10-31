@@ -1,0 +1,113 @@
+# IEMOCAP Audio-Only SER Configuration
+
+# Dataset
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  # Emotion labels (10 categories)
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+    - frustrated
+    - excited
+    - fearful
+    - surprised
+    - disgusted
+    - other
+  # Split estándar para IEMOCAP (solo hay 5 sesiones)
+  train_sessions: [1, 2, 3]      # 3 sesiones para entrenamiento
+  val_sessions: [4]               # 1 sesión para validación
+  test_sessions: [5]              # 1 sesión para test
+  sample_rate: 16000
+
+# Audio preprocessing
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8  # seconds (reduced to save GPU memory)
+  # Waveform augmentation for raw audio (Wav2Vec2/Conformer)
+  apply_waveform_augment: false  # DISABLED for debugging NaN gradients
+  augmentation:
+    apply_time_masking: true
+    apply_freq_masking: false  # Disabled temporarily - can cause numerical instability
+    apply_noise: true
+    apply_speed_perturb: false  # Disabled temporarily for stability
+    apply_pitch_shift: false  # Disabled by default (requires torchaudio >= 0.9.0)
+    time_mask_prob: 0.2  # Reduced for stability
+    time_mask_max: 1600  # ~0.1s at 16kHz - more conservative
+    num_time_masks: 1  # Reduced
+    freq_mask_prob: 0.2  # Add frequency masking probability
+    freq_mask_max: 10   # Add max frequency bands to mask
+    num_freq_masks: 2    # Add number of frequency masks
+    noise_prob: 0.1  # Reduced
+    noise_snr_min: 15.0  # Higher SNR = less noise
+    noise_snr_max: 30.0
+    speed_prob: 0.2
+    speed_range: [0.9, 1.1]  # ±10%
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]  # semitones
+
+# Model architecture (Audio-Only)
+model:
+  model_type: "audio_only"  # Important: specify audio_only
+  audio_encoder: "facebook/wav2vec2-base"  # Smaller model for 8GB GPU
+  num_classes: 10
+  hidden_dim: 256  # Reduced from 512 to save memory
+  dropout: 0.3  # Moderate regularization -> Increased for stability
+  freeze_audio_encoder: True  # Freeze base encoder, unfreeze last N layers for fine-tuning
+  audio_unfreeze_last_n_layers: 0  # Freeze ALL layers initially for stability - unfreeze later
+
+# Training (optimized for 8GB GPU)
+training:
+  batch_size: 4  # Increased for stability
+  num_epochs: 100
+  gradient_accumulation_steps: 4  # Simulates effective batch_size=16
+  mixed_precision: false  # DISABLED - main cause of NaN gradients
+  
+  # Optimizer (different LRs for encoder and classifier if unfreezing)
+  learning_rate_audio: 1.0e-5      # LR for unfrozen wav2vec2 layers (lower for fine-tuning) -> Ultra-conservative
+  learning_rate_classifier: 1.0e-4  # LR for classifier head -> Conservative but not too low
+  weight_decay: 0.01               # Light regularization to start
+  adam_epsilon: 1.0e-7             # Increased for stability in mixed precision
+  max_grad_norm: 0.5                 # More conservative gradient clipping
+  
+  # Loss function
+  loss:
+    type: "cross_entropy"  # Start with simple cross_entropy, can switch to focal later
+    gamma: 2.0  # Focal loss focusing parameter (not used for cross_entropy)
+    label_smoothing: 0.0  # Disabled temporarily for stability
+  
+  # Scheduler
+  warmup_ratio: 0.1  # 10% warmup steps
+  scheduler_type: "cosine"  # Options: linear, cosine
+  
+  # Early stopping
+  early_stopping_patience: 15  # Increased to allow model to generalize better
+  save_top_k: 3
+
+# Evaluation
+evaluation:
+  batch_size: 4  # Reduced from 32 for 8GB GPU
+
+# Logging
+logging:
+  log_dir: "./logs"
+  checkpoint_dir: "./checkpoints"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-audio-only"
+
+# Compute (optimized for 8GB GPU)
+compute:
+  num_workers: 2  # Reduced from 4
+  pin_memory: true
+  device: "cuda"  # cuda or cpu
+
+# Reproducibility
+seed: 42
+

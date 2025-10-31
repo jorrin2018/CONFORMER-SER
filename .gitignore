@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyTorch
+*.pt
+*.pth
+*.ckpt
+
+# Logs and checkpoints
+logs/
+checkpoints/
+runs/
+wandb/
+*.log
+
+# Large checkpoint files (> 100MB)
+*.pt
+*.pth
+!requirements.txt
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# Data
+data/
+datasets/
+*.wav
+*.mp3
+*.flac
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Evaluation results
+evaluation_results/
+results/
+outputs/
+
+# TensorBoard
+events.out.tfevents.*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+script.py
+debug_*.py
+check_*.py
+
