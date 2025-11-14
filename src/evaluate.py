@@ -118,7 +118,8 @@ def create_dataloader(config: dict, split: str):
         sample_rate=config['dataset']['sample_rate'],
         audio_preprocessor=audio_preprocessor,
         text_preprocessor=text_preprocessor,
-        max_audio_length=config['audio']['max_length']
+        max_audio_length=config['audio']['max_length'],
+        training=False  # Use deterministic start for evaluation
     )
     
     # Create dataloader

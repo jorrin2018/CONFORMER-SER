@@ -3,7 +3,7 @@
 # Dataset
 dataset:
   data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
-  # Emotion labels (10 categories)
+  # Emotion labels (7 categories - fearful, surprised, and other removed due to low/imbalanced sample count)
   emotions:
     - angry
     - happy
@@ -11,10 +11,7 @@ dataset:
     - neutral
     - frustrated
     - excited
-    - fearful
-    - surprised
     - disgusted
-    - other
   # Split estándar para IEMOCAP (solo hay 5 sesiones)
   train_sessions: [1, 2, 3]      # 3 sesiones para entrenamiento
   val_sessions: [4]               # 1 sesión para validación
@@ -27,38 +24,40 @@ audio:
   n_fft: 400
   hop_length: 160
   win_length: 400
-  max_length: 8  # seconds (reduced to save GPU memory)
+  max_length: 8  # seconds (reduced from 10 to match working config - prevents instability)
   # Waveform augmentation for raw audio (Wav2Vec2/Conformer)
-  apply_waveform_augment: false  # DISABLED for debugging NaN gradients
+  # Only pure waveform augmentation techniques for Wav2Vec2 compatibility
+  apply_waveform_augment: false    # Disabled initially to prevent collapse (can enable after stable training)
   augmentation:
-    apply_time_masking: true
-    apply_freq_masking: false  # Disabled temporarily - can cause numerical instability
-    apply_noise: true
-    apply_speed_perturb: false  # Disabled temporarily for stability
-    apply_pitch_shift: false  # Disabled by default (requires torchaudio >= 0.9.0)
-    time_mask_prob: 0.2  # Reduced for stability
-    time_mask_max: 1600  # ~0.1s at 16kHz - more conservative
-    num_time_masks: 1  # Reduced
-    freq_mask_prob: 0.2  # Add frequency masking probability
-    freq_mask_max: 10   # Add max frequency bands to mask
-    num_freq_masks: 2    # Add number of frequency masks
-    noise_prob: 0.1  # Reduced
-    noise_snr_min: 15.0  # Higher SNR = less noise
-    noise_snr_max: 30.0
-    speed_prob: 0.2
-    speed_range: [0.9, 1.1]  # ±10%
+    apply_time_masking: true      # Pure waveform - masks time segments
+    apply_freq_masking: false     # DISABLED - requires spectrogram conversion (incompatible with Wav2Vec2)
+    apply_noise: true            # Pure waveform - adds Gaussian noise
+    apply_speed_perturb: true    # Pure waveform - changes speed (pitch + duration)
+    apply_pitch_shift: false     # Disabled by default (requires torchaudio >= 0.9.0)
+    # Time masking parameters (conservative for stability)
+    time_mask_prob: 0.2          # Probability of applying time masking (reduced for stability)
+    time_mask_max: 1600          # Maximum mask length in samples (~0.1s at 16kHz - conservative)
+    num_time_masks: 1           # Number of time masks (reduced for stability)
+    # Noise parameters (conservative)
+    noise_prob: 0.1             # Probability of adding noise (reduced)
+    noise_snr_min: 15.0         # Minimum SNR in dB (higher = less noise)
+    noise_snr_max: 30.0         # Maximum SNR in dB
+    # Speed perturbation parameters
+    speed_prob: 0.15            # Probability of applying speed perturbation (reduced)
+    speed_range: [0.9, 1.1]     # Speed range (±10%)
+    # Pitch shift parameters (disabled)
     pitch_prob: 0.2
-    pitch_range: [-2, 2]  # semitones
+    pitch_range: [-2, 2]        # semitones
 
 # Model architecture (Audio-Only)
 model:
   model_type: "audio_only"  # Important: specify audio_only
   audio_encoder: "facebook/wav2vec2-base"  # Smaller model for 8GB GPU
-  num_classes: 10
+  num_classes: 7  # Updated: fearful, surprised, and other removed
   hidden_dim: 256  # Reduced from 512 to save memory
-  dropout: 0.3  # Moderate regularization -> Increased for stability
-  freeze_audio_encoder: True  # Freeze base encoder, unfreeze last N layers for fine-tuning
-  audio_unfreeze_last_n_layers: 0  # Freeze ALL layers initially for stability - unfreeze later
+  dropout: 0.2  # Increased for better regularization (balanced to prevent collapse)
+  freeze_audio_encoder: False  # Freeze base encoder, unfreeze last N layers for fine-tuning
+  audio_unfreeze_last_n_layers: 8  # Unfreeze last 8 layers for better fine-tuning (prevents collapse)
 
 # Training (optimized for 8GB GPU)
 training:
@@ -68,24 +67,33 @@ training:
   mixed_precision: false  # DISABLED - main cause of NaN gradients
   
   # Optimizer (different LRs for encoder and classifier if unfreezing)
-  learning_rate_audio: 1.0e-5      # LR for unfrozen wav2vec2 layers (lower for fine-tuning) -> Ultra-conservative
-  learning_rate_classifier: 1.0e-4  # LR for classifier head -> Conservative but not too low
-  weight_decay: 0.01               # Light regularization to start
-  adam_epsilon: 1.0e-7             # Increased for stability in mixed precision
-  max_grad_norm: 0.5                 # More conservative gradient clipping
+  learning_rate_audio: 1.0e-6     # Conservative LR for unfrozen wav2vec2 layers (prevents collapse - was too high at 3e-05)
+  learning_rate_classifier: 0.001  # LR for classifier head (standard)
+  weight_decay: 0.01               # Light regularization (prevents collapse - was 0.05)
+  adam_epsilon: 1.0e-7          # Standard epsilon (use decimal format to avoid YAML string parsing)
+  max_grad_norm: 0.5               # Less aggressive gradient clipping (prevents collapse)
   
   # Loss function
   loss:
-    type: "cross_entropy"  # Start with simple cross_entropy, can switch to focal later
+    type: "cross_entropy"  # Start with cross_entropy for stability (prevents collapse - focal can be too aggressive)
     gamma: 2.0  # Focal loss focusing parameter (not used for cross_entropy)
-    label_smoothing: 0.0  # Disabled temporarily for stability
+    label_smoothing: 0.0  # Disabled to prevent collapse (label_smoothing + high dropout causes collapse)
   
   # Scheduler
-  warmup_ratio: 0.1  # 10% warmup steps
-  scheduler_type: "cosine"  # Options: linear, cosine
+  scheduler_type: "cosine"  # Cosine with warmup prevents collapse (better than plateau for early training)
+  warmup_ratio: 0.1  # Warmup prevents early collapse (10% of training steps)
+  # Plateau scheduler parameters (when scheduler_type: "plateau")
+  scheduler_metric: "val_loss"  # Metric to monitor: "val_loss" or "val_unweighted_accuracy"
+  scheduler_mode: "min"  # "min" for val_loss, "max" for accuracy
+  scheduler_factor: 0.5  # Reduce LR by this factor when metric plateaus
+  scheduler_patience: 5  # Number of epochs with no improvement before reducing LR
+  scheduler_threshold: 1e-4  # Minimum change in metric to qualify as an improvement
+  scheduler_min_lr: 1.0e-7  # Minimum learning rate
+  scheduler_cooldown: 2  # Number of epochs to wait before resuming normal operation after LR reduction
+  scheduler_verbose: true  # Print messages when LR is reduced
   
   # Early stopping
-  early_stopping_patience: 15  # Increased to allow model to generalize better
+  early_stopping_patience: 10  # Standard patience (prevents overfitting without being too lenient)
   save_top_k: 3
 
 # Evaluation

@@ -1,0 +1,130 @@
+# Ablation Study 02: LSTM Classification Head
+# Base config from checkpoint 20251029_190659
+# Modifications: Replace classification head with LSTM
+
+# Dataset (inherited from base, but emotions list updated)
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+    - frustrated
+    - excited
+    - disgusted
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+# Audio preprocessing (inherited from base)
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: false
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+# Text preprocessing (inherited from base)
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+
+model:
+  # Keep encoders frozen as base
+  freeze_audio_encoder: true
+  audio_unfreeze_last_n_layers: 0
+  freeze_text_encoder: true
+  text_unfreeze_last_n_layers: 0
+  
+  # Classification head configuration
+  classification_head_type: "lstm"
+  lstm_num_layers: 2
+  lstm_bidirectional: true
+  
+  # Keep other settings from base
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  hidden_dim: 256
+  dropout: 0.3
+  num_classes: 7  # Updated from 10 (removed fearful, surprised, other)
+  fusion_type: "cross_attention"
+
+training:
+  # Keep training settings from base
+  batch_size: 2
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: true
+  learning_rate_audio: 1.0e-6
+  learning_rate_text: 2.0e-6
+  learning_rate_fusion: 5.0e-5
+  weight_decay: 0.1
+  adam_epsilon: 1.0e-8
+  max_grad_norm: 1.0
+  loss:
+    type: "focal"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "cosine"
+  early_stopping_patience: 15
+  save_top_k: 3
+
+dataset:
+  # Updated emotions list (7 classes)
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+    - frustrated
+    - excited
+    - disgusted
+
+# Evaluation (inherited from base)
+evaluation:
+  batch_size: 4
+
+# Compute (inherited from base)
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+# Reproducibility
+seed: 42
+
+logging:
+  # Ablation-specific logging
+  log_dir: "./logs/ablation_02"
+  checkpoint_dir: "./checkpoints/ablation_02"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-02"
+

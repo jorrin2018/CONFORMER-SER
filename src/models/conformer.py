@@ -4,6 +4,7 @@ Conformer-based multimodal model for emotion recognition.
 
 import torch
 import torch.nn as nn
+import math
 from transformers import (
     Wav2Vec2Model,
     Wav2Vec2Config,
@@ -30,6 +31,7 @@ class ConformerMultimodalModel(nn.Module):
         freeze_audio_encoder: bool = False,
         audio_unfreeze_last_n_layers: int = 0,
         freeze_text_encoder: bool = False,
+        text_unfreeze_last_n_layers: int = 0,
         audio_pooling: str = "mean"
     ):
         """
@@ -102,8 +104,27 @@ class ConformerMultimodalModel(nn.Module):
             text_hidden_size = config.hidden_size
         
         if freeze_text_encoder:
+            # Freeze all by default
             for param in self.text_encoder.parameters():
                 param.requires_grad = False
+            # Optionally unfreeze last N transformer layers for fine-tuning
+            if text_unfreeze_last_n_layers and text_unfreeze_last_n_layers > 0:
+                try:
+                    # For DistilBERT/BERT, layers are in transformer.layer or encoder.layer
+                    if hasattr(self.text_encoder, 'transformer') and hasattr(self.text_encoder.transformer, 'layer'):
+                        # DistilBERT structure
+                        encoder_layers = self.text_encoder.transformer.layer
+                        for layer in encoder_layers[-text_unfreeze_last_n_layers:]:
+                            for p in layer.parameters():
+                                p.requires_grad = True
+                    elif hasattr(self.text_encoder, 'encoder') and hasattr(self.text_encoder.encoder, 'layer'):
+                        # BERT structure
+                        encoder_layers = self.text_encoder.encoder.layer
+                        for layer in encoder_layers[-text_unfreeze_last_n_layers:]:
+                            for p in layer.parameters():
+                                p.requires_grad = True
+                except Exception as e:
+                    print(f"Warning: could not unfreeze last {text_unfreeze_last_n_layers} layers of text encoder: {e}")
         
         # Attention pooling for audio (if needed)
         if audio_pooling == "attention":
@@ -334,6 +355,21 @@ class AudioOnlyModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, num_classes)
         )
+        
+        # Initialize classifier head with proper initialization
+        self._initialize_classifier()
+    
+    def _initialize_classifier(self):
+        """Initialize classifier head with proper weights."""
+        for module in self.classifier:
+            if isinstance(module, nn.Linear):
+                # Use Kaiming uniform initialization for better convergence (better for ReLU)
+                nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5))
+                if module.bias is not None:
+                    # Initialize bias to small random values to avoid collapse to single class
+                    fan_in, _ = nn.init._calculate_fan_in_and_fan_out(module.weight)
+                    bound = 1 / math.sqrt(fan_in)
+                    nn.init.uniform_(module.bias, -bound, bound)
     
     def forward(
         self,

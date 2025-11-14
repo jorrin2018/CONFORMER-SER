@@ -128,6 +128,9 @@ def create_loss_function(
     if loss_type == 'cross_entropy':
         if class_weights is not None:
             class_weights = class_weights.to(device)
+        # Apply label smoothing if specified
+        if label_smoothing > 0.0:
+            return nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
         return nn.CrossEntropyLoss(weight=class_weights)
     
     elif loss_type == 'focal':
@@ -145,6 +148,7 @@ def create_loss_function(
     
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")
+
 
 
 

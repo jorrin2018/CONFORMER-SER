@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.amp import autocast
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
 from pathlib import Path
 from tqdm import tqdm
@@ -90,7 +91,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         sample_rate=config['dataset']['sample_rate'],
         audio_preprocessor=audio_preprocessor,
         text_preprocessor=text_preprocessor,
-        max_audio_length=config['audio']['max_length']
+        max_audio_length=config['audio']['max_length'],
+        training=True  # Enable random segment sampling for training
     )
     
     # Create validation preprocessors (eval mode, no augmentation)
@@ -119,7 +121,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         sample_rate=config['dataset']['sample_rate'],
         audio_preprocessor=val_audio_preprocessor,
         text_preprocessor=val_text_preprocessor,
-        max_audio_length=config['audio']['max_length']
+        max_audio_length=config['audio']['max_length'],
+        training=False  # Use deterministic start for validation
     )
     
     # Create test preprocessors (eval mode, no augmentation)
@@ -148,7 +151,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         sample_rate=config['dataset']['sample_rate'],
         audio_preprocessor=test_audio_preprocessor,
         text_preprocessor=test_text_preprocessor,
-        max_audio_length=config['audio']['max_length']
+        max_audio_length=config['audio']['max_length'],
+        training=False  # Use deterministic start for test
     )
     
     # Choose collate function based on model type
@@ -245,20 +249,27 @@ def create_optimizer_and_scheduler(model, config: dict, num_training_steps: int,
                 classifier_params.append(param)
         
         # Use different learning rates if both groups exist, otherwise use single LR
+        # Ensure adam_epsilon is a float (YAML may parse 1e-07 as string)
+        adam_epsilon = float(config['training'].get('adam_epsilon', 1e-8))
+        
+        # Ensure learning rates are floats (YAML may parse 1e-06 as string)
+        lr_audio = float(config['training']['learning_rate_audio'])
+        lr_classifier = float(config['training'].get('learning_rate_classifier', lr_audio))
+        
         if audio_params and classifier_params:
             optimizer = torch.optim.AdamW([
-                {'params': audio_params, 'lr': config['training']['learning_rate_audio']},
-                {'params': classifier_params, 'lr': config['training'].get('learning_rate_classifier', config['training']['learning_rate_audio'])}
+                {'params': audio_params, 'lr': lr_audio},
+                {'params': classifier_params, 'lr': lr_classifier}
             ], weight_decay=config['training']['weight_decay'],
-               eps=config['training']['adam_epsilon'])
+               eps=adam_epsilon)
         else:
             # Single group if only one type of parameters is trainable
             params = [p for p in model.parameters() if p.requires_grad]
             optimizer = torch.optim.AdamW(
                 [{'params': params}],
-                lr=config['training']['learning_rate_audio'],
+                lr=lr_audio,
                 weight_decay=config['training']['weight_decay'],
-                eps=config['training']['adam_epsilon']
+                eps=adam_epsilon
             )
     else:
         # Separate parameters for different learning rates (multimodal)
@@ -277,31 +288,88 @@ def create_optimizer_and_scheduler(model, config: dict, num_training_steps: int,
             else:
                 fusion_params.append(param)
         
+        # Ensure adam_epsilon is a float (YAML may parse 1e-07 as string)
+        adam_epsilon = float(config['training'].get('adam_epsilon', 1e-8))
+        
+        # Ensure learning rates are floats (YAML may parse 1e-06 as string)
+        lr_audio = float(config['training']['learning_rate_audio'])
+        lr_text = float(config['training']['learning_rate_text'])
+        lr_fusion = float(config['training']['learning_rate_fusion'])
+        
         # Create optimizer with parameter groups
         optimizer = torch.optim.AdamW([
-            {'params': audio_params, 'lr': config['training']['learning_rate_audio']},
-            {'params': text_params, 'lr': config['training']['learning_rate_text']},
-            {'params': fusion_params, 'lr': config['training']['learning_rate_fusion']}
+            {'params': audio_params, 'lr': lr_audio},
+            {'params': text_params, 'lr': lr_text},
+            {'params': fusion_params, 'lr': lr_fusion}
         ], weight_decay=config['training']['weight_decay'],
-           eps=config['training']['adam_epsilon'])
+           eps=adam_epsilon)
     
     # Create scheduler
-    num_warmup_steps = int(config['training']['warmup_ratio'] * num_training_steps)
+    scheduler_type = config['training'].get('scheduler_type', 'cosine')
     
-    if config['training']['scheduler_type'] == 'linear':
+    if scheduler_type == 'linear':
         from transformers import get_linear_schedule_with_warmup
+        num_warmup_steps = int(config['training'].get('warmup_ratio', 0.1) * num_training_steps)
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps
         )
-    elif config['training']['scheduler_type'] == 'cosine':
+    elif scheduler_type == 'cosine':
         from transformers import get_cosine_schedule_with_warmup
+        num_warmup_steps = int(config['training'].get('warmup_ratio', 0.1) * num_training_steps)
         scheduler = get_cosine_schedule_with_warmup(
             optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps
         )
+    elif scheduler_type == 'plateau':
+        # ReduceLROnPlateau scheduler - reduces LR based on validation metric
+        
+        scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
+        scheduler_mode = config['training'].get('scheduler_mode', 'min')
+        scheduler_factor = config['training'].get('scheduler_factor', 0.5)
+        scheduler_patience = config['training'].get('scheduler_patience', 5)
+        # Ensure threshold is a float (YAML might parse 1e-5 as string)
+        scheduler_threshold = float(config['training'].get('scheduler_threshold', 1e-4))
+        scheduler_min_lr = config['training'].get('scheduler_min_lr', 1e-7)
+        scheduler_cooldown = config['training'].get('scheduler_cooldown', 2)
+        scheduler_verbose = config['training'].get('scheduler_verbose', True)
+        
+        # For ReduceLROnPlateau with multiple parameter groups, we need to set min_lr for each group
+        # Calculate min_lr for each group based on initial LR
+        min_lr_list = []
+        for param_group in optimizer.param_groups:
+            initial_lr = param_group['lr']
+            # Set min_lr as a fraction of initial LR or absolute minimum
+            # Use 1% of initial LR as minimum, but not less than scheduler_min_lr
+            param_group_min_lr = max(initial_lr * 0.01, scheduler_min_lr)
+            min_lr_list.append(param_group_min_lr)
+        
+        # If all groups have same min_lr, use single value, otherwise use list
+        if len(set(min_lr_list)) == 1:
+            min_lr = min_lr_list[0]
+        else:
+            min_lr = min_lr_list
+        
+        # Create scheduler
+        # Note: verbose parameter is only available in PyTorch 1.4+, so we check dynamically
+        scheduler_params = {
+            'mode': scheduler_mode,
+            'factor': scheduler_factor,
+            'patience': scheduler_patience,
+            'threshold': scheduler_threshold,
+            'min_lr': min_lr,
+            'cooldown': scheduler_cooldown
+        }
+        
+        # Try to add verbose parameter if supported
+        import inspect
+        sig = inspect.signature(ReduceLROnPlateau.__init__)
+        if 'verbose' in sig.parameters:
+            scheduler_params['verbose'] = scheduler_verbose
+        
+        scheduler = ReduceLROnPlateau(optimizer, **scheduler_params)
     else:
         scheduler = None
     
@@ -439,14 +507,28 @@ def train_epoch(
             
             optimizer.step()
         
-        if scheduler is not None:
+        # Step scheduler (only for step-based schedulers, not for plateau)
+        if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
             scheduler.step()
         
         # Update metrics (only if loss is finite)
         loss_value = loss.item()
         if torch.isfinite(loss):
             total_loss += loss_value
+            predictions_np = outputs['predictions'].cpu().numpy()
             metrics_tracker.update(outputs['predictions'], labels)
+            
+            # Debug: Log predictions distribution for first batch of first epoch
+            if batch_idx == 0 and epoch == 1:
+                unique_preds = torch.unique(outputs['predictions']).cpu().numpy()
+                logger.info(f"First training batch - Predictions: {predictions_np[:10]}")
+                logger.info(f"First training batch - Labels: {labels.cpu().numpy()[:10]}")
+                logger.info(f"First training batch - Logits range: [{outputs['logits'].min().item():.4f}, {outputs['logits'].max().item():.4f}]")
+                logger.info(f"First training batch - Logits mean: {outputs['logits'].mean().item():.4f}, std: {outputs['logits'].std().item():.4f}")
+                logger.info(f"First training batch - Unique predictions: {unique_preds}")
+                if len(unique_preds) == 1:
+                    logger.warning(f"[WARNING] Model is predicting only class {unique_preds[0]} for all samples!")
+                    logger.warning(f"   This is a sign of class collapse. Check configuration immediately.")
         
         # Update progress bar
         pbar.set_postfix({'loss': loss_value})
@@ -456,7 +538,8 @@ def train_epoch(
         if batch_idx % config['logging']['log_every_n_steps'] == 0:
             if torch.isfinite(loss) and tb_logger:
                 tb_logger.log_scalar('train/loss_step', loss.item(), global_step)
-            if scheduler is not None and tb_logger:
+            if scheduler is not None and tb_logger and not isinstance(scheduler, ReduceLROnPlateau):
+                # Log LR for step-based schedulers (not plateau)
                 tb_logger.log_scalar('train/lr', scheduler.get_last_lr()[0], global_step)
     
     # Compute epoch metrics
@@ -466,12 +549,41 @@ def train_epoch(
     return avg_loss, metrics
 
 
-def validate(model, val_loader, criterion, device, config, audio_only: bool = False):
+def detect_class_collapse(predictions: np.ndarray, num_classes: int, threshold: float = 0.9) -> tuple:
+    """
+    Detect if model is collapsing to a single class.
+    
+    Args:
+        predictions: Array of predicted class indices
+        num_classes: Total number of classes
+        threshold: Threshold for considering a class as dominant (default: 0.9 = 90%)
+    
+    Returns:
+        (is_collapsed, dominant_class, class_distribution)
+    """
+    unique, counts = np.unique(predictions, return_counts=True)
+    total = len(predictions)
+    
+    # Calculate class distribution
+    class_dist = np.zeros(num_classes)
+    for cls, count in zip(unique, counts):
+        class_dist[cls] = count / total
+    
+    # Check if any class dominates
+    max_freq = class_dist.max()
+    dominant_class = class_dist.argmax()
+    is_collapsed = max_freq >= threshold
+    
+    return is_collapsed, dominant_class, class_dist
+
+
+def validate(model, val_loader, criterion, device, config, logger, audio_only: bool = False):
     """Validate model."""
     model.eval()
     
     metrics_tracker = EmotionMetrics(config['dataset']['emotions'])
     total_loss = 0
+    all_predictions = []
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(val_loader, desc="Validation")):
@@ -495,11 +607,40 @@ def validate(model, val_loader, criterion, device, config, audio_only: bool = Fa
             
             # Update metrics
             total_loss += loss.item()
+            predictions_np = outputs['predictions'].cpu().numpy()
             metrics_tracker.update(outputs['predictions'], labels)
+            all_predictions.extend(predictions_np)
+            
+            # Debug: Log predictions distribution for first batch
+            if batch_idx == 0:
+                unique_preds = torch.unique(outputs['predictions']).cpu().numpy()
+                logger.info(f"First validation batch - Predictions: {predictions_np[:10]}")
+                logger.info(f"First validation batch - Labels: {labels.cpu().numpy()[:10]}")
+                logger.info(f"First validation batch - Logits range: [{outputs['logits'].min().item():.4f}, {outputs['logits'].max().item():.4f}]")
+                logger.info(f"First validation batch - Logits mean: {outputs['logits'].mean().item():.4f}, std: {outputs['logits'].std().item():.4f}")
+                logger.info(f"First validation batch - Unique predictions: {unique_preds}")
+                if len(unique_preds) == 1:
+                    logger.warning(f"WARNING: Model is predicting only class {unique_preds[0]} for all samples!")
     
     # Compute metrics
     avg_loss = total_loss / len(val_loader)
     metrics = metrics_tracker.compute()
+    
+    # Check for class collapse across all validation batches
+    all_predictions = np.array(all_predictions)
+    num_classes = len(config['dataset']['emotions'])
+    is_collapsed, dominant_class, class_dist = detect_class_collapse(all_predictions, num_classes, threshold=0.8)
+    
+    if is_collapsed:
+        emotion_labels = config['dataset']['emotions']
+        dominant_emotion = emotion_labels[dominant_class]
+        logger.error(f"[CLASS COLLAPSE DETECTED] Model is predicting '{dominant_emotion}' (class {dominant_class}) for {class_dist[dominant_class]*100:.1f}% of samples")
+        logger.error(f"   Class distribution: {dict(zip(emotion_labels, [f'{d*100:.1f}%' for d in class_dist]))}")
+        logger.error(f"   This indicates the model has collapsed. VAL UA will be stuck around {1.0/num_classes:.3f}")
+        logger.error(f"   Check: dropout (should be <=0.1), learning_rate_audio (should be <=1e-5), label_smoothing (should be 0.0), weight_decay (should be <=0.01)")
+    else:
+        unique_classes = len(np.unique(all_predictions))
+        logger.info(f"[OK] Model predicts {unique_classes}/{num_classes} classes (healthy diversity)")
     
     return avg_loss, metrics, metrics_tracker
 
@@ -679,7 +820,7 @@ def main():
         # Validate
         if epoch % config['logging']['val_every_n_epochs'] == 0:
             val_loss, val_metrics, val_metrics_tracker = validate(
-                model, val_loader, criterion, device, config, audio_only=audio_only
+                model, val_loader, criterion, device, config, logger, audio_only=audio_only
             )
             
             # Log metrics
@@ -733,6 +874,58 @@ def main():
                 patience_counter += 1
                 logger.info(f"Patience: {patience_counter}/{config['training']['early_stopping_patience']}")
             
+            # Step plateau scheduler based on validation metric (if using plateau scheduler)
+            if scheduler is not None and isinstance(scheduler, ReduceLROnPlateau):
+                scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
+                
+                if scheduler_metric == 'val_loss':
+                    metric_value = val_loss
+                elif scheduler_metric == 'val_unweighted_accuracy':
+                    # For accuracy, we want to maximize, so pass positive value
+                    # The scheduler mode should be 'max' in config
+                    metric_value = val_metrics['unweighted_accuracy']
+                else:
+                    # Fallback to val_loss
+                    metric_value = val_loss
+                
+                # Get LR before scheduler step
+                lr_before = [group['lr'] for group in optimizer.param_groups]
+                
+                # Get scheduler's internal best value (if available)
+                scheduler_best = getattr(scheduler, 'best', None)
+                scheduler_num_bad_epochs = getattr(scheduler, 'num_bad_epochs', None)
+                
+                # Step scheduler with metric
+                scheduler.step(metric_value)
+                
+                # Get LR after scheduler step
+                lr_after = [group['lr'] for group in optimizer.param_groups]
+                
+                # Check if LR was reduced
+                lr_reduced = any(lr_before[i] > lr_after[i] for i in range(len(lr_before)))
+                
+                # Get updated scheduler state after step
+                scheduler_best_after = getattr(scheduler, 'best', None)
+                scheduler_num_bad_epochs_after = getattr(scheduler, 'num_bad_epochs', None)
+                
+                # Log current learning rates after scheduler step
+                logger.info(f"Current learning rates: {lr_after}")
+                if lr_reduced:
+                    logger.info(f"Learning rate reduced! Before: {lr_before}, After: {lr_after}")
+                    logger.info(f"Scheduler metric ({scheduler_metric}): {metric_value:.6f}")
+                else:
+                    # Log scheduler state for debugging
+                    if scheduler_best is not None:
+                        logger.info(f"Scheduler state - Metric: {metric_value:.6f}, Best: {scheduler_best:.6f}, Bad epochs: {scheduler_num_bad_epochs_after}/{scheduler.patience}")
+                    else:
+                        logger.info(f"Scheduler metric ({scheduler_metric}): {metric_value:.6f}")
+                
+                # Log to TensorBoard
+                if tb_logger:
+                    for idx, lr in enumerate(lr_after):
+                        param_group_name = optimizer.param_groups[idx].get('name', f'group_{idx}')
+                        tb_logger.log_scalar(f'train/lr_{param_group_name}', lr, epoch)
+            
             # Early stopping
             if patience_counter >= config['training']['early_stopping_patience']:
                 logger.info("Early stopping triggered!")
@@ -752,7 +945,7 @@ def main():
     # Final evaluation on test set
     logger.info("\nEvaluating on test set...")
     test_loss, test_metrics, test_metrics_tracker = validate(
-        model, test_loader, criterion, device, config, audio_only=audio_only
+        model, test_loader, criterion, device, config, logger, audio_only=audio_only
     )
     
     logger.info(f"Test Loss: {test_loss:.4f}")

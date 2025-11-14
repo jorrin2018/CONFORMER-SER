@@ -3,6 +3,8 @@ Logging utilities for training and evaluation.
 """
 
 import os
+import sys
+import io
 import logging
 import json
 from pathlib import Path
@@ -10,6 +12,7 @@ from datetime import datetime
 from typing import Dict, Optional, Any
 from torch.utils.tensorboard import SummaryWriter
 import torch
+import numpy as np
 
 
 def setup_logger(
@@ -40,8 +43,11 @@ def setup_logger(
     # Remove existing handlers
     logger.handlers = []
     
-    # File handler
-    file_handler = logging.FileHandler(os.path.join(log_dir, log_file))
+    # File handler with UTF-8 encoding for Windows compatibility
+    file_handler = logging.FileHandler(
+        os.path.join(log_dir, log_file),
+        encoding='utf-8'
+    )
     file_handler.setLevel(level)
     file_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -50,9 +56,16 @@ def setup_logger(
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
     
-    # Console handler
-    console_handler = logging.StreamHandler()
+    # Console handler with UTF-8 encoding for Windows compatibility
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
+    # Set encoding for stdout on Windows to handle Unicode characters
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'buffer'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            # Fallback for older Python versions
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     console_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%H:%M:%S'
@@ -135,6 +148,30 @@ class TensorBoardLogger:
         self.writer.close()
 
 
+def convert_to_native_types(obj):
+    """
+    Convert numpy and torch types to native Python types for JSON serialization.
+    
+    Args:
+        obj: Object to convert (dict, list, or scalar)
+        
+    Returns:
+        Object with native Python types
+    """
+    if isinstance(obj, dict):
+        return {key: convert_to_native_types(value) for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_to_native_types(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.floating)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return convert_to_native_types(obj.tolist())
+    elif isinstance(obj, torch.Tensor):
+        return convert_to_native_types(obj.item() if obj.numel() == 1 else obj.tolist())
+    else:
+        return obj
+
+
 class ExperimentTracker:
     """
     Track experiment configurations and results.
@@ -173,7 +210,9 @@ class ExperimentTracker:
         if epoch not in self.metrics:
             self.metrics[epoch] = {}
         
-        self.metrics[epoch].update(metrics)
+        # Convert numpy types to native Python types before storing
+        metrics_native = convert_to_native_types(metrics)
+        self.metrics[epoch].update(metrics_native)
         
         # Save metrics
         metrics_path = self.save_dir / 'metrics.json'
@@ -182,18 +221,22 @@ class ExperimentTracker:
     
     def update_best_metrics(self, metrics: Dict[str, float]):
         """Update best metrics."""
-        self.best_metrics = metrics
+        # Convert numpy types to native Python types
+        self.best_metrics = convert_to_native_types(metrics)
         
         best_path = self.save_dir / 'best_metrics.json'
         with open(best_path, 'w') as f:
-            json.dump(metrics, f, indent=2)
+            json.dump(self.best_metrics, f, indent=2)
     
     def save_checkpoint_info(self, checkpoint_path: str, epoch: int, metrics: Dict[str, float]):
         """Save checkpoint information."""
+        # Convert numpy types to native Python types
+        metrics_native = convert_to_native_types(metrics)
+        
         checkpoint_info = {
             'checkpoint_path': checkpoint_path,
             'epoch': epoch,
-            'metrics': metrics,
+            'metrics': metrics_native,
             'timestamp': datetime.now().isoformat()
         }
         
