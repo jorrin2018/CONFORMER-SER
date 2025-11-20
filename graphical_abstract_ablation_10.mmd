@@ -1,0 +1,108 @@
+```mermaid
+flowchart LR
+    %% Estilo general
+    classDef block fill=#f7f9fc,stroke=#4b6cb7,color=#111,stroke-width=1.2px,rx=4,ry=4;
+    classDef op fill=#ffffff,stroke=#999,color=#111,stroke-width=1px,rx=3,ry=3;
+    classDef data fill=#eef7ff,stroke=#4b6cb7,color=#111,stroke-width=1px,rx=3,ry=3;
+
+    %% ENTRADAS
+    A_IN["Audio waveform
+(B × ~128k samples @16 kHz)"]:::data
+    T_IN["Text + prosody prompt
+`[PROSODY] ... [SPEECH] ...`
+(B × ≤128 tokens)"]:::data
+
+    %% AUDIO ENCODER + POOLING
+    subgraph AUDIO["Audio branch (Wav2Vec2-base)"]
+      A_ENC["Audio encoder
+Wav2Vec2
+Output: H_audio ∈ ℝ^{B×T'×768}"]:::block
+      A_POOL["Mean pooling over time
+h̄_audio ∈ ℝ^{B×768}"]:::op
+    end
+
+    %% TEXT ENCODER
+    subgraph TEXT["Text branch (DistilBERT + prosody prompt)"]
+      T_ENC["Text encoder
+DistilBERT
+Output: H_text ∈ ℝ^{B×L×768}"]:::block
+      T_CLS["CLS extraction
+h_text = H_text[:,0,:]
+∈ ℝ^{B×768}"]:::op
+    end
+
+    %% FUSION: PROYECCIONES + CROSS-ATTENTION
+    subgraph FUSION["Cross-attention fusion (hidden_dim = 256)"]
+      direction TB
+      PROJ["Linear projections
+audio_proj: 768→256
+text_proj: 768→256
+z_audio, z_text ∈ ℝ^{B×256}"]:::block
+
+      ATTN_A["Audio attends to text
+MHA(Q=z_audio, K=V=z_text)
++ residual + LayerNorm
+z*_audio ∈ ℝ^{B×256}"]:::block
+
+      ATTN_T["Text attends to audio
+MHA(Q=z_text, K=V=z_audio)
++ residual + LayerNorm
+z*_text ∈ ℝ^{B×256}"]:::block
+
+      CONCAT["Concat attended reps
+f_concat = [z*_audio; z*_text]
+∈ ℝ^{B×512}"]:::op
+
+      MLP_FUSION["Fusion MLP
+Linear(512→256) → LN → GELU → Drop(0.3)
+Linear(256→256) → LN → GELU → Drop(0.24)
+Linear(256→128) → LN → GELU → Drop(0.18)
+Output: f_fusion ∈ ℝ^{B×128}"]:::block
+    end
+
+    %% LSTM HEAD
+    subgraph HEAD["LSTM classification head"]
+      direction TB
+      SEQ["Add sequence dim
+x_seq = f_fusion.unsqueeze(1)
+∈ ℝ^{B×1×128}"]:::op
+
+      LSTM_BLOCK["BiLSTM
+input_size = 128
+hidden_size = 128
+num_layers = 2
+bidirectional = True
+hidden: h_f, h_b ∈ ℝ^{B×128}"]:::block
+
+      CONCAT_H["Concat forward/backward
+h_concat = [h_f; h_b]
+∈ ℝ^{B×256}"]:::op
+
+      PROJ_HEAD["Projection
+Linear(256→128) → LayerNorm → GELU → Drop(0.3)
+p ∈ ℝ^{B×128}"]:::block
+
+      CLASSIF["Classifier
+Linear(128→4)
+logits y ∈ ℝ^{B×4}"]:::block
+    end
+
+    %% CONEXIONES
+    A_IN --> A_ENC --> A_POOL
+    T_IN --> T_ENC --> T_CLS
+
+    A_POOL --> PROJ
+    T_CLS --> PROJ
+
+    PROJ --> ATTN_A
+    PROJ --> ATTN_T
+
+    ATTN_A --> CONCAT
+    ATTN_T --> CONCAT
+
+    CONCAT --> MLP_FUSION
+    MLP_FUSION --> SEQ
+    SEQ --> LSTM_BLOCK --> CONCAT_H --> PROJ_HEAD --> CLASSIF
+```
+
+

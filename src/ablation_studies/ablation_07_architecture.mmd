@@ -1,0 +1,104 @@
+%% Ablation 07 multimodal architecture (structure overview)
+%% Based on ConformerMultimodalModel + LSTMClassificationHead with extended encoder unfreezing
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Ablation07Model {
+        +Ablation07Model(config)
+        --
+        +audio_unfreeze_last_n_layers = 6
+        +text_unfreeze_last_n_layers = 4
+    }
+
+    class ConformerMultimodalModel {
+        +audio_encoder : Wav2Vec2Model
+        +text_encoder : AutoModel
+        +fusion_type : str
+        +fusion : FusionModule
+        +audio_pooling : {"mean","max","attention"}
+        --
+        +pool_audio_features(...)
+        +forward(audio, text_input_ids, text_attention_mask, labels) : Dict
+    }
+
+    class AudioEncoder {
+        <<pretrained>>
+        +encoder.layers[~N~]
+        +project_hid?
+        +project_q?
+    }
+
+    class TextEncoder {
+        <<pretrained>>
+        +transformer.layer[~N~] / encoder.layer[~N~]
+    }
+
+    class FusionModuleBase {
+        <<abstract>>
+        +audio_proj
+        +text_proj
+        +fusion : MLP
+        +classifier
+    }
+
+    class CrossAttentionFusion {
+        +audio_proj
+        +text_proj
+        +audio_to_text_attn : MultiheadAttention
+        +text_to_audio_attn : MultiheadAttention
+        +audio_norm : LayerNorm
+        +text_norm : LayerNorm
+        +fusion : MLP
+        +classifier
+    }
+
+    class LSTMClassificationHead {
+        +hidden_dim
+        +num_layers = 2
+        +bidirectional = true
+        --
+        +lstm : LSTM
+        +projection : Linear+LayerNorm+GELU
+        +classifier : Linear
+        +forward(fused_features) : logits
+    }
+
+    class ConfigModelSection {
+        +audio_encoder : str
+        +text_encoder : str
+        +num_classes : int
+        +hidden_dim : int
+        +dropout : float
+        +fusion_type : str
+        +freeze_audio_encoder : bool
+        +audio_unfreeze_last_n_layers : int
+        +freeze_text_encoder : bool
+        +text_unfreeze_last_n_layers : int
+        +lstm_num_layers : int
+        +lstm_bidirectional : bool
+    }
+
+    %% Inheritance and composition
+    Ablation07Model --|> ConformerMultimodalModel
+    ConformerMultimodalModel o--> AudioEncoder : audio_encoder
+    ConformerMultimodalModel o--> TextEncoder : text_encoder
+    ConformerMultimodalModel o--> FusionModuleBase : fusion
+    CrossAttentionFusion --|> FusionModuleBase
+    CrossAttentionFusion o--> LSTMClassificationHead : classifier (overridden)
+
+    %% Config drives construction
+    ConfigModelSection ..> Ablation07Model : provides hyperparameters
+
+    %% Specialization notes
+    note for Ablation07Model "Unfreezes middle & high layers:\n- Audio: last 6 encoder layers\n- Text: last 4 encoder layers\nReplaces base MLP head with LSTM head"
+
+    note for AudioEncoder "Backbone: Wav2Vec2 / Conformer\nLayers 0..(N-7) typically frozen\nLayers (N-6)..(N-1) trainable in Ablation 07"
+
+    note for TextEncoder "Backbone: DistilBERT / BERT\nLower layers frozen\nLast 4 transformer layers trainable in Ablation 07"
+
+    note for ConformerMultimodalModel "Forward path:\n1) audio -> audio_encoder -> pool_audio_features\n2) text_input_ids -> text_encoder -> CLS\n3) fusion(audio_pooled, text_cls)\n4) classifier (LSTM head in Ablation 07) -> logits"
+```
+
+

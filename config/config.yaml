@@ -3,15 +3,12 @@
 # Dataset
 dataset:
   data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
-  # Emotion labels (7 categories - fearful, surprised, and other removed due to low/imbalanced sample count)
+  # Emotion labels (4 categories - happy merges happy/excited, others removed)
   emotions:
     - angry
-    - happy
+    - happy        # happy + excited
     - sad
     - neutral
-    - frustrated
-    - excited
-    - disgusted
   # Split estándar para IEMOCAP (solo hay 5 sesiones)
   train_sessions: [1, 2, 3]      # 3 sesiones para entrenamiento
   val_sessions: [4]               # 1 sesión para validación
@@ -70,7 +67,7 @@ model:
   freeze_text_encoder: True   # Keep text encoder frozen
   hidden_dim: 256  # Reduced from 512 to save memory
   dropout: 0.3  # Increased to combat severe overfitting (was 0.2, still showing overfitting)
-  num_classes: 7  # Updated: fearful, surprised, and other removed
+  num_classes: 4  # 4-class setting: angry, happy (happy+excited), sad, neutral
   fusion_type: "cross_attention"  # Options: concat, cross_attention
 
 # Training (optimized for 8GB GPU)

@@ -12,7 +12,7 @@ from transformers import (
     AutoConfig
 )
 from typing import Dict, Optional
-from .fusion import FusionModule, CrossAttentionFusion, GatedFusion
+from .fusion import FusionModule, CrossAttentionFusion, GatedFusion, GIAFusion
 
 
 class ConformerMultimodalModel(nn.Module):
@@ -28,6 +28,7 @@ class ConformerMultimodalModel(nn.Module):
         hidden_dim: int = 512,
         dropout: float = 0.3,
         fusion_type: str = "cross_attention",
+        fusion_num_heads: int = 8,
         freeze_audio_encoder: bool = False,
         audio_unfreeze_last_n_layers: int = 0,
         freeze_text_encoder: bool = False,
@@ -52,6 +53,7 @@ class ConformerMultimodalModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.fusion_type = fusion_type
         self.audio_pooling = audio_pooling
+        self.fusion_num_heads = fusion_num_heads
         
         # Audio encoder (Conformer/Wav2Vec2)
         try:
@@ -148,6 +150,7 @@ class ConformerMultimodalModel(nn.Module):
                 text_dim=text_hidden_size,
                 hidden_dim=hidden_dim,
                 num_classes=num_classes,
+                num_heads=fusion_num_heads,
                 dropout=dropout
             )
         elif fusion_type == "gated":
@@ -156,6 +159,15 @@ class ConformerMultimodalModel(nn.Module):
                 text_dim=text_hidden_size,
                 hidden_dim=hidden_dim,
                 num_classes=num_classes,
+                dropout=dropout
+            )
+        elif fusion_type == "gia":
+            self.fusion = GIAFusion(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                hidden_dim=hidden_dim,
+                num_classes=num_classes,
+                num_heads=fusion_num_heads,
                 dropout=dropout
             )
         else:

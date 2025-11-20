@@ -65,10 +65,13 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         augmentation_config=audio_augment_config
     )
     
+    # Text / prosody configuration
+    text_config = config.get('text', {})
+    use_prosody_cues = text_config.get('use_prosody_cues', False) if not audio_only else False
+
     # Text preprocessor only if not audio-only
     text_preprocessor = None
     if not audio_only:
-        text_config = config.get('text', {})
         apply_text_augment = text_config.get('apply_text_augment', False)
         text_augment_config = text_config.get('augmentation', {})
         
@@ -92,7 +95,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         audio_preprocessor=audio_preprocessor,
         text_preprocessor=text_preprocessor,
         max_audio_length=config['audio']['max_length'],
-        training=True  # Enable random segment sampling for training
+        training=True,  # Enable random segment sampling for training
+        use_prosody_cues=use_prosody_cues
     )
     
     # Create validation preprocessors (eval mode, no augmentation)
@@ -106,7 +110,6 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     
     val_text_preprocessor = None
     if not audio_only:
-        text_config = config.get('text', {})
         val_text_preprocessor = TextPreprocessor(
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
@@ -122,7 +125,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         audio_preprocessor=val_audio_preprocessor,
         text_preprocessor=val_text_preprocessor,
         max_audio_length=config['audio']['max_length'],
-        training=False  # Use deterministic start for validation
+        training=False,  # Use deterministic start for validation
+        use_prosody_cues=use_prosody_cues
     )
     
     # Create test preprocessors (eval mode, no augmentation)
@@ -136,7 +140,6 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     
     test_text_preprocessor = None
     if not audio_only:
-        text_config = config.get('text', {})
         test_text_preprocessor = TextPreprocessor(
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
@@ -152,7 +155,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         audio_preprocessor=test_audio_preprocessor,
         text_preprocessor=test_text_preprocessor,
         max_audio_length=config['audio']['max_length'],
-        training=False  # Use deterministic start for test
+        training=False,  # Use deterministic start for test
+        use_prosody_cues=use_prosody_cues
     )
     
     # Choose collate function based on model type

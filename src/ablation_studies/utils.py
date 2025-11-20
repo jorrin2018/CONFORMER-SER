@@ -16,7 +16,7 @@ def create_ablation_optimizer(
     """
     Create optimizer for ablation studies with appropriate parameter groups.
     
-    For Ablation 01 (unfreeze encoders), creates separate groups for:
+    For Ablation 01, 05, 06, 07, 08 (unfreeze encoders), creates separate groups for:
     - Audio encoder parameters
     - Text encoder parameters  
     - Fusion/classification parameters
@@ -26,7 +26,7 @@ def create_ablation_optimizer(
     Args:
         model: Model instance
         config: Configuration dictionary
-        study_number: Ablation study number (1-4)
+        study_number: Ablation study number (1-8)
         
     Returns:
         Optimizer with appropriate parameter groups
@@ -41,8 +41,9 @@ def create_ablation_optimizer(
     weight_decay = training_config.get('weight_decay', 0.1)
     adam_epsilon = float(training_config.get('adam_epsilon', 1e-8))
     
-    if study_number == 1:
-        # Ablation 01: Separate groups for audio, text, and fusion
+    if study_number in (1, 5, 6, 7, 8, 9, 11, 13, 14, 15, 16):
+        # Ablation 01, 05, 06, 07, 08, 09, 11, 13, 14, 15, 16:
+        # Separate groups for audio, text, and fusion (encoders parcialmente descongelados)
         audio_params = []
         text_params = []
         fusion_params = []

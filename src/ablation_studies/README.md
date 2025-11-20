@@ -1,6 +1,6 @@
 # Estudios de Ablación - Conformer Multimodal SER
 
-Este módulo contiene la implementación de 4 estudios de ablación para evaluar el impacto de diferentes modificaciones arquitectónicas sobre el modelo base de reconocimiento de emociones multimodal.
+Este módulo contiene la implementación de 10 estudios de ablación para evaluar el impacto de diferentes modificaciones arquitectónicas (y de interfaz con el lenguaje) sobre el modelo base de reconocimiento de emociones multimodal.
 
 ## 📋 Descripción General
 
@@ -21,13 +21,25 @@ src/ablation_studies/
 ├── ablation_02_model.py           # Modelo con cabeza LSTM
 ├── ablation_03_model.py           # Modelo con cabeza Transformer
 ├── ablation_04_model.py           # Modelo con cabeza CNN 1D
+├── ablation_05_model.py           # Modelo con encoders descongelados + LSTM head
+├── ablation_06_model.py           # Modelo con encoders descongelados + Transformer head
+├── ablation_07_model.py           # Modelo con capas medias/altas descongeladas + LSTM head
+├── ablation_08_model.py           # Modelo con encoders descongelados + Deep LSTM head
+├── ablation_09_model.py           # Modelo con encoders descongelados + GIA fusion + LSTM head
+├── ablation_10_model.py           # Igual que Ablation 07 pero con prompts internos de prosodia (SpeechCue)
 └── utils.py                       # Utilidades (optimizadores)
 
 config/ablation/
 ├── ablation_01_unfreeze_encoders.yaml
 ├── ablation_02_lstm_head.yaml
 ├── ablation_03_transformer_head.yaml
-└── ablation_04_cnn1d_head.yaml
+├── ablation_04_cnn1d_head.yaml
+├── ablation_05_unfreeze_lstm.yaml
+├── ablation_06_unfreeze_transformer.yaml
+├── ablation_07_unfreeze_mid_high_lstm.yaml
+├── ablation_08_deep_lstm.yaml
+├── ablation_09_gia_lstm.yaml
+└── ablation_10_speechcue_internal.yaml
 ```
 
 ## 🔬 Estudios de Ablación
@@ -122,6 +134,192 @@ config/ablation/
 
 ---
 
+### Ablation 05: Unfreeze Encoders + LSTM Head
+
+**Objetivo**: Evaluar el impacto combinado de descongelar encoders y usar una cabeza LSTM.
+
+**Modificaciones**:
+- Descongela las últimas 4 capas del encoder de audio (Wav2Vec2)
+- Descongela las últimas 2 capas del encoder de texto (DistilBERT)
+- Reemplaza la cabeza de clasificación MLP con una red LSTM bidireccional
+- Combina las modificaciones de Ablation 01 y Ablation 02
+
+**Hipótesis**: La combinación de fine-tuning de encoders y procesamiento secuencial con LSTM puede capturar mejor las características específicas del dominio de emociones.
+
+**Arquitectura**:
+- Encoders con capas superiores descongeladas (como Ablation 01)
+- LSTM bidireccional (2 capas) para clasificación (como Ablation 02)
+- Proyección lineal + LayerNorm + GELU
+- Clasificador final
+
+**Configuración**:
+- `freeze_audio_encoder: false`
+- `audio_unfreeze_last_n_layers: 4`
+- `freeze_text_encoder: false`
+- `text_unfreeze_last_n_layers: 2`
+- `classification_head_type: "lstm"`
+- `lstm_num_layers: 2`
+- `lstm_bidirectional: true`
+- `learning_rate_audio: 5.0e-7`
+- `learning_rate_text: 1.0e-6`
+
+---
+
+### Ablation 06: Unfreeze Encoders + Transformer Head
+
+**Objetivo**: Evaluar el impacto combinado de descongelar encoders y usar una cabeza Transformer.
+
+**Modificaciones**:
+- Descongela las últimas 4 capas del encoder de audio (Wav2Vec2)
+- Descongela las últimas 2 capas del encoder de texto (DistilBERT)
+- Reemplaza la cabeza de clasificación MLP con un pequeño Transformer encoder
+- Combina las modificaciones de Ablation 01 y Ablation 03
+
+**Hipótesis**: La combinación de fine-tuning de encoders y atención multi-cabeza puede identificar mejor las características relevantes para la clasificación de emociones.
+
+**Arquitectura**:
+- Encoders con capas superiores descongeladas (como Ablation 01)
+- Transformer encoder (1 capa, 8 heads) para clasificación (como Ablation 03)
+- MultiheadAttention para pooling
+- MLP con conexión residual
+- Clasificador final
+
+**Configuración**:
+- `freeze_audio_encoder: false`
+- `audio_unfreeze_last_n_layers: 4`
+- `freeze_text_encoder: false`
+- `text_unfreeze_last_n_layers: 2`
+- `classification_head_type: "transformer"`
+- `transformer_num_layers: 1`
+- `transformer_num_heads: 8`
+- `learning_rate_audio: 5.0e-7`
+- `learning_rate_text: 1.0e-6`
+
+---
+
+### Ablation 07: Unfreeze Middle and High Encoder Layers + LSTM Head
+
+**Objetivo**: Evaluar el impacto de descongelar más capas (medias y altas) de los encoders en combinación con la cabeza LSTM.
+
+**Modificaciones**:
+- Descongela las últimas 6 capas del encoder de audio (Wav2Vec2) - capas medias y altas
+- Descongela las últimas 4 capas del encoder de texto (DistilBERT) - capas medias y altas
+- Reemplaza la cabeza de clasificación MLP con una red LSTM bidireccional
+- Similar a Ablation 05, pero con más capas descongeladas
+
+**Hipótesis**: Descongelar más capas (incluyendo medias) puede capturar características más específicas del dominio de emociones, pero requiere learning rates más cuidadosos para evitar overfitting.
+
+**Arquitectura**:
+- Encoders con capas medias y altas descongeladas (más agresivo que Ablation 05)
+- LSTM bidireccional (2 capas) para clasificación (igual que Ablation 05)
+- Proyección lineal + LayerNorm + GELU
+- Clasificador final
+
+**Configuración**:
+- `freeze_audio_encoder: false`
+- `audio_unfreeze_last_n_layers: 6` (vs 4 en Ablation 05)
+- `freeze_text_encoder: false`
+- `text_unfreeze_last_n_layers: 4` (vs 2 en Ablation 05)
+- `classification_head_type: "lstm"`
+- `lstm_num_layers: 2`
+- `lstm_bidirectional: true`
+- `learning_rate_audio: 3.0e-7` (ligeramente más alto que Ablation 05)
+- `learning_rate_text: 1.5e-6` (ligeramente más alto que Ablation 05)
+
+---
+
+### Ablation 08: Unfreeze Encoders + Deep LSTM Head
+
+**Objetivo**: Evaluar el impacto de aumentar la profundidad de la cabeza LSTM en combinación con encoders descongelados.
+
+**Modificaciones**:
+- Descongela las últimas 4 capas del encoder de audio (Wav2Vec2)
+- Descongela las últimas 2 capas del encoder de texto (DistilBERT)
+- Reemplaza la cabeza de clasificación MLP con una red LSTM bidireccional profunda (4 capas)
+- Similar a Ablation 05, pero con LSTM más profunda
+
+**Hipótesis**: Una LSTM más profunda puede capturar dependencias más complejas y jerárquicas en las características fusionadas, mejorando la capacidad de modelado del modelo.
+
+**Arquitectura**:
+- Encoders con capas superiores descongeladas (igual que Ablation 05)
+- LSTM bidireccional profunda (4 capas) para clasificación (vs 2 capas en Ablation 05)
+- Proyección lineal + LayerNorm + GELU
+- Clasificador final
+
+**Configuración**:
+- `freeze_audio_encoder: false`
+- `audio_unfreeze_last_n_layers: 4`
+- `freeze_text_encoder: false`
+- `text_unfreeze_last_n_layers: 2`
+- `classification_head_type: "lstm"`
+- `lstm_num_layers: 4` (vs 2 en Ablation 05)
+- `lstm_bidirectional: true`
+- `learning_rate_audio: 5.0e-7`
+- `learning_rate_text: 1.0e-6`
+- `learning_rate_fusion: 5.0e-5`
+
+---
+
+### Ablation 09: Unfreeze Encoders + GIA Fusion + LSTM Head
+
+**Objetivo**: Evaluar el impacto de incorporar el bloque GIA (Gated Interaction Attention) en la capa de fusión, combinándolo con encoders parcialmente descongelados y una cabeza LSTM.
+
+**Modificaciones**:
+- Descongela las últimas 4 capas del encoder de audio (Wav2Vec2) y las últimas 2 capas del encoder de texto (DistilBERT), igual que Ablation 05.
+- Sustituye la fusión por Cross-Attention por una fusión **GIA**:
+  - Cross-attention bidireccional entre audio y texto.
+  - Puertas por modalidad que deciden cuánto mezclar la información propia con la del otro modo.
+- Mantiene la cabeza de clasificación LSTM bidireccional (2 capas).
+
+**Hipótesis**: La combinación de fine-tuning de encoders, procesamiento secuencial con LSTM y una fusión más expresiva (GIA) permite modelar mejor las interacciones entre modalidades, capturando dependencias multimodales más ricas que la simple cross-attention.
+
+**Arquitectura**:
+- Encoders con capas superiores descongeladas (como Ablation 05).
+- Bloque de fusión GIA (cross-attention bidireccional + gates).
+- LSTM bidireccional (2 capas) + proyección lineal + LayerNorm + GELU.
+- Clasificador final.
+
+**Configuración**:
+- `freeze_audio_encoder: false`
+- `audio_unfreeze_last_n_layers: 4`
+- `freeze_text_encoder: false`
+- `text_unfreeze_last_n_layers: 2`
+- `classification_head_type: "lstm"`
+- `lstm_num_layers: 2`
+- `lstm_bidirectional: true`
+- `fusion_type: "gia"`
+- `learning_rate_audio: 5.0e-7`
+- `learning_rate_text: 1.0e-6`
+- `learning_rate_fusion: 5.0e-5`
+
+---
+
+### Ablation 10: Unfreeze Middle/High Layers + LSTM Head + Internal SpeechCue Prompts
+
+**Objetivo**: Evaluar si inyectar descripciones prosódicas en lenguaje natural (tipo SpeechCueLLM) mejora el rendimiento sobre Ablation 07.
+
+**Modificaciones**:
+- Mantiene la arquitectura de Ablation 07:
+  - Encoders parcialmente descongelados (últimas 6 capas de audio, últimas 4 de texto).
+  - Cabeza de clasificación LSTM bidireccional (2 capas).
+- Añade un módulo de prosodia interna que, a partir del waveform, genera descripciones textuales como:
+  - `"overall energy is high, variability is medium, speaking rate is fast"`.
+- El texto de entrada al encoder de texto se convierte en:
+  - `[PROSODY] <descripción prosódica>. [SPEECH] <transcript original>`.
+
+**Hipótesis**: Traducir características de audio (energía, variabilidad, ritmo) a “pistas” lingüísticas ayuda al encoder de texto (DistilBERT) a razonar mejor sobre el estado emocional, actuando como un adaptador tipo SpeechCueLLM pero interno al modelo.
+
+**Arquitectura**:
+- Igual que Ablation 07 en términos de encoders, fusión y cabeza LSTM.
+- El cambio está en el pipeline de datos:
+  - `IEMOCAPDataset` usa `ProsodyCueExtractor` cuando `use_prosody_cues: true` en la sección `text` de la configuración.
+
+**Configuración**:
+- Igual que Ablation 07, más:
+  - `text.use_prosody_cues: true`
+
+---
+
 ## 🚀 Uso
 
 ### Ejecutar Todos los Estudios
@@ -144,6 +342,24 @@ python scripts/run_ablation.py --study 3
 
 # Estudio 04: CNN 1D head
 python scripts/run_ablation.py --study 4
+
+# Estudio 05: Unfreeze encoders + LSTM head
+python scripts/run_ablation.py --study 5
+
+# Estudio 06: Unfreeze encoders + Transformer head
+python scripts/run_ablation.py --study 6
+
+# Estudio 07: Unfreeze middle/high encoder layers + LSTM head
+python scripts/run_ablation.py --study 7
+
+# Estudio 08: Unfreeze encoders + Deep LSTM head
+python scripts/run_ablation.py --study 8
+
+# Estudio 09: Unfreeze encoders + GIA fusion + LSTM head
+python scripts/run_ablation.py --study 9
+
+# Estudio 10: Unfreeze middle/high layers + LSTM head + Internal SpeechCue prompts
+python scripts/run_ablation.py --study 10
 ```
 
 ### Opciones Adicionales
@@ -278,7 +494,11 @@ from src.ablation_studies import (
     Ablation01Model,
     Ablation02Model,
     Ablation03Model,
-    Ablation04Model
+    Ablation04Model,
+    Ablation05Model,
+    Ablation06Model,
+    Ablation07Model,
+    Ablation08Model
 )
 
 # Cargar configuración
@@ -299,10 +519,14 @@ model = Ablation01Model(config)
 ```python
 from src.ablation_studies import create_ablation_optimizer
 
-# Para Ablation 01: grupos separados (audio, text, fusion)
+# Para Ablation 01, 05, 06, 07, 08: grupos separados (audio, text, fusion) - encoders descongelados
 optimizer = create_ablation_optimizer(model, config, study_number=1)
+optimizer = create_ablation_optimizer(model, config, study_number=5)
+optimizer = create_ablation_optimizer(model, config, study_number=6)
+optimizer = create_ablation_optimizer(model, config, study_number=7)
+optimizer = create_ablation_optimizer(model, config, study_number=8)
 
-# Para otros estudios: agrupación estándar
+# Para otros estudios (02, 03, 04): agrupación estándar - encoders congelados
 optimizer = create_ablation_optimizer(model, config, study_number=2)
 ```
 
@@ -312,7 +536,7 @@ optimizer = create_ablation_optimizer(model, config, study_number=2)
 
 2. **Dataset**: Los estudios usan 7 clases de emociones (se eliminaron fearful, surprised, other por bajo número de muestras).
 
-3. **Encoders**: Por defecto, los encoders están congelados excepto en Ablation 01.
+3. **Encoders**: Por defecto, los encoders están congelados excepto en Ablation 01, 05, y 06.
 
 4. **Learning Rates**: Se usan learning rates conservadores, especialmente para encoders descongelados.
 
@@ -356,5 +580,7 @@ Para agregar nuevos estudios de ablación:
 
 ---
 
-**Última actualización**: 2025-01-29
+**Última actualización**: 2025-11-17
+
+**Estudios disponibles**: 10 (01-10)
 

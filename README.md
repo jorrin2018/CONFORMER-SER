@@ -28,7 +28,11 @@ CONFORMER-SER/
 │       ├── ablation_01_unfreeze_encoders.yaml
 │       ├── ablation_02_lstm_head.yaml
 │       ├── ablation_03_transformer_head.yaml
-│       └── ablation_04_cnn1d_head.yaml
+│       ├── ablation_04_cnn1d_head.yaml
+│       ├── ablation_05_unfreeze_lstm.yaml
+│       ├── ablation_06_unfreeze_transformer.yaml
+│       ├── ablation_07_unfreeze_mid_high_lstm.yaml
+│       └── ablation_08_deep_lstm.yaml
 ├── src/
 │   ├── data/
 │   │   ├── dataset.py                 # IEMOCAP dataset implementation
@@ -45,6 +49,10 @@ CONFORMER-SER/
 │   │   ├── ablation_02_model.py       # LSTM head model
 │   │   ├── ablation_03_model.py       # Transformer head model
 │   │   ├── ablation_04_model.py       # CNN 1D head model
+│   │   ├── ablation_05_model.py       # Unfreeze encoders + LSTM head
+│   │   ├── ablation_06_model.py       # Unfreeze encoders + Transformer head
+│   │   ├── ablation_07_model.py       # Unfreeze mid/high layers + LSTM head
+│   │   ├── ablation_08_model.py       # Unfreeze encoders + Deep LSTM head
 │   │   ├── utils.py                   # Ablation utilities
 │   │   └── README.md                  # Ablation studies documentation
 │   ├── utils/
@@ -144,7 +152,7 @@ val_sessions: [4]
 test_sessions: [5]
 
 # Model
-fusion_type: "cross_attention"  # Options: concat, cross_attention, gated
+fusion_type: "cross_attention"  # Options: concat, cross_attention, gated, gia
 freeze_audio_encoder: true       # Freeze base, unfreeze last N layers
 audio_unfreeze_last_n_layers: 8
 freeze_text_encoder: true
@@ -209,6 +217,18 @@ python scripts/run_ablation.py --study 3
 
 # Study 04: CNN 1D classification head
 python scripts/run_ablation.py --study 4
+
+# Study 05: Unfreeze encoders + LSTM head
+python scripts/run_ablation.py --study 5
+
+# Study 06: Unfreeze encoders + Transformer head
+python scripts/run_ablation.py --study 6
+
+# Study 07: Unfreeze middle/high encoder layers + LSTM head
+python scripts/run_ablation.py --study 7
+
+# Study 08: Unfreeze encoders + Deep LSTM head
+python scripts/run_ablation.py --study 8
 ```
 
 For detailed information about ablation studies, see [`src/ablation_studies/README.md`](src/ablation_studies/README.md).
@@ -257,6 +277,7 @@ Three fusion strategies available:
 1. **Concatenation** (default): Simple concatenation + MLP
 2. **Cross-Attention**: Bidirectional cross-attention between modalities
 3. **Gated Fusion**: Learnable gating to weight each modality
+4. **GIA Fusion (Gated Interaction Attention)**: Bidirectional cross-attention followed by modality-specific gates that control how much cross-modal information is injected into each stream, inspired by the GIA block in the architecture figure.
 
 ### Classification Head
 - **Base Model**: Multi-layer perceptron with dropout

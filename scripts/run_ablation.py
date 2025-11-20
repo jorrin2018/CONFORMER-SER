@@ -16,6 +16,7 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 from datetime import datetime
+import copy
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +28,14 @@ from src.ablation_studies import (
     Ablation02Model,
     Ablation03Model,
     Ablation04Model,
+    Ablation05Model,
+    Ablation06Model,
+    Ablation07Model,
+    Ablation08Model,
+    Ablation09Model,
+    Ablation10Model,
+    Ablation11Model,
+    Ablation13Model,
     create_ablation_optimizer
 )
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
@@ -52,8 +61,8 @@ def load_ablation_config(config_path: str, base_config: dict) -> dict:
     Returns:
         Merged configuration dictionary
     """
-    # Load ablation config
-    with open(config_path, 'r') as f:
+    # Load ablation config (force UTF-8 to avoid Windows cp1252 issues)
+    with open(config_path, 'r', encoding='utf-8') as f:
         ablation_config = yaml.safe_load(f)
     
     # Deep merge: ablation config overrides base config
@@ -74,7 +83,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     Create model for specific ablation study.
     
     Args:
-        study_number: Ablation study number (1-4)
+        study_number: Ablation study number (1-9)
         config: Configuration dictionary
         device: Device to use
         logger: Logger instance
@@ -90,8 +99,31 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation03Model(config)
     elif study_number == 4:
         model = Ablation04Model(config)
+    elif study_number == 5:
+        model = Ablation05Model(config)
+    elif study_number == 6:
+        model = Ablation06Model(config)
+    elif study_number == 7:
+        model = Ablation07Model(config)
+    elif study_number == 8:
+        model = Ablation08Model(config)
+    elif study_number == 9:
+        model = Ablation09Model(config)
+    elif study_number == 10:
+        model = Ablation10Model(config)
+    elif study_number == 11:
+        model = Ablation11Model(config)
+    elif study_number == 12:
+        # Ablation 12 reuses the Ablation 10 architecture (SpeechCue-style prompts)
+        model = Ablation10Model(config)
+    elif study_number == 13:
+        # Ablation 13: Ablation 11 + SpeechCue + ViT parcialmente descongelado
+        model = Ablation13Model(config)
+    elif study_number in (14, 15, 16):
+        # Ablation 14 (13a), 15 (13b), 16 (13c): Variantes de Ablation 13
+        model = Ablation13Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-4.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-16.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -99,31 +131,16 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     return model
 
 
-def run_ablation_study(
+def _run_ablation_with_config(
     study_number: int,
-    config_path: str,
-    device: str = 'cuda',
-    experiment_name: str = None
+    config: dict,
+    device: str,
+    experiment_name: str
 ):
     """
-    Run a single ablation study.
-    
-    Args:
-        study_number: Ablation study number (1-4)
-        config_path: Path to ablation config YAML
-        device: Device to use
-        experiment_name: Optional experiment name
+    Core training/evaluation loop shared by standard and LOSO ablations.
+    Returns a small dict with key metrics for aggregation.
     """
-    print(f"\n{'='*60}")
-    print(f"Starting Ablation Study {study_number}")
-    print(f"{'='*60}\n")
-    
-    # Load base config
-    base_config = load_base_config()
-    
-    # Load and merge ablation config
-    config = load_ablation_config(config_path, base_config)
-    
     # Override device if specified
     config['compute']['device'] = device
     device = config['compute']['device']
@@ -136,11 +153,6 @@ def run_ablation_study(
     np.random.seed(config['seed'])
     if device == 'cuda':
         torch.cuda.manual_seed(config['seed'])
-    
-    # Generate experiment name if not provided
-    if experiment_name is None:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        experiment_name = f"ablation_{study_number:02d}_{timestamp}"
     
     # Setup logging
     log_dir = config['logging']['log_dir']
@@ -406,9 +418,12 @@ def run_ablation_study(
     if tb_logger:
         tb_logger.log_metrics(test_metrics, 0, prefix='test/')
         tb_logger.log_figure('test/confusion_matrix', cm_fig, 0)
+        tb_logger.close()
     
-    # Save final results
-    results_path = os.path.join(checkpoint_dir, experiment_name, 'final_results.json')
+    # Save final results for this run
+    results_dir = Path(checkpoint_dir) / experiment_name
+    results_dir.mkdir(parents=True, exist_ok=True)
+    results_path = results_dir / 'final_results.json'
     with open(results_path, 'w') as f:
         json.dump({
             'test_metrics': test_metrics,
@@ -416,18 +431,158 @@ def run_ablation_study(
             'final_epoch': epoch
         }, f, indent=2)
     
-    logger.info(f"Ablation Study {study_number} completed!")
-    logger.info(f"Results saved to: {os.path.join(checkpoint_dir, experiment_name)}")
+    logger.info(f"Ablation Study {study_number} run completed!")
+    logger.info(f"Results saved to: {results_dir}")
     
-    if tb_logger:
-        tb_logger.close()
+    # Return key metrics for potential aggregation (e.g., LOSO)
+    test_ua = test_metrics.get('unweighted_accuracy', None)
+    test_wa = test_metrics.get('weighted_accuracy', None)
+    return {
+        'best_val_ua': float(best_val_ua),
+        'test_unweighted_accuracy': float(test_ua) if test_ua is not None else None,
+        'test_weighted_accuracy': float(test_wa) if test_wa is not None else None,
+        'final_epoch': int(epoch),
+        'results_dir': str(results_dir)
+    }
+
+
+def run_ablation_study(
+    study_number: int,
+    config_path: str,
+    device: str = 'cuda',
+    experiment_name: str = None
+):
+    """
+    Run a single ablation study (standard split).
+    """
+    print(f"\n{'='*60}")
+    print(f"Starting Ablation Study {study_number}")
+    print(f"{'='*60}\n")
+    
+    # Load base config
+    base_config = load_base_config()
+    
+    # Load and merge ablation config
+    config = load_ablation_config(config_path, base_config)
+    
+    # Generate experiment name if not provided
+    if experiment_name is None:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        experiment_name = f"ablation_{study_number:02d}_{timestamp}"
+    
+    _run_ablation_with_config(study_number, config, device, experiment_name)
+
+
+def run_ablation_study_loso(
+    study_number: int,
+    config_path: str,
+    device: str = 'cuda',
+    experiment_name: str = None
+):
+    """
+    Run Ablation Study with 5-fold leave-one-session-out (LOSO) cross-validation.
+    
+    Specifically used for Ablation 12, which reuses the Ablation 10 architecture
+    but cycles the IEMOCAP sessions so that in each fold one session is used as
+    test set and the remaining sessions are split into train/val.
+    """
+    print(f"\n{'='*60}")
+    print(f"Starting Ablation Study {study_number} with 5-fold LOSO")
+    print(f"{'='*60}\n")
+    
+    # Load base + ablation config
+    base_config = load_base_config()
+    base_ablation_config = load_ablation_config(config_path, base_config)
+    
+    dataset_cfg = base_ablation_config.get('dataset', {})
+    all_sessions = dataset_cfg.get('all_sessions', None)
+    if all_sessions is None:
+        # Fallback: infer from train/val/test if all_sessions not provided
+        combined = []
+        combined.extend(dataset_cfg.get('train_sessions', []))
+        combined.extend(dataset_cfg.get('val_sessions', []))
+        combined.extend(dataset_cfg.get('test_sessions', []))
+        all_sessions = sorted(list(set(combined)))
+    
+    if len(all_sessions) < 2:
+        raise ValueError("LOSO requires at least 2 sessions in 'dataset.all_sessions'.")
+    
+    # Base experiment name
+    if experiment_name is None:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_experiment_name = f"ablation_{study_number:02d}_loso_{timestamp}"
+    else:
+        base_experiment_name = experiment_name
+    
+    fold_results = []
+    
+    for fold_idx, test_session in enumerate(all_sessions):
+        # Choose validation session as the next available session (cyclic),
+        # different from the test session.
+        remaining = [s for s in all_sessions if s != test_session]
+        val_session = remaining[0]
+        train_sessions = [s for s in all_sessions if s not in (test_session, val_session)]
+        
+        fold_config = copy.deepcopy(base_ablation_config)
+        fold_config['dataset']['train_sessions'] = train_sessions
+        fold_config['dataset']['val_sessions'] = [val_session]
+        fold_config['dataset']['test_sessions'] = [test_session]
+        
+        # Create per-fold logging/checkpoint dirs to avoid collisions
+        fold_suffix = f"fold_S{test_session}_test"
+        fold_log_dir = os.path.join(fold_config['logging']['log_dir'], fold_suffix)
+        fold_ckpt_dir = os.path.join(fold_config['logging']['checkpoint_dir'], fold_suffix)
+        fold_config['logging']['log_dir'] = fold_log_dir
+        fold_config['logging']['checkpoint_dir'] = fold_ckpt_dir
+        
+        fold_experiment_name = f"{base_experiment_name}_{fold_suffix}"
+        
+        print(f"\n--- LOSO Fold {fold_idx + 1}/{len(all_sessions)} ---")
+        print(f"Train sessions: {train_sessions}")
+        print(f"Val session:    {[val_session]}")
+        print(f"Test session:   {[test_session]}")
+        print(f"Experiment:     {fold_experiment_name}")
+        
+        fold_metrics = _run_ablation_with_config(
+            study_number=study_number,
+            config=fold_config,
+            device=device,
+            experiment_name=fold_experiment_name
+        )
+        fold_metrics['test_session'] = int(test_session)
+        fold_metrics['val_session'] = int(val_session)
+        fold_metrics['train_sessions'] = [int(s) for s in train_sessions]
+        fold_results.append(fold_metrics)
+    
+    # Aggregate LOSO results across folds
+    # We aggregate best_val_ua and test_unweighted_accuracy if present.
+    best_val_uas = [fr['best_val_ua'] for fr in fold_results if fr.get('best_val_ua') is not None]
+    test_uas = [fr['test_unweighted_accuracy'] for fr in fold_results if fr.get('test_unweighted_accuracy') is not None]
+    
+    summary = {
+        'folds': fold_results,
+        'num_folds': len(fold_results),
+        'all_sessions': [int(s) for s in all_sessions],
+    }
+    if best_val_uas:
+        summary['mean_best_val_ua'] = float(sum(best_val_uas) / len(best_val_uas))
+    if test_uas:
+        summary['mean_test_unweighted_accuracy'] = float(sum(test_uas) / len(test_uas))
+    
+    # Save LOSO summary next to the base checkpoint directory
+    ckpt_root = base_ablation_config['logging']['checkpoint_dir']
+    summary_path = Path(ckpt_root) / 'loso_summary_ablation_{:02d}.json'.format(study_number)
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    print(f"\nLOSO summary saved to: {summary_path}")
 
 
 def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-4). If not specified, runs all.')
+                        help='Run specific study (1-13). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -439,26 +594,47 @@ def main():
         (1, "config/ablation/ablation_01_unfreeze_encoders.yaml"),
         (2, "config/ablation/ablation_02_lstm_head.yaml"),
         (3, "config/ablation/ablation_03_transformer_head.yaml"),
-        (4, "config/ablation/ablation_04_cnn1d_head.yaml")
+        (4, "config/ablation/ablation_04_cnn1d_head.yaml"),
+        (5, "config/ablation/ablation_05_unfreeze_lstm.yaml"),
+        (6, "config/ablation/ablation_06_unfreeze_transformer.yaml"),
+        (7, "config/ablation/ablation_07_unfreeze_mid_high_lstm.yaml"),
+        (8, "config/ablation/ablation_08_deep_lstm.yaml"),
+        (9, "config/ablation/ablation_09_gia_lstm.yaml"),
+        (10, "config/ablation/ablation_10_speechcue_internal.yaml"),
+        (11, "config/ablation/ablation_11_melspec_vit.yaml"),
+        (12, "config/ablation/ablation_12_speechcue_loso.yaml"),
+        (13, "config/ablation/ablation_13_melspec_vit_speechcue_unfreeze_vit.yaml"),
+        (14, "config/ablation/ablation_13a_regularized.yaml"),
+        (15, "config/ablation/ablation_13b_no_speechcue.yaml"),
+        (16, "config/ablation/ablation_13c_frozen_vit.yaml"),
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-4")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-16")
             return
     
     # Run each study
     for study_number, config_path in studies:
         try:
             experiment_name = f"{args.experiment_name}_study_{study_number}" if args.experiment_name else None
-            run_ablation_study(
-                study_number=study_number,
-                config_path=config_path,
-                device=args.device,
-                experiment_name=experiment_name
-            )
+            if study_number == 12:
+                # Special case: Ablation 12 runs 5-fold LOSO instead of a single split
+                run_ablation_study_loso(
+                    study_number=study_number,
+                    config_path=config_path,
+                    device=args.device,
+                    experiment_name=experiment_name
+                )
+            else:
+                run_ablation_study(
+                    study_number=study_number,
+                    config_path=config_path,
+                    device=args.device,
+                    experiment_name=experiment_name
+                )
         except Exception as e:
             print(f"Error running study {study_number}: {e}")
             import traceback

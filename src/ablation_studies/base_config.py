@@ -10,10 +10,10 @@ from typing import Dict, Any
 def load_base_config() -> Dict[str, Any]:
     """
     Load base configuration from checkpoint 20251029_190659.
-    
+
     Adjusts:
-    - num_classes from 10 to 7 (removes fearful, surprised, other)
-    - emotions list to match 7 classes
+    - num_classes from 10 to 4 (merges happy/excited and removes others)
+    - emotions list to match 4 classes
     
     Returns:
         Dictionary with base configuration
@@ -31,15 +31,13 @@ def load_base_config() -> Dict[str, Any]:
     with open(base_config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
     
-    # Adjust emotions: remove fearful, surprised, other
+    # Adjust emotions to the standard 4-class setup:
+    # angry, happy (happy+excited), sad, neutral
     original_emotions = config['dataset']['emotions']
-    new_emotions = [
-        'angry', 'happy', 'sad', 'neutral', 
-        'frustrated', 'excited', 'disgusted'
-    ]
-    
+    new_emotions = ['angry', 'happy', 'sad', 'neutral']
+
     config['dataset']['emotions'] = new_emotions
-    config['model']['num_classes'] = 7
+    config['model']['num_classes'] = 4
     
     return config
 

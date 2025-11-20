@@ -1,0 +1,129 @@
+# Ablation Study 12: Internal SpeechCue-style Prosody Prompts + Unfreeze Middle/High + LSTM Head
+# Same architecture and hyperparameters as Ablation 10, but evaluated with
+# 5-fold leave-one-session-out (LOSO) cross-validation over IEMOCAP sessions.
+#
+# NOTE:
+# - The LOSO logic is implemented in `scripts/run_ablation.py` specifically
+#   for study 12. The fields `train_sessions`, `val_sessions` and
+#   `test_sessions` here act as defaults and will be overridden per fold.
+#
+# - By default we consider all 5 IEMOCAP sessions:
+#     Session1, Session2, Session3, Session4, Session5
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+
+  # Sessions used for LOSO CV (S1–S5). These will be iterated so that in each
+  # fold exactly one session is used as test, the others as train/val.
+  all_sessions: [1, 2, 3, 4, 5]
+
+  # Default split (only used if LOSO is disabled)
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: false
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  # Enable internal SpeechCue-style prosody prompts (same as Ablation 10)
+  use_prosody_cues: true
+
+model:
+  # Encoders configuration - same as Ablation 07/10 (middle + high layers unfrozen)
+  freeze_audio_encoder: false
+  audio_unfreeze_last_n_layers: 6
+  freeze_text_encoder: false
+  text_unfreeze_last_n_layers: 4
+
+  # Classification head configuration (LSTM head)
+  classification_head_type: "lstm"
+  lstm_num_layers: 2
+  lstm_bidirectional: true
+
+  # Backbone and fusion
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  hidden_dim: 256
+  dropout: 0.3
+  num_classes: 4
+  fusion_type: "cross_attention"
+
+training:
+  learning_rate_audio: 3.0e-7
+  learning_rate_text: 1.5e-6
+  learning_rate_fusion: 5.0e-5
+
+  batch_size: 2
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: true
+  weight_decay: 0.1
+  adam_epsilon: 1.0e-8
+  max_grad_norm: 1.0
+  loss:
+    type: "focal"
+    gamma: 1.5
+    label_smoothing: 0.0
+  warmup_ratio: 0.1
+  scheduler_type: "cosine"
+  early_stopping_patience: 15
+  save_top_k: 3
+
+evaluation:
+  batch_size: 4
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+
+logging:
+  log_dir: "./logs/ablation_12_loso"
+  checkpoint_dir: "./checkpoints/ablation_12_loso"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-12-loso"
+
+
+
+
