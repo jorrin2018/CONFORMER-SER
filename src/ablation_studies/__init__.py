@@ -20,6 +20,14 @@ from .ablation_09_model import Ablation09Model
 from .ablation_10_model import Ablation10Model
 from .ablation_11_model import Ablation11Model
 from .ablation_13_model import Ablation13Model
+from .ablation_21_hierarchical_fusion import Ablation21Model
+from .ablation_22_tensor_fusion import Ablation22Model
+from .ablation_23_bilinear_fusion import Ablation23Model
+from .ablation_24_adaptive_weighted_fusion import Ablation24Model
+from .ablation_25_enhanced_cross_attention import Ablation25Model
+from .ablation_26_gated_fusion import Ablation26Model
+from .ablation_27_late_fusion import Ablation27Model
+from .ablation_28_glu_fusion import Ablation28Model
 from .utils import create_ablation_optimizer
 
 __all__ = [
@@ -39,6 +47,14 @@ __all__ = [
     'Ablation10Model',
     'Ablation11Model',
     'Ablation13Model',
+    'Ablation21Model',
+    'Ablation22Model',
+    'Ablation23Model',
+    'Ablation24Model',
+    'Ablation25Model',
+    'Ablation26Model',
+    'Ablation27Model',
+    'Ablation28Model',
     'create_ablation_optimizer',
 ]
 

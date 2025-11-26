@@ -17,6 +17,7 @@ from tqdm import tqdm
 import numpy as np
 from datetime import datetime
 import copy
+import gc
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,6 +37,14 @@ from src.ablation_studies import (
     Ablation10Model,
     Ablation11Model,
     Ablation13Model,
+    Ablation21Model,
+    Ablation22Model,
+    Ablation23Model,
+    Ablation24Model,
+    Ablation25Model,
+    Ablation26Model,
+    Ablation27Model,
+    Ablation28Model,
     create_ablation_optimizer
 )
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
@@ -119,11 +128,27 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     elif study_number == 13:
         # Ablation 13: Ablation 11 + SpeechCue + ViT parcialmente descongelado
         model = Ablation13Model(config)
-    elif study_number in (14, 15, 16):
-        # Ablation 14 (13a), 15 (13b), 16 (13c): Variantes de Ablation 13
+    elif study_number in (14, 15, 16, 17, 18, 19, 20):
+        # Ablation 14 (13a), 15 (13b), 16 (13c), 17 (13d), 18 (13e), 19 (13f), 20 (13d kfold): Variantes de Ablation 13
         model = Ablation13Model(config)
+    elif study_number == 21:
+        model = Ablation21Model(config)
+    elif study_number == 22:
+        model = Ablation22Model(config)
+    elif study_number == 23:
+        model = Ablation23Model(config)
+    elif study_number == 24:
+        model = Ablation24Model(config)
+    elif study_number == 25:
+        model = Ablation25Model(config)
+    elif study_number == 26:
+        model = Ablation26Model(config)
+    elif study_number == 27:
+        model = Ablation27Model(config)
+    elif study_number == 28:
+        model = Ablation28Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-16.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-28.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -578,6 +603,161 @@ def run_ablation_study_loso(
     print(f"\nLOSO summary saved to: {summary_path}")
 
 
+def run_ablation_study_kfold(
+    study_number: int,
+    config_path: str,
+    device: str = 'cuda',
+    experiment_name: str = None
+):
+    """
+    Run Ablation Study with K-Fold cross-validation.
+    
+    Similar to LOSO but with explicit cache clearing between folds to prevent
+    training freezes. Each session is used as test set once, with remaining
+    sessions split into train/val.
+    
+    Args:
+        study_number: Ablation study number
+        config_path: Path to ablation YAML config
+        device: Device to use ('cuda' or 'cpu')
+        experiment_name: Optional experiment name prefix
+    """
+    print(f"\n{'='*60}")
+    print(f"Starting Ablation Study {study_number} with K-Fold Cross-Validation")
+    print(f"{'='*60}\n")
+    
+    # Load base + ablation config
+    base_config = load_base_config()
+    base_ablation_config = load_ablation_config(config_path, base_config)
+    
+    dataset_cfg = base_ablation_config.get('dataset', {})
+    all_sessions = dataset_cfg.get('all_sessions', None)
+    if all_sessions is None:
+        # Fallback: infer from train/val/test if all_sessions not provided
+        combined = []
+        combined.extend(dataset_cfg.get('train_sessions', []))
+        combined.extend(dataset_cfg.get('val_sessions', []))
+        combined.extend(dataset_cfg.get('test_sessions', []))
+        all_sessions = sorted(list(set(combined)))
+    
+    if len(all_sessions) < 2:
+        raise ValueError("K-Fold requires at least 2 sessions in 'dataset.all_sessions'.")
+    
+    # Base experiment name
+    if experiment_name is None:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_experiment_name = f"ablation_{study_number:02d}_kfold_{timestamp}"
+    else:
+        base_experiment_name = experiment_name
+    
+    fold_results = []
+    
+    for fold_idx, test_session in enumerate(all_sessions):
+        print(f"\n{'='*60}")
+        print(f"K-Fold Fold {fold_idx + 1}/{len(all_sessions)}")
+        print(f"{'='*60}")
+        
+        # Clear cache before starting new fold
+        print("Clearing cache before fold...")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        print("Cache cleared.")
+        
+        # Choose validation session as the next available session (cyclic),
+        # different from the test session.
+        remaining = [s for s in all_sessions if s != test_session]
+        val_session = remaining[0]
+        train_sessions = [s for s in all_sessions if s not in (test_session, val_session)]
+        
+        fold_config = copy.deepcopy(base_ablation_config)
+        fold_config['dataset']['train_sessions'] = train_sessions
+        fold_config['dataset']['val_sessions'] = [val_session]
+        fold_config['dataset']['test_sessions'] = [test_session]
+        
+        # Create per-fold logging/checkpoint dirs to avoid collisions
+        fold_suffix = f"fold_S{test_session}_test"
+        fold_log_dir = os.path.join(fold_config['logging']['log_dir'], fold_suffix)
+        fold_ckpt_dir = os.path.join(fold_config['logging']['checkpoint_dir'], fold_suffix)
+        fold_config['logging']['log_dir'] = fold_log_dir
+        fold_config['logging']['checkpoint_dir'] = fold_ckpt_dir
+        
+        fold_experiment_name = f"{base_experiment_name}_{fold_suffix}"
+        
+        print(f"Train sessions: {train_sessions}")
+        print(f"Val session:    {[val_session]}")
+        print(f"Test session:   {[test_session]}")
+        print(f"Experiment:     {fold_experiment_name}")
+        print()
+        
+        try:
+            fold_metrics = _run_ablation_with_config(
+                study_number=study_number,
+                config=fold_config,
+                device=device,
+                experiment_name=fold_experiment_name
+            )
+            fold_metrics['test_session'] = int(test_session)
+            fold_metrics['val_session'] = int(val_session)
+            fold_metrics['train_sessions'] = [int(s) for s in train_sessions]
+            fold_results.append(fold_metrics)
+        except Exception as e:
+            print(f"Error in fold {fold_idx + 1}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Clear cache even on error
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            continue
+        finally:
+            # Always clear cache after each fold
+            print(f"\nClearing cache after fold {fold_idx + 1}...")
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            print("Cache cleared.\n")
+    
+    # Aggregate K-Fold results across folds
+    best_val_uas = [fr['best_val_ua'] for fr in fold_results if fr.get('best_val_ua') is not None]
+    test_uas = [fr['test_unweighted_accuracy'] for fr in fold_results if fr.get('test_unweighted_accuracy') is not None]
+    test_was = [fr['test_weighted_accuracy'] for fr in fold_results if fr.get('test_weighted_accuracy') is not None]
+    
+    summary = {
+        'folds': fold_results,
+        'num_folds': len(fold_results),
+        'all_sessions': [int(s) for s in all_sessions],
+    }
+    if best_val_uas:
+        summary['mean_best_val_ua'] = float(sum(best_val_uas) / len(best_val_uas))
+        summary['std_best_val_ua'] = float(np.std(best_val_uas))
+    if test_uas:
+        summary['mean_test_unweighted_accuracy'] = float(sum(test_uas) / len(test_uas))
+        summary['std_test_unweighted_accuracy'] = float(np.std(test_uas))
+    if test_was:
+        summary['mean_test_weighted_accuracy'] = float(sum(test_was) / len(test_was))
+        summary['std_test_weighted_accuracy'] = float(np.std(test_was))
+    
+    # Save K-Fold summary next to the base checkpoint directory
+    ckpt_root = base_ablation_config['logging']['checkpoint_dir']
+    summary_path = Path(ckpt_root) / 'kfold_summary_ablation_{:02d}.json'.format(study_number)
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    print(f"\n{'='*60}")
+    print("K-Fold Cross-Validation Summary")
+    print(f"{'='*60}")
+    if best_val_uas:
+        print(f"Mean Best Val UA: {summary['mean_best_val_ua']:.4f} ± {summary['std_best_val_ua']:.4f}")
+    if test_uas:
+        print(f"Mean Test UA:     {summary['mean_test_unweighted_accuracy']:.4f} ± {summary['std_test_unweighted_accuracy']:.4f}")
+    if test_was:
+        print(f"Mean Test WA:     {summary['mean_test_weighted_accuracy']:.4f} ± {summary['std_test_weighted_accuracy']:.4f}")
+    print(f"\nK-Fold summary saved to: {summary_path}")
+
+
 def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
@@ -607,13 +787,25 @@ def main():
         (14, "config/ablation/ablation_13a_regularized.yaml"),
         (15, "config/ablation/ablation_13b_no_speechcue.yaml"),
         (16, "config/ablation/ablation_13c_frozen_vit.yaml"),
+        (17, "config/ablation/ablation_13d_high_reg.yaml"),
+        (18, "config/ablation/ablation_13e_advanced_reg.yaml"),
+        (19, "config/ablation/ablation_13f_focal_loss.yaml"),
+        (20, "config/ablation/ablation_13d_kfold.yaml"),
+        (21, "config/ablation/ablation_21_hierarchical_fusion.yaml"),
+        (22, "config/ablation/ablation_22_tensor_fusion.yaml"),
+        (23, "config/ablation/ablation_23_bilinear_fusion.yaml"),
+        (24, "config/ablation/ablation_24_adaptive_weighted_fusion.yaml"),
+        (25, "config/ablation/ablation_25_enhanced_cross_attention.yaml"),
+        (26, "config/ablation/ablation_26_gated_fusion.yaml"),
+        (27, "config/ablation/ablation_27_late_fusion.yaml"),
+        (28, "config/ablation/ablation_28_glu_fusion.yaml"),
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-16")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-28")
             return
     
     # Run each study
@@ -623,6 +815,14 @@ def main():
             if study_number == 12:
                 # Special case: Ablation 12 runs 5-fold LOSO instead of a single split
                 run_ablation_study_loso(
+                    study_number=study_number,
+                    config_path=config_path,
+                    device=args.device,
+                    experiment_name=experiment_name
+                )
+            elif study_number == 20:
+                # Special case: Ablation 20 runs K-Fold cross-validation with cache clearing
+                run_ablation_study_kfold(
                     study_number=study_number,
                     config_path=config_path,
                     device=args.device,

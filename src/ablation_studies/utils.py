@@ -41,8 +41,8 @@ def create_ablation_optimizer(
     weight_decay = training_config.get('weight_decay', 0.1)
     adam_epsilon = float(training_config.get('adam_epsilon', 1e-8))
     
-    if study_number in (1, 5, 6, 7, 8, 9, 11, 13, 14, 15, 16):
-        # Ablation 01, 05, 06, 07, 08, 09, 11, 13, 14, 15, 16:
+    if study_number in (1, 5, 6, 7, 8, 9, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28):
+        # Ablation 01, 05, 06, 07, 08, 09, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28:
         # Separate groups for audio, text, and fusion (encoders parcialmente descongelados)
         audio_params = []
         text_params = []

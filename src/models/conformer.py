@@ -12,7 +12,12 @@ from transformers import (
     AutoConfig
 )
 from typing import Dict, Optional
-from .fusion import FusionModule, CrossAttentionFusion, GatedFusion, GIAFusion
+from .fusion import (
+    FusionModule, CrossAttentionFusion, GatedFusion, GIAFusion,
+    TriModalHierarchicalFusion, TriModalTensorFusion, TriModalBilinearFusion,
+    TriModalAdaptiveWeightedFusion, TriModalEnhancedCrossAttentionFusion,
+    TriModalGatedFusion, TriModalLateFusion, TriModalGLUFusion
+)
 
 
 class ConformerMultimodalModel(nn.Module):
@@ -163,6 +168,19 @@ class ConformerMultimodalModel(nn.Module):
             )
         elif fusion_type == "gia":
             self.fusion = GIAFusion(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                hidden_dim=hidden_dim,
+                num_classes=num_classes,
+                num_heads=fusion_num_heads,
+                dropout=dropout
+            )
+        elif fusion_type in ("hierarchical", "tensor", "bilinear", "adaptive_weighted", 
+                             "enhanced_cross_attention", "gated_trimodal", "late", "glu"):
+            # Trimodal fusion types - these will be replaced by child models
+            # We create a placeholder here to avoid errors, but child models will override it
+            # Using cross_attention as placeholder since it has similar interface
+            self.fusion = CrossAttentionFusion(
                 audio_dim=audio_hidden_size,
                 text_dim=text_hidden_size,
                 hidden_dim=hidden_dim,
