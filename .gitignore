@@ -81,8 +81,5 @@ check_*.py
 #cursor
 .cursor/
 
-#git
-.gitignore
-
 #documentation
 docs/
