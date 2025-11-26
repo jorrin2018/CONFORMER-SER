@@ -78,3 +78,5 @@ script.py
 debug_*.py
 check_*.py
 
+#cursor
+.cursor/
