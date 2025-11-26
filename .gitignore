@@ -83,3 +83,6 @@ check_*.py
 
 #git
 .gitignore
+
+#documentation
+docs/
