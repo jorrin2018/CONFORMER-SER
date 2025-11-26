@@ -11,8 +11,10 @@ This project implements a state-of-the-art **Trimodal (Audio + Text + Visual)** 
 - **4-Class Emotion Recognition**: Focused on **Angry, Happy, Sad, Neutral**.
   - *Note: Reduced from 7 classes to improve practical performance and eliminate ambiguity (e.g., Happy vs Excited).*
 - **Advanced Fusion**: 
-  - **TriModal Cross-Attention**: Jointly attends to audio, text, and visual tokens.
-  - **GIA Fusion**: Gated Interaction Attention for bi-modal setups.
+  - **Enhanced Cross-Attention**: Deep multi-layer attention between Audio, Text, and Vision.
+  - **Gated Fusion (GMU)**: Learnable gates to control information flow.
+  - **Tensor Fusion**: Captures high-order interactions.
+  - **Hierarchical Fusion**: Multi-stage modality integration.
 - **Robust Training**:
   - **Speaker-Independent Split**: Ensures generalization to unseen speakers.
   - **Unfreezing Strategy**: Fine-tuning of top encoder layers for domain adaptation.
@@ -26,27 +28,27 @@ CONFORMER-SER/
 ├── config/
 │   ├── config.yaml                    # Main configuration file
 │   └── ablation/                      # Ablation study configurations
-│       ├── ablation_01_... to _10_... # Previous studies
-│       ├── ablation_11_melspec_vit.yaml
-│       ├── ablation_12_speechcue_loso.yaml
-│       └── ablation_13_melspec_vit_speechcue_unfreeze_vit.yaml
+│       ├── ablation_01_... to _28_... # Ablation studies from 01 to 28
+│       ├── ABLATION_SUMMARY.md        # Detailed summary of all experiments
+│       ├── ablation_21_hierarchical_fusion.yaml
+│       ├── ablation_25_enhanced_cross_attention.yaml
+│       └── ...
 ├── src/
 │   ├── data/
 │   │   ├── dataset.py                 # IEMOCAP dataset with ProsodyCue extraction
 │   │   ├── preprocessing.py           # Audio, text, and melspec preprocessing
 │   ├── models/
 │   │   ├── conformer.py               # Base Conformer model
-│   │   ├── fusion.py                  # Fusion modules (including TriModal)
+│   │   ├── fusion.py                  # Advanced Fusion modules (GMU, Tensor, etc.)
 │   ├── ablation_studies/              # Ablation studies module
-│   │   ├── ablation_11_model.py       # Trimodal ViT model
-│   │   ├── ablation_13_model.py       # Final optimized model
+│   │   ├── ablation_25_enhanced_cross_attention.py # TriModal Enhanced Fusion
 │   │   └── ...
 │   ├── utils/
 │   │   ├── metrics.py                 # Evaluation metrics
 │   │   └── logger.py                  # Logging utilities
 │   ├── train.py                       # Main training script
 │   └── evaluate.py                    # Evaluation script
-├── checkpoints/                       # Model checkpoints (including ablation_13)
+├── checkpoints/                       # Model checkpoints
 ├── logs/                              # Training logs
 └── README.md
 ```
@@ -75,32 +77,44 @@ pip install -r requirements.txt
 
 3. Verify IEMOCAP dataset path in `config/config.yaml`.
 
-## Model Architecture (Ablation 13)
+## Model Architecture (Ablation 25 - Current Best)
 
-The final architecture (**Ablation 13**) integrates three modalities:
+The most advanced architecture (**Ablation 25**) integrates three modalities with **Enhanced Cross-Attention**:
 
-1.  **Audio Branch**: `Wav2Vec2-Conformer` takes raw audio (16kHz). The last 6 transformer layers are unfrozen to learn emotional prosody features.
-2.  **Visual Branch**: Audio is converted to **Mel-Spectrograms** (treated as 224x224 images). A `Vision Transformer (ViT-Base)` extracts spectral features.
-3.  **Text Branch**: `DistilBERT` processes transcripts. Crucially, **SpeechCue** prompts (e.g., *"[PROSODY] high energy, fast pace..."*) are injected at the start of the text to provide prosodic context to the language model.
-4.  **Fusion**: A **Tri-Modal Cross-Attention** block projects all features to a common space and uses self-attention to weigh inter-modality importance.
-5.  **Classification**: A **Bi-Directional LSTM** head captures final sequential dependencies before the Softmax layer.
+1.  **Audio Branch**: `Wav2Vec2-Conformer` takes raw audio (16kHz). Last 6 transformer layers are unfrozen.
+2.  **Visual Branch**: Audio is converted to **Mel-Spectrograms** (224x224 images) processed by `ViT-Base`.
+3.  **Text Branch**: `DistilBERT` processes transcripts.
+4.  **Fusion**: **TriModal Enhanced Cross-Attention Fusion**.
+    *   Stack of 3 multi-head attention layers.
+    *   Allows deep interaction where each modality attends to the others (Audio ↔ Text ↔ Vision).
+    *   Residual connections and LayerNorm for stability.
+5.  **Classification**: A **Bi-Directional LSTM** head captures final dependencies.
+
+### Other Fusion Variants Explored (Series 20+)
+*   **Hierarchical Fusion**: (Audio + Text) then result + Vision.
+*   **Tensor Fusion**: Full outer product of modalities.
+*   **Gated Fusion (GMU)**: Learnable gates to control information flow.
+*   **Adaptive Weighted**: Dynamic scalar weights per modality.
 
 ## Usage
 
-### Training (Best Model)
-
-To train the best-performing model (Ablation 13 configuration):
+### Training
+To train the Enhanced Cross-Attention model (Ablation 25):
 
 ```bash
-python scripts/run_ablation.py --study 13
+python scripts/run_ablation.py --study 25
+```
+
+To train other fusion variants (e.g., Gated Fusion):
+```bash
+python scripts/run_ablation.py --study 26
 ```
 
 ### Evaluation
-
 Evaluate on the test set (Session 5):
 
 ```bash
-python src/evaluate.py --checkpoint checkpoints/ablation_13/best_model.pt --split test
+python src/evaluate.py --checkpoint checkpoints/ablation_25/best_model.pt --split test
 ```
 
 ## Results
@@ -123,6 +137,13 @@ python src/evaluate.py --checkpoint checkpoints/ablation_13/best_model.pt --spli
 | **Neutral** | 72.6% | Hardest class, often ambiguous |
 
 ## Recent Updates
+
+### Version 4.0 (2025-11-26) - Fusion Odyssey
+- ✅ **Advanced Fusion Series (Ablation 20-28)**: Implemented 8 new fusion strategies.
+  - Hierarchical, Tensor, Bilinear, Adaptive Weighted, Enhanced Cross-Attention, GMU, Late Fusion, GLU.
+- ✅ **Enhanced Cross-Attention**: New multi-layer stack for deep multimodal interaction.
+- ✅ **Documentation**: Comprehensive ABLATION_SUMMARY.md detailing all experiments.
+- ✅ **Notion Integration**: Auto-generated technical report with results database.
 
 ### Version 3.0 (2025-11-20)
 - ✅ **Trimodal Architecture**: Added Vision Transformer branch for Mel-Spectrograms.

@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0] - 2025-11-26
+
+### Added
+- **Advanced Fusion Module**: Complete overhaul of `src/models/fusion.py` to support multiple fusion architectures.
+  - `TriModalEnhancedCrossAttentionFusion`: Stacked multi-head attention layers.
+  - `TriModalGatedFusion`: Gated Multimodal Unit (GMU) implementation.
+  - `TriModalHierarchicalFusion`: (Audio+Text) -> +Vision hierarchy.
+  - `TriModalTensorFusion`: Outer product fusion (TFN).
+  - `TriModalBilinearFusion`: Low-rank bilinear pooling.
+  - `TriModalAdaptiveWeightedFusion`: Learnable scalar weights.
+- **New Ablation Studies (Series 20-28)**:
+  - Configurations covering all new fusion methods (`config/ablation/ablation_2*.yaml`).
+  - Specialized model classes in `src/ablation_studies/`.
+- **Documentation**:
+  - `config/ablation/ABLATION_SUMMARY.md`: Detailed catalog of all 28 experiments.
+  - Automated Notion report generation.
+
+### Improved
+- **Fusion Architecture**: Modularized fusion logic to easily swap strategies.
+- **Cross-Attention**: Increased depth (num_layers) and flexibility (heads, dim) in configuration.
+- **Visualization**: Enhanced mermaid diagrams for architecture explanation.
+
+## [3.0.0] - 2025-11-20
+
+### Added
+- **Trimodal Architecture**: Integration of Audio, Text, and Vision streams.
+- **Vision Branch**: ViT (Vision Transformer) processing Mel-Spectrograms.
+- **SpeechCue**: Injection of prosodic prompts into the text stream.
+- **Ablation Series 13**: Robust baseline establishing the state-of-the-art (~80% Acc).
+- **Regularization**: Advanced dropout and weight decay tuning.
+
+## [2.0.0] - 2025-10-29
+
+### Added
+- Ablation studies framework (`scripts/run_ablation.py`).
+- Support for K-Fold Cross Validation.
+- LSTM and Transformer classification heads.
+- Initial GIA Fusion implementation.
+
 ## [1.0.0] - 2025-10-24
 
 ### Added
