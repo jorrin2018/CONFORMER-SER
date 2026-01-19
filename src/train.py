@@ -162,13 +162,23 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     # Choose collate function based on model type
     collate_fn_to_use = collate_fn_audio_only if audio_only else collate_fn
     
-    # Create dataloaders
+    # Get DataLoader optimization settings
+    compute_config = config.get('compute', {})
+    num_workers = compute_config.get('num_workers', 2)
+    pin_memory = compute_config.get('pin_memory', True)
+    prefetch_factor = compute_config.get('prefetch_factor', 2)
+    persistent_workers = compute_config.get('persistent_workers', True)
+    non_blocking = compute_config.get('non_blocking', True)
+    
+    # Create dataloaders with optimizations for PCIe x8 (RTX 4060)
     train_loader = DataLoader(
         train_dataset,
         batch_size=config['training']['batch_size'],
         shuffle=True,
-        num_workers=config['compute']['num_workers'],
-        pin_memory=config['compute']['pin_memory'],
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
+        persistent_workers=persistent_workers if num_workers > 0 else False,
         collate_fn=collate_fn_to_use
     )
     
@@ -176,8 +186,10 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         val_dataset,
         batch_size=config['evaluation']['batch_size'],
         shuffle=False,
-        num_workers=config['compute']['num_workers'],
-        pin_memory=config['compute']['pin_memory'],
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
+        persistent_workers=persistent_workers if num_workers > 0 else False,
         collate_fn=collate_fn_to_use
     )
     
@@ -185,10 +197,17 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         test_dataset,
         batch_size=config['evaluation']['batch_size'],
         shuffle=False,
-        num_workers=config['compute']['num_workers'],
-        pin_memory=config['compute']['pin_memory'],
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None,
+        persistent_workers=persistent_workers if num_workers > 0 else False,
         collate_fn=collate_fn_to_use
     )
+    
+    # Store non_blocking setting for use in training loop
+    train_loader.non_blocking = non_blocking
+    val_loader.non_blocking = non_blocking
+    test_loader.non_blocking = non_blocking
     
     logger.info(f"Train samples: {len(train_dataset)}")
     logger.info(f"Val samples: {len(val_dataset)}")
@@ -403,9 +422,10 @@ def train_epoch(
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
     
     for batch_idx, batch in enumerate(pbar):
-        # Move to device
-        audio = batch['audio'].to(device)
-        labels = batch['labels'].to(device)
+        # Move to device with non_blocking for parallel transfers (RTX 4060 PCIe x8 optimization)
+        non_blocking = getattr(train_loader, 'non_blocking', False)
+        audio = batch['audio'].to(device, non_blocking=non_blocking)
+        labels = batch['labels'].to(device, non_blocking=non_blocking)
         
         # DEBUG: Check for NaN/Inf in input data
         if not torch.isfinite(audio).all():
@@ -416,14 +436,29 @@ def train_epoch(
             continue
         
         # Forward pass with mixed precision
-        if config['training']['mixed_precision']:
-            with autocast(device_type='cuda'):
+        mixed_precision = config['training'].get('mixed_precision', False)
+        if mixed_precision:
+            # Use appropriate dtype for mixed precision
+            dtype = None
+            if mixed_precision == 'bf16':
+                dtype = torch.bfloat16
+            elif mixed_precision == 'fp16':
+                dtype = torch.float16
+            elif mixed_precision == 'fp8':
+                # FP8 requires transformer_engine, fallback to BF16
+                dtype = torch.bfloat16
+            
+            with autocast(device_type='cuda', dtype=dtype):
                 if audio_only:
                     outputs = model(audio, labels)
                 else:
-                    text_input_ids = batch['text_input_ids'].to(device)
-                    text_attention_mask = batch['text_attention_mask'].to(device)
+                    text_input_ids = batch['text_input_ids'].to(device, non_blocking=non_blocking)
+                    text_attention_mask = batch['text_attention_mask'].to(device, non_blocking=non_blocking)
                     outputs = model(audio, text_input_ids, text_attention_mask, labels)
+            # Handle Dirichlet models that output alphas instead of logits
+            if 'alphas' in outputs:
+                loss = criterion(outputs['alphas'], labels)
+            else:
                 loss = criterion(outputs['logits'], labels)
         else:
             if audio_only:
@@ -432,7 +467,11 @@ def train_epoch(
                 text_input_ids = batch['text_input_ids'].to(device)
                 text_attention_mask = batch['text_attention_mask'].to(device)
                 outputs = model(audio, text_input_ids, text_attention_mask, labels)
-            loss = criterion(outputs['logits'], labels)
+            # Handle Dirichlet models that output alphas instead of logits
+            if 'alphas' in outputs:
+                loss = criterion(outputs['alphas'], labels)
+            else:
+                loss = criterion(outputs['logits'], labels)
         
         # Check for NaN/Inf in loss
         if not torch.isfinite(loss):
@@ -592,8 +631,10 @@ def validate(model, val_loader, criterion, device, config, logger, audio_only: b
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(val_loader, desc="Validation")):
             # Move to device
-            audio = batch['audio'].to(device)
-            labels = batch['labels'].to(device)
+            # Use non_blocking for validation too
+            non_blocking = getattr(val_loader, 'non_blocking', False)
+            audio = batch['audio'].to(device, non_blocking=non_blocking)
+            labels = batch['labels'].to(device, non_blocking=non_blocking)
             
             # Forward pass
             if audio_only:
@@ -602,7 +643,11 @@ def validate(model, val_loader, criterion, device, config, logger, audio_only: b
                 text_input_ids = batch['text_input_ids'].to(device)
                 text_attention_mask = batch['text_attention_mask'].to(device)
                 outputs = model(audio, text_input_ids, text_attention_mask, labels)
-            loss = criterion(outputs['logits'], labels)
+            # Handle Dirichlet models that output alphas instead of logits
+            if 'alphas' in outputs:
+                loss = criterion(outputs['alphas'], labels)
+            else:
+                loss = criterion(outputs['logits'], labels)
             
             # Check for NaN/Inf in loss
             if not torch.isfinite(loss):

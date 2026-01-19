@@ -176,7 +176,8 @@ class ConformerMultimodalModel(nn.Module):
                 dropout=dropout
             )
         elif fusion_type in ("hierarchical", "tensor", "bilinear", "adaptive_weighted", 
-                             "enhanced_cross_attention", "gated_trimodal", "late", "glu"):
+                             "enhanced_cross_attention", "gated_trimodal", "late", "glu",
+                             "temporal_bucketing", "conflict_aware_cross_attention"):
             # Trimodal fusion types - these will be replaced by child models
             # We create a placeholder here to avoid errors, but child models will override it
             # Using cross_attention as placeholder since it has similar interface

@@ -1,0 +1,141 @@
+# Ablation Study 34: Conflict-Aware Cross-Attention
+# Base: Ablation 25 (Enhanced Cross-Attention - mejor resultado)
+# Modificación: Mecanismo de atención que detecta explícitamente cuando dos modalidades
+#               se contradicen (ej. Texto feliz + Audio enojado) y asigna pesos basados
+#               en "confianza" en lugar de simplemente promediar
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  freeze_audio_encoder: false
+  audio_unfreeze_last_n_layers: 6
+  freeze_text_encoder: true
+  text_unfreeze_last_n_layers: 4
+
+  classification_head_type: "lstm"
+  lstm_num_layers: 2
+  lstm_bidirectional: true
+
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  hidden_dim: 512
+  dropout: 0.6
+  num_classes: 4
+
+  fusion_type: "conflict_aware_cross_attention"  # Reemplaza Enhanced Cross-Attention de Ablation 25
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  
+  # Conflict-aware attention parameters
+  conflict_aware:
+    enabled: true
+    conflict_detection_method: "prediction_divergence"  # Options: prediction_divergence, feature_distance, learned
+    conflict_threshold: 0.3  # Threshold for detecting conflicts (0-1)
+    confidence_weighting: true  # Use confidence-based weighting when conflict detected
+    conflict_resolution: "confidence_weighted"  # Options: confidence_weighted, modality_selection, adaptive_fusion
+
+  vision_encoder: "google/vit-base-patch16-224"
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 4
+  vision_image_size: 224
+
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  learning_rate_audio: 3.0e-7
+  learning_rate_text: 1.5e-6
+  learning_rate_fusion: 5.0e-6
+
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  weight_decay: 0.1
+  adam_epsilon: 1.0e-8
+  max_grad_norm: 1.0
+
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.15
+
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 1.0e-4
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+  early_stopping_patience: 8
+  save_top_k: 3
+
+evaluation:
+  batch_size: 4
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+
+logging:
+  log_dir: "./logs/ablation_34"
+  checkpoint_dir: "./checkpoints/ablation_34"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-34"
+

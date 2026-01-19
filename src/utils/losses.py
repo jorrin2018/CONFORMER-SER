@@ -103,13 +103,99 @@ class LabelSmoothingCrossEntropy(nn.Module):
         return torch.mean(torch.sum(-true_dist * log_probs, dim=-1))
 
 
+
+class DirichletEvidenceLoss(nn.Module):
+    """
+    Evidence Loss based on Dirichlet Distribution.
+    
+    Based on: "Evidential Deep Learning to Quantify Classification Uncertainty" (Sensoy et al., 2018)
+    
+    Minimizes the Bayes risk for the sum of squares error (Type 2 MLE).
+    Includes KL divergence regularization to penalize misleading evidence.
+    """
+    
+    def __init__(self, num_classes: int, annealing_step: int = 10):
+        """
+        Args:
+            num_classes: Number of output classes
+            annealing_step: Step at which KL regularization is fully applied
+        """
+        super().__init__()
+        self.num_classes = num_classes
+        self.annealing_step = annealing_step
+        self.epoch_num = 0  # To be updated during training
+        
+    def forward(self, alphas: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            alphas: Dirichlet parameters (batch_size, num_classes). Must be > 1.
+            targets: Ground truth labels (batch_size,)
+            
+        Returns:
+            Evidence loss value
+        """
+        # One-hot encoding
+        y = F.one_hot(targets, self.num_classes).to(alphas.device)
+        
+        # Calculate Dirichlet strength
+        S = torch.sum(alphas, dim=1, keepdim=True)
+        
+        # Evidence and Probabilities
+        # evidence = alphas - 1
+        p = alphas / S
+        
+        # A: Sum of Squares Error Loss (Bayes Risk)
+        # Loss = integral ||y - p||^2 dDir(p|alpha)
+        #      = sum( (y_ij - alpha_ij/S_i)^2 + alpha_ij(S_i - alpha_ij) / (S_i^2 * (S_i + 1)) )
+        
+        err = (y - p) ** 2
+        var = p * (1 - p) / (S + 1)
+        loss_ace = torch.sum(err + var, dim=1)
+        
+        # B: KL Divergence Regularization
+        # Penalizes evidence for incorrect classes
+        # KL[ Dir(alpha) || Dir(1,1...1) ] where alpha_tilde = y + (1-y)*alpha
+        
+        alpha_tilde = y + (1 - y) * alphas
+        
+        # KL divergence between Dir(alpha_tilde) and Dir(1) (Uniform)
+        # Simplified version for efficiency
+        
+        lgamma_alpha_tilde = torch.lgamma(alpha_tilde)
+        lgamma_S_tilde = torch.lgamma(torch.sum(alpha_tilde, dim=1, keepdim=True))
+        lgamma_1 = torch.lgamma(torch.tensor(1.0))
+        lgamma_K = torch.lgamma(torch.tensor(float(self.num_classes)))
+        
+        # KL(Dir(alpha) || Dir(1)) formula:
+        # log(Gamma(sum(alpha))) - log(Gamma(K)) - sum(log(Gamma(alpha))) + sum((alpha-1)*(digamma(alpha)-digamma(sum(alpha))))
+        
+        # Using the simplified approach from paper which minimizes evidence on incorrect classes
+        # KL_reg = KL(Dir(alpha_tilde) || Dir(<1,1,1>))
+        
+        kl = lgamma_S_tilde - lgamma_K - torch.sum(lgamma_alpha_tilde, dim=1, keepdim=True) \
+             + torch.sum(
+                 (alpha_tilde - 1) * (torch.digamma(alpha_tilde) - torch.digamma(torch.sum(alpha_tilde, dim=1, keepdim=True))),
+                 dim=1, keepdim=True
+             )
+        
+        # Annealing coefficient
+        annealing_coef = min(1.0, max(0.0, self.epoch_num / self.annealing_step))
+        
+        loss = torch.mean(loss_ace + annealing_coef * kl.squeeze())
+        return loss
+
+    def set_epoch(self, epoch):
+        self.epoch_num = epoch
+
+
 def create_loss_function(
     loss_type: str = 'cross_entropy',
     class_weights: Optional[torch.Tensor] = None,
     alpha: Optional[torch.Tensor] = None,
     gamma: float = 2.0,
     label_smoothing: float = 0.0,
-    device: str = 'cuda'
+    device: str = 'cuda',
+    num_classes: int = 4  # Added for Dirichlet
 ) -> nn.Module:
     """
     Factory function to create loss function.
@@ -145,6 +231,21 @@ def create_loss_function(
             # Here we use LabelSmoothingCrossEntropy and apply weights manually
             return LabelSmoothingCrossEntropy(smoothing=label_smoothing)
         return LabelSmoothingCrossEntropy(smoothing=label_smoothing)
+    
+    elif loss_type == 'dirichlet':
+        # Evidence Loss
+        return DirichletEvidenceLoss(num_classes=num_classes)
+    
+    elif loss_type == 'dirichlet_neutral':
+        # Dirichlet Loss with neutral regularization
+        from src.ablation_studies.ablation_36c_model import DirichletNeutralRegularizedLoss
+        neutral_class_idx = 3  # Assuming neutral is the 4th class (0: angry, 1: happy, 2: sad, 3: neutral)
+        neutral_weight = 2.0
+        return DirichletNeutralRegularizedLoss(
+            num_classes=num_classes,
+            neutral_class_idx=neutral_class_idx,
+            neutral_weight=neutral_weight
+        )
     
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")

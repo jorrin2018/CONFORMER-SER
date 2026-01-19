@@ -28,6 +28,16 @@ from .ablation_25_enhanced_cross_attention import Ablation25Model
 from .ablation_26_gated_fusion import Ablation26Model
 from .ablation_27_late_fusion import Ablation27Model
 from .ablation_28_glu_fusion import Ablation28Model
+from .ablation_30_dirichlet import Ablation30Model
+from .ablation_31_model import Ablation31Model
+from .ablation_32_model import Ablation32Model
+from .ablation_33_model import Ablation33Model, NoiseAwareProsodyCueExtractor
+from .ablation_34_model import Ablation34Model
+from .ablation_35_model import Ablation35Model
+from .ablation_36a_model import Ablation36AModel
+from .ablation_36b_model import Ablation36BModel
+from .ablation_36c_model import Ablation36CModel, DirichletNeutralRegularizedLoss
+from .ablation_38_model import Ablation38Model
 from .utils import create_ablation_optimizer
 
 __all__ = [
@@ -55,6 +65,18 @@ __all__ = [
     'Ablation26Model',
     'Ablation27Model',
     'Ablation28Model',
+    'Ablation30Model',
+    'Ablation31Model',
+    'Ablation32Model',
+    'Ablation33Model',
+    'Ablation34Model',
+    'Ablation35Model',
+    'Ablation36AModel',
+    'Ablation36BModel',
+    'Ablation36CModel',
+    'Ablation38Model',
+    'DirichletNeutralRegularizedLoss',
+    'NoiseAwareProsodyCueExtractor',
     'create_ablation_optimizer',
 ]
 

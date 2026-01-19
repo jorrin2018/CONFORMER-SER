@@ -45,8 +45,18 @@ from src.ablation_studies import (
     Ablation26Model,
     Ablation27Model,
     Ablation28Model,
+    Ablation31Model,
+    Ablation32Model,
+    Ablation33Model,
+    Ablation38Model,
+    Ablation34Model,
+    Ablation35Model,
+    Ablation36AModel,
+    Ablation36BModel,
+    Ablation36CModel,
     create_ablation_optimizer
 )
+from src.ablation_studies.ablation_30_dirichlet import Ablation30Model
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
 from src.utils.logger import setup_logger, TensorBoardLogger, ExperimentTracker, print_model_summary
 from src.utils.losses import create_loss_function
@@ -147,8 +157,31 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation27Model(config)
     elif study_number == 28:
         model = Ablation28Model(config)
+    elif study_number == 29:
+        # Ablation 29: Ablation 25 with K-Fold
+        model = Ablation25Model(config)
+    elif study_number == 30:
+        model = Ablation30Model(config)
+    elif study_number == 31:
+        model = Ablation31Model(config)
+    elif study_number == 32:
+        model = Ablation32Model(config)
+    elif study_number == 33:
+        model = Ablation33Model(config)
+    elif study_number == 34:
+        model = Ablation34Model(config)
+    elif study_number == 35:
+        model = Ablation35Model(config)
+    elif study_number == 36:  # 36A
+        model = Ablation36AModel(config)
+    elif study_number == 37:  # 37: Dirichlet + Conflict-Aware (similar to 36A but with different config)
+        model = Ablation36AModel(config)
+    elif study_number == 38:  # Ablation 38: OpenSMILE + Attention Gates + Residual
+        model = Ablation38Model(config)
+    elif study_number == 39:  # 36C
+        model = Ablation36CModel(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-28.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-39.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -210,6 +243,84 @@ def _run_ablation_with_config(
     # Create model
     model = create_ablation_model(study_number, config, device, logger)
     
+    # Apply optimizations for RTX 4060 (8GB VRAM)
+    model_config = config.get('model', {})
+    
+    # 1. Gradient Checkpointing (saves ~60% VRAM, costs ~20% speed)
+    if model_config.get('gradient_checkpointing', False):
+        if hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable()
+            logger.info("Gradient checkpointing enabled")
+        else:
+            # Try to enable for encoder modules
+            for module in model.modules():
+                if hasattr(module, 'gradient_checkpointing_enable'):
+                    module.gradient_checkpointing_enable()
+            logger.info("Gradient checkpointing enabled for encoder modules")
+    
+    # 2. torch.compile for kernel fusion (PyTorch 2.0+)
+    # Note: Requires Triton for optimal performance. Install with: pip install triton
+    # See: https://triton-lang.org/main/getting-started/installation.html
+    if model_config.get('use_torch_compile', False) and hasattr(torch, 'compile'):
+        compile_mode = model_config.get('compile_mode', 'reduce-overhead')
+        
+        # Check if Triton is available before attempting compilation
+        triton_available = False
+        try:
+            import triton
+            # Try a simple operation to verify Triton works
+            triton_available = True
+            logger.info("Triton is available for torch.compile")
+        except ImportError:
+            logger.warning("Triton not installed. torch.compile requires Triton for optimal performance.")
+            logger.info("Install with: pip install triton")
+            logger.info("Documentation: https://triton-lang.org/main/getting-started/installation.html")
+            logger.info("Continuing without model compilation. Performance may be slightly lower.")
+        except Exception as e:
+            logger.warning(f"Triton import failed: {e}")
+            logger.info("Continuing without model compilation.")
+        
+        if triton_available:
+            try:
+                # Try to compile the model
+                # Use a more conservative mode if reduce-overhead fails
+                try:
+                    model = torch.compile(model, mode=compile_mode)
+                    logger.info(f"Model compiled with mode: {compile_mode}")
+                except Exception as compile_error:
+                    # Try default mode if reduce-overhead fails
+                    if compile_mode != "default":
+                        logger.warning(f"Compilation with mode '{compile_mode}' failed: {compile_error}")
+                        logger.info("Trying with default mode...")
+                        try:
+                            model = torch.compile(model, mode="default")
+                            logger.info("Model compiled with default mode")
+                        except Exception as default_error:
+                            logger.warning(f"torch.compile failed even with default mode: {default_error}")
+                            logger.info("Continuing without model compilation.")
+                    else:
+                        raise compile_error
+            except Exception as e:
+                error_msg = str(e)
+                if 'TritonMissing' in error_msg or 'triton' in error_msg.lower():
+                    logger.warning("Triton is not working properly. Install/update with: pip install triton")
+                    logger.info("Documentation: https://triton-lang.org/main/getting-started/installation.html")
+                else:
+                    logger.warning(f"torch.compile failed: {error_msg}")
+                logger.info("Continuing without model compilation.")
+                # Model remains uncompiled, which is fine
+        else:
+            # Skip compilation if Triton is not available
+            logger.info("Skipping torch.compile (Triton not available). Model will run normally.")
+    
+    # 3. Enable FlashAttention if available and configured
+    if model_config.get('use_flash_attention', False):
+        try:
+            import xformers
+            logger.info("xformers available - FlashAttention will be used if supported by model")
+        except ImportError:
+            logger.warning("xformers not available. Install with: pip install xformers")
+    
     # Create loss function
     loss_config = config['training'].get('loss', {})
     loss_type = loss_config.get('type', 'cross_entropy')
@@ -222,10 +333,21 @@ def _run_ablation_with_config(
         with torch.no_grad():
             norm_weights = class_weights / (class_weights.sum() + 1e-9) * num_classes
             norm_weights = torch.clamp(norm_weights, min=0.5, max=5.0)
+        
+        # For Ablation 36B (study 38), increase neutral weight by 2.0x
+        if study_number == 38:  # Ablation 36B (Focal Loss)
+            neutral_idx = config['dataset']['emotions'].index('neutral') if 'neutral' in config['dataset']['emotions'] else 3
+            norm_weights[neutral_idx] = norm_weights[neutral_idx] * 2.0
+            norm_weights = torch.clamp(norm_weights, min=0.5, max=10.0)  # Allow higher max for neutral
+            logger.info(f"FocalLoss alpha (with 2.0x neutral weight): {norm_weights.tolist()}")
+        
         alpha = norm_weights
         logger.info(f"FocalLoss alpha (normalized & capped): {alpha.tolist()}")
     else:
         alpha = None
+    
+    # For Dirichlet losses, need to pass num_classes
+    num_classes = len(config['dataset']['emotions'])
     
     criterion = create_loss_function(
         loss_type=loss_type,
@@ -233,11 +355,80 @@ def _run_ablation_with_config(
         alpha=alpha,
         gamma=gamma,
         label_smoothing=label_smoothing,
-        device=device
+        device=device,
+        num_classes=num_classes
     )
     
+    # For Dirichlet losses, need to update epoch in loss function
+    if loss_type in ['dirichlet', 'dirichlet_neutral'] and hasattr(criterion, 'set_epoch'):
+        # Will be updated during training loop
+        pass
+    
     # Create optimizer using ablation-specific function
-    optimizer = create_ablation_optimizer(model, config, study_number)
+    # Support for 8-bit optimizer (bitsandbytes) for RTX 4060
+    training_config = config.get('training', {})
+    use_8bit_optimizer = training_config.get('use_8bit_optimizer', False)
+    
+    if use_8bit_optimizer:
+        try:
+            import bitsandbytes as bnb
+            logger.info("Using 8-bit optimizer (bitsandbytes) to reduce VRAM usage by ~75%")
+            
+            # Get parameter groups from standard optimizer creation
+            training_config_temp = config.get('training', {})
+            model_config = config.get('model', {})
+            lr_audio = float(training_config_temp.get('learning_rate_audio', 1e-6))
+            lr_text = float(training_config_temp.get('learning_rate_text', 2e-5))
+            lr_fusion = float(training_config_temp.get('learning_rate_fusion', 5e-5))
+            weight_decay = training_config_temp.get('weight_decay', 0.05)
+            adam_epsilon = float(training_config_temp.get('adam_epsilon', 1e-8))
+            
+            # Create parameter groups
+            audio_params = []
+            text_params = []
+            fusion_params = []
+            
+            for name, param in model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                if 'audio_encoder' in name:
+                    audio_params.append(param)
+                elif 'text_encoder' in name:
+                    text_params.append(param)
+                else:
+                    fusion_params.append(param)
+            
+            param_groups = []
+            if audio_params:
+                param_groups.append({
+                    'params': audio_params,
+                    'lr': lr_audio,
+                    'weight_decay': weight_decay
+                })
+            if text_params:
+                param_groups.append({
+                    'params': text_params,
+                    'lr': lr_text,
+                    'weight_decay': weight_decay
+                })
+            if fusion_params:
+                param_groups.append({
+                    'params': fusion_params,
+                    'lr': lr_fusion,
+                    'weight_decay': weight_decay
+                })
+            
+            # Use 8-bit AdamW
+            optimizer = bnb.optim.AdamW8bit(
+                param_groups,
+                eps=adam_epsilon
+            )
+        except ImportError:
+            logger.warning("bitsandbytes not available. Install with: pip install bitsandbytes")
+            logger.info("Falling back to standard optimizer")
+            optimizer = create_ablation_optimizer(model, config, study_number)
+    else:
+        optimizer = create_ablation_optimizer(model, config, study_number)
     
     # Create scheduler (reuse logic from train.py)
     num_training_steps = len(train_loader) * config['training']['num_epochs']
@@ -296,9 +487,13 @@ def _run_ablation_with_config(
     else:
         scheduler = None
     
-    # Initialize mixed precision scaler
+    # Handle mixed precision: "bf16", "fp16", "fp8", or False
+    mixed_precision = config['training'].get('mixed_precision', False)
+    use_loss_scaling = config['training'].get('use_loss_scaling', True)  # Default True for FP16, False for BF16
+    
+    # Initialize scaler only if needed (FP16 requires it, BF16 doesn't)
     scaler = None
-    if config['training']['mixed_precision']:
+    if mixed_precision in ['fp16', 'fp8']:
         if config['compute']['device'] == 'cuda':
             try:
                 from torch.amp import GradScaler
@@ -308,6 +503,11 @@ def _run_ablation_with_config(
                 scaler = GradScaler()
         else:
             scaler = None
+    elif mixed_precision == 'bf16':
+        # BF16 doesn't need loss scaling (same dynamic range as FP32)
+        use_loss_scaling = False
+        scaler = None
+        logger.info("Using BFloat16 mixed precision (no loss scaling needed)")
     
     # Training loop (reuse from train.py)
     best_val_ua = 0.0
@@ -322,6 +522,10 @@ def _run_ablation_with_config(
     
     for epoch in range(1, config['training']['num_epochs'] + 1):
         logger.info(f"\nEpoch {epoch}/{config['training']['num_epochs']}")
+        
+        # Update epoch in Dirichlet loss function if applicable
+        if hasattr(criterion, 'set_epoch'):
+            criterion.set_epoch(epoch)
         
         # Train
         train_loss, train_metrics = train_epoch(
@@ -762,7 +966,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-13). If not specified, runs all.')
+                        help='Run specific study (1-39). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -799,13 +1003,24 @@ def main():
         (26, "config/ablation/ablation_26_gated_fusion.yaml"),
         (27, "config/ablation/ablation_27_late_fusion.yaml"),
         (28, "config/ablation/ablation_28_glu_fusion.yaml"),
+        (29, "config/ablation/ablation_25_kfold.yaml"),
+        (30, "config/ablation/ablation_30_dirichlet.yaml"),
+        (31, "config/ablation/ablation_31_temporal_alignment.yaml"),
+        (32, "config/ablation/ablation_32_temporal_bucketing.yaml"),
+        (33, "config/ablation/ablation_33_noise_aware_speechcue.yaml"),
+        (34, "config/ablation/ablation_34_conflict_aware_attention.yaml"),
+        (35, "config/ablation/ablation_35_modal_stratified_al.yaml"),
+        (36, "config/ablation/ablation_36a_dirichlet_conflict.yaml"),  # 36A
+        (37, "config/ablation/ablation_37_dirichlet_conflict_aware.yaml"),  # 37: Dirichlet + Conflict-Aware
+        (38, "config/ablation/ablation_38_opensmile_residual.yaml"),  # Ablation 38: OpenSMILE + Attention Gates + Residual
+        (39, "config/ablation/ablation_36c_hybrid_conflict.yaml"),  # 36C
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-28")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-39")
             return
     
     # Run each study
@@ -820,8 +1035,8 @@ def main():
                     device=args.device,
                     experiment_name=experiment_name
                 )
-            elif study_number == 20:
-                # Special case: Ablation 20 runs K-Fold cross-validation with cache clearing
+            elif study_number in (20, 29):
+                # Special case: Ablation 20 and 29 run K-Fold cross-validation with cache clearing
                 run_ablation_study_kfold(
                     study_number=study_number,
                     config_path=config_path,

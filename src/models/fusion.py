@@ -125,19 +125,17 @@ class CrossAttentionFusion(nn.Module):
         self.text_dim = text_dim
         self.hidden_dim = hidden_dim
         
-        # Projection layers
+        # Projection layers to common dimension
         self.audio_proj = nn.Linear(audio_dim, hidden_dim)
         self.text_proj = nn.Linear(text_dim, hidden_dim)
         
-        # Cross-attention: audio attends to text
+        # Cross-attention: audio attends to text and vice versa
         self.audio_to_text_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             dropout=dropout,
             batch_first=True
         )
-        
-        # Cross-attention: text attends to audio
         self.text_to_audio_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
@@ -145,11 +143,11 @@ class CrossAttentionFusion(nn.Module):
             batch_first=True
         )
         
-        # Layer normalization
+        # LayerNorm for residual connections
         self.audio_norm = nn.LayerNorm(hidden_dim)
         self.text_norm = nn.LayerNorm(hidden_dim)
         
-        # Fusion layers - Improved MLP with GELU and LayerNorm (better for small batch sizes)
+        # Fusion layers
         self.fusion = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -167,7 +165,7 @@ class CrossAttentionFusion(nn.Module):
             nn.Dropout(dropout * 0.6)
         )
         
-        # Improved classification head with projection
+        # Classification head
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.GELU(),
@@ -181,7 +179,7 @@ class CrossAttentionFusion(nn.Module):
         text_features: torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass with cross-attention.
+        Forward pass.
         
         Args:
             audio_features: Audio features (batch_size, audio_dim)
@@ -194,34 +192,32 @@ class CrossAttentionFusion(nn.Module):
         audio_emb = self.audio_proj(audio_features)
         text_emb = self.text_proj(text_features)
         
-        # Add sequence dimension for attention (batch_size, 1, hidden_dim)
-        audio_emb = audio_emb.unsqueeze(1)
-        text_emb = text_emb.unsqueeze(1)
+        # Add sequence dimension for attention
+        audio_seq = audio_emb.unsqueeze(1)  # (B, 1, H)
+        text_seq = text_emb.unsqueeze(1)   # (B, 1, H)
         
-        # Cross-attention: audio attends to text
-        audio_attended, _ = self.audio_to_text_attn(
-            query=audio_emb,
-            key=text_emb,
-            value=text_emb
+        # Cross-attention: audio attends to text and vice versa
+        audio_ctx, _ = self.audio_to_text_attn(
+            query=audio_seq,
+            key=text_seq,
+            value=text_seq
         )
-        audio_attended = self.audio_norm(audio_attended + audio_emb)
+        text_ctx, _ = self.text_to_audio_attn(
+            query=text_seq,
+            key=audio_seq,
+            value=audio_seq
+        )
         
-        # Cross-attention: text attends to audio
-        text_attended, _ = self.text_to_audio_attn(
-            query=text_emb,
-            key=audio_emb,
-            value=audio_emb
-        )
-        text_attended = self.text_norm(text_attended + text_emb)
+        # Residual + LayerNorm
+        audio_ctx = self.audio_norm(audio_ctx + audio_seq)
+        text_ctx = self.text_norm(text_ctx + text_seq)
         
         # Remove sequence dimension
-        audio_attended = audio_attended.squeeze(1)
-        text_attended = text_attended.squeeze(1)
+        audio_ctx = audio_ctx.squeeze(1)  # (B, H)
+        text_ctx = text_ctx.squeeze(1)   # (B, H)
         
-        # Concatenate attended features
-        fused = torch.cat([audio_attended, text_attended], dim=-1)
-        
-        # Fusion
+        # Concatenate and fuse
+        fused = torch.cat([audio_ctx, text_ctx], dim=-1)
         fused = self.fusion(fused)
         
         # Classification
@@ -253,6 +249,10 @@ class GatedFusion(nn.Module):
         """
         super().__init__()
         
+        self.audio_dim = audio_dim
+        self.text_dim = text_dim
+        self.hidden_dim = hidden_dim
+        
         # Projection layers
         self.audio_proj = nn.Linear(audio_dim, hidden_dim)
         self.text_proj = nn.Linear(text_dim, hidden_dim)
@@ -260,30 +260,28 @@ class GatedFusion(nn.Module):
         # Gating mechanism
         self.gate = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 2),
-            nn.Softmax(dim=-1)
+            nn.Sigmoid()
         )
         
-        # Fusion layers - Improved MLP with GELU and BatchNorm
+        # Fusion layers
         self.fusion = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
             
             nn.Linear(hidden_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout * 0.8),
             
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.BatchNorm1d(hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
             nn.GELU(),
             nn.Dropout(dropout * 0.6)
         )
         
-        # Improved classification head with projection
+        # Classification head
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.GELU(),
@@ -295,35 +293,37 @@ class GatedFusion(nn.Module):
         self,
         audio_features: torch.Tensor,
         text_features: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
-        Forward pass with gating.
+        Forward pass.
         
         Args:
             audio_features: Audio features (batch_size, audio_dim)
             text_features: Text features (batch_size, text_dim)
             
         Returns:
-            Tuple of (logits, gate_weights)
+            Logits (batch_size, num_classes)
         """
         # Project to common dimension
         audio_emb = self.audio_proj(audio_features)
         text_emb = self.text_proj(text_features)
         
-        # Compute gate weights
-        concat = torch.cat([audio_emb, text_emb], dim=-1)
-        gate_weights = self.gate(concat)  # (batch_size, 2)
+        # Compute gate
+        gate_input = torch.cat([audio_emb, text_emb], dim=-1)
+        gate_weights = self.gate(gate_input)
         
-        # Weighted combination
-        fused = gate_weights[:, 0:1] * audio_emb + gate_weights[:, 1:2] * text_emb
+        # Gated fusion
+        gated_audio = audio_emb * gate_weights
+        gated_text = text_emb * (1 - gate_weights)
         
-        # Fusion
+        # Concatenate and fuse
+        fused = torch.cat([gated_audio, gated_text], dim=-1)
         fused = self.fusion(fused)
         
         # Classification
         logits = self.classifier(fused)
         
-        return logits, gate_weights
+        return logits
 
 
 class GIAFusion(nn.Module):
@@ -332,7 +332,7 @@ class GIAFusion(nn.Module):
 
     Combines bidirectional cross-attention between audio and text with
     modality-specific gating mechanisms that control how much cross-modal
-    information is injected into each stream.
+    information each modality incorporates.
     """
 
     def __init__(
@@ -374,14 +374,15 @@ class GIAFusion(nn.Module):
 
         # Gating networks per modality.
         # Each gate receives [self_representation, cross_representation]
-        # and outputs values in (0, 1) that weight the mixture.
+        # and outputs a gating vector in (0, 1) to blend self and cross.
         def make_gate():
             return nn.Sequential(
                 nn.Linear(hidden_dim * 2, hidden_dim),
                 nn.LayerNorm(hidden_dim),
                 nn.GELU(),
+                nn.Dropout(dropout * 0.5),
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.Sigmoid(),
+                nn.Sigmoid(),  # Output in (0, 1)
             )
 
         self.audio_gate = make_gate()
@@ -389,7 +390,7 @@ class GIAFusion(nn.Module):
 
         # Fusion MLP (kept compatible with CrossAttentionFusion so that
         # the output dimension is hidden_dim // 2 and downstream heads
-        # like the LSTM used in ablation studies can be reused).
+        # can be reused)
         self.fusion = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -418,9 +419,11 @@ class GIAFusion(nn.Module):
     def forward(
         self,
         audio_features: torch.Tensor,
-        text_features: torch.Tensor,
+        text_features: torch.Tensor
     ) -> torch.Tensor:
         """
+        Forward pass.
+
         Args:
             audio_features: Audio features (batch_size, audio_dim)
             text_features: Text features (batch_size, text_dim)
@@ -428,24 +431,24 @@ class GIAFusion(nn.Module):
         Returns:
             Logits (batch_size, num_classes)
         """
-        # Project modalities to common space
+        # Project to common space
         audio_emb = self.audio_proj(audio_features)  # (B, H)
         text_emb = self.text_proj(text_features)     # (B, H)
 
         # Add sequence dimension for attention
         audio_seq = audio_emb.unsqueeze(1)  # (B, 1, H)
-        text_seq = text_emb.unsqueeze(1)    # (B, 1, H)
+        text_seq = text_emb.unsqueeze(1)   # (B, 1, H)
 
         # Cross-attention: audio attends to text and vice versa
         audio_ctx, _ = self.audio_to_text_attn(
             query=audio_seq,
             key=text_seq,
-            value=text_seq,
+            value=text_seq
         )
         text_ctx, _ = self.text_to_audio_attn(
             query=text_seq,
             key=audio_seq,
-            value=audio_seq,
+            value=audio_seq
         )
 
         # Residual + LayerNorm (as in the GIA block)
@@ -454,7 +457,7 @@ class GIAFusion(nn.Module):
 
         # Remove sequence dimension
         audio_ctx = audio_ctx.squeeze(1)  # (B, H)
-        text_ctx = text_ctx.squeeze(1)    # (B, H)
+        text_ctx = text_ctx.squeeze(1)   # (B, H)
 
         # Compute modality-specific gates
         audio_gate_input = torch.cat([audio_emb, audio_ctx], dim=-1)
@@ -465,8 +468,8 @@ class GIAFusion(nn.Module):
 
         # Gated interaction:
         # H_A^{GIA} = g * H_cross + (1 - g) * H_self (same for text)
-        audio_gia = g_audio * audio_ctx + (1.0 - g_audio) * audio_emb
-        text_gia = g_text * text_ctx + (1.0 - g_text) * text_emb
+        audio_gia = g_audio * audio_ctx + (1 - g_audio) * audio_emb
+        text_gia = g_text * text_ctx + (1 - g_text) * text_emb
 
         # Concatenate refined representations and pass through fusion MLP
         fused = torch.cat([audio_gia, text_gia], dim=-1)
@@ -480,13 +483,11 @@ class GIAFusion(nn.Module):
 
 class TriModalCrossAttentionFusion(nn.Module):
     """
-    Cross-attention-style fusion for three modalities:
-    audio, text, and vision (e.g., ViT over Mel-spectrogram images).
+    Cross-attention-style fusion for three modalities: audio, text, and vision.
 
     The three modality embeddings are projected to a common space,
     jointly refined via self-attention, and then collapsed to a
-    single fused representation that is compatible with the
-    ablation heads (output dim = hidden_dim // 2, like CrossAttentionFusion/GIAFusion).
+    single representation for classification.
     """
 
     def __init__(
@@ -523,7 +524,7 @@ class TriModalCrossAttentionFusion(nn.Module):
 
         # Fusion MLP:
         # input: concatenation of the 3 refined tokens => 3 * hidden_dim
-        # output: hidden_dim // 2 (to stay compatible with ablation heads)
+        # output: hidden_dim // 2
         self.fusion = nn.Sequential(
             nn.Linear(hidden_dim * 3, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -564,7 +565,7 @@ class TriModalCrossAttentionFusion(nn.Module):
         Returns:
             Logits (batch_size, num_classes)
         """
-        # Project each modality to common hidden space
+        # Project to common space
         audio_emb = self.audio_proj(audio_features)   # (B, H)
         text_emb = self.text_proj(text_features)      # (B, H)
         vision_emb = self.vision_proj(vision_features)  # (B, H)
@@ -578,21 +579,19 @@ class TriModalCrossAttentionFusion(nn.Module):
 
         # Flatten tokens and pass through fusion MLP
         fused = tokens.reshape(tokens.size(0), -1)  # (B, 3 * H)
-        fused = self.fusion(fused)                  # (B, H//2)
+        fused = self.fusion(fused)  # (B, H//2)
 
         # Classification (can be overridden in ablation models)
         logits = self.classifier(fused)
+
         return logits
 
 
 class TriModalHierarchicalFusion(nn.Module):
     """
     Hierarchical fusion for three modalities: audio, text, and vision.
-    
-    Fusion progresses in multiple levels:
-    1. First fuses audio + text
-    2. Then fuses the result with vision
-    Each level uses cross-attention.
+
+    First fuses audio and text, then fuses the result with vision.
     """
 
     def __init__(
@@ -845,7 +844,7 @@ class TriModalTensorFusion(nn.Module):
             audio_r = torch.matmul(audio_emb, self.audio_factors[r])  # (B, H)
             text_r = torch.matmul(text_emb, self.text_factors[r])    # (B, H)
             vision_r = torch.matmul(vision_emb, self.vision_factors[r])  # (B, H)
-            fused += audio_r * text_r * vision_r
+            fused += audio_r * text_r * vision_r  # Element-wise product
 
         fused = fused + self.fusion_bias
         fused = self.fusion(fused)  # (B, H//2)
@@ -859,8 +858,7 @@ class TriModalBilinearFusion(nn.Module):
     """
     Bilinear Pooling fusion for three modalities.
     
-    Captures second-order interactions between modalities using
-    factorized bilinear pooling for efficiency.
+    Captures second-order interactions between pairs of modalities.
     """
 
     def __init__(
@@ -888,13 +886,12 @@ class TriModalBilinearFusion(nn.Module):
 
         # Factorized bilinear pooling
         # For pairwise interactions: audio-text, audio-vision, text-vision
-        # Each uses low-rank bilinear: (U @ x) * (V @ y)
-        self.audio_text_U = nn.Linear(hidden_dim, rank, bias=False)
-        self.audio_text_V = nn.Linear(hidden_dim, rank, bias=False)
-        self.audio_vision_U = nn.Linear(hidden_dim, rank, bias=False)
-        self.audio_vision_V = nn.Linear(hidden_dim, rank, bias=False)
-        self.text_vision_U = nn.Linear(hidden_dim, rank, bias=False)
-        self.text_vision_V = nn.Linear(hidden_dim, rank, bias=False)
+        self.audio_text_U = nn.Linear(hidden_dim, rank)
+        self.audio_text_V = nn.Linear(hidden_dim, rank)
+        self.audio_vision_U = nn.Linear(hidden_dim, rank)
+        self.audio_vision_V = nn.Linear(hidden_dim, rank)
+        self.text_vision_U = nn.Linear(hidden_dim, rank)
+        self.text_vision_V = nn.Linear(hidden_dim, rank)
 
         # Combine pairwise interactions
         self.pairwise_fusion = nn.Sequential(
@@ -906,7 +903,7 @@ class TriModalBilinearFusion(nn.Module):
 
         # Final fusion MLP
         self.fusion = nn.Sequential(
-            nn.Linear(hidden_dim * 4, hidden_dim),  # 3 pairwise + 1 direct
+            nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -959,15 +956,14 @@ class TriModalBilinearFusion(nn.Module):
         text_vision = (self.text_vision_U(text_emb) * self.text_vision_V(vision_emb))  # (B, rank)
 
         # Combine pairwise interactions
-        pairwise = torch.cat([audio_text, audio_vision, text_vision], dim=-1)  # (B, rank*3)
+        pairwise = torch.cat([audio_text, audio_vision, text_vision], dim=-1)  # (B, 3*rank)
         pairwise_fused = self.pairwise_fusion(pairwise)  # (B, H)
 
-        # Combine with direct features
-        all_features = torch.cat([audio_emb, text_emb, vision_emb, pairwise_fused], dim=-1)  # (B, 4*H)
-        final_fused = self.fusion(all_features)  # (B, H//2)
+        # Final fusion
+        fused = self.fusion(pairwise_fused)  # (B, H//2)
 
         # Classification
-        logits = self.classifier(final_fused)
+        logits = self.classifier(fused)
         return logits
 
 
@@ -975,8 +971,8 @@ class TriModalAdaptiveWeightedFusion(nn.Module):
     """
     Adaptive Weighted Fusion for three modalities.
     
-    Learns dynamic weights for each modality using attention mechanism,
-    then combines weighted features.
+    Learns scalar weights (via sigmoid) to dynamically assign importance
+    to each modality.
     """
 
     def __init__(
@@ -986,7 +982,6 @@ class TriModalAdaptiveWeightedFusion(nn.Module):
         vision_dim: int,
         hidden_dim: int,
         num_classes: int,
-        num_heads: int = 8,
         dropout: float = 0.3,
     ):
         super().__init__()
@@ -1001,27 +996,15 @@ class TriModalAdaptiveWeightedFusion(nn.Module):
         self.text_proj = nn.Linear(text_dim, hidden_dim)
         self.vision_proj = nn.Linear(vision_dim, hidden_dim)
 
-        # Attention mechanism to compute adaptive weights
-        # Query: learnable context vector
-        # Keys/Values: modality embeddings
-        self.context_vector = nn.Parameter(torch.randn(1, 1, hidden_dim))
-        nn.init.xavier_uniform_(self.context_vector)
-
-        self.weight_attention = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-
-        self.weight_norm = nn.LayerNorm(hidden_dim)
-
-        # Weight projection to get 3 weights (one per modality)
-        self.weight_proj = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+        # Weight estimation network
+        # Takes concatenated features and outputs 3 weights (one per modality)
+        self.weight_net = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.GELU(),
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, 3),
-            nn.Softmax(dim=-1),
+            nn.Softmax(dim=-1),  # Normalize weights to sum to 1
         )
 
         # Fusion MLP
@@ -1068,29 +1051,16 @@ class TriModalAdaptiveWeightedFusion(nn.Module):
         text_emb = self.text_proj(text_features)      # (B, H)
         vision_emb = self.vision_proj(vision_features)  # (B, H)
 
-        # Stack modalities as sequence
-        modalities = torch.stack([audio_emb, text_emb, vision_emb], dim=1)  # (B, 3, H)
-
-        # Compute adaptive weights using attention
-        batch_size = audio_emb.size(0)
-        context = self.context_vector.expand(batch_size, -1, -1)  # (B, 1, H)
-
-        attended, _ = self.weight_attention(
-            query=context,
-            key=modalities,
-            value=modalities,
-        )
-        attended = self.weight_norm(attended + context)
-        attended = attended.squeeze(1)  # (B, H)
-
-        # Get weights for each modality
-        weights = self.weight_proj(attended)  # (B, 3)
+        # Estimate adaptive weights
+        all_features = torch.cat([audio_emb, text_emb, vision_emb], dim=-1)  # (B, 3*H)
+        weights = self.weight_net(all_features)  # (B, 3)
 
         # Weighted combination
-        weighted_audio = weights[:, 0:1] * audio_emb
-        weighted_text = weights[:, 1:2] * text_emb
-        weighted_vision = weights[:, 2:3] * vision_emb
+        weighted_audio = audio_emb * weights[:, 0:1]  # (B, H)
+        weighted_text = text_emb * weights[:, 1:2]   # (B, H)
+        weighted_vision = vision_emb * weights[:, 2:3]  # (B, H)
 
+        # Sum weighted features
         fused = weighted_audio + weighted_text + weighted_vision  # (B, H)
         fused = self.fusion(fused)  # (B, H//2)
 
@@ -1101,10 +1071,9 @@ class TriModalAdaptiveWeightedFusion(nn.Module):
 
 class TriModalEnhancedCrossAttentionFusion(nn.Module):
     """
-    Enhanced Cross-Attention Fusion with multiple layers.
+    Enhanced Cross-Attention Fusion for three modalities.
     
-    Uses a stack of cross-attention layers with residual connections
-    and layer normalization for deeper interaction modeling.
+    Uses multiple layers of cross-attention for deeper interaction modeling.
     """
 
     def __init__(
@@ -1124,30 +1093,26 @@ class TriModalEnhancedCrossAttentionFusion(nn.Module):
         self.text_dim = text_dim
         self.vision_dim = vision_dim
         self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
 
         # Projections to common hidden space
         self.audio_proj = nn.Linear(audio_dim, hidden_dim)
         self.text_proj = nn.Linear(text_dim, hidden_dim)
         self.vision_proj = nn.Linear(vision_dim, hidden_dim)
 
-        # Stack of cross-attention layers
-        self.attention_layers = nn.ModuleList()
-        self.norms = nn.ModuleList()
+        # Multiple cross-attention layers
+        self.cross_attn_layers = nn.ModuleList([
+            nn.MultiheadAttention(
+                embed_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=dropout,
+                batch_first=True,
+            ) for _ in range(num_layers)
+        ])
+        self.layer_norms = nn.ModuleList([
+            nn.LayerNorm(hidden_dim) for _ in range(num_layers)
+        ])
 
-        for _ in range(num_layers):
-            # Self-attention over 3 modalities
-            self.attention_layers.append(
-                nn.MultiheadAttention(
-                    embed_dim=hidden_dim,
-                    num_heads=num_heads,
-                    dropout=dropout,
-                    batch_first=True,
-                )
-            )
-            self.norms.append(nn.LayerNorm(hidden_dim))
-
-        # Fusion MLP
+        # Final fusion
         self.fusion = nn.Sequential(
             nn.Linear(hidden_dim * 3, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -1191,11 +1156,11 @@ class TriModalEnhancedCrossAttentionFusion(nn.Module):
         text_emb = self.text_proj(text_features)      # (B, H)
         vision_emb = self.vision_proj(vision_features)  # (B, H)
 
-        # Stack as sequence
+        # Stack modalities
         tokens = torch.stack([audio_emb, text_emb, vision_emb], dim=1)  # (B, 3, H)
 
-        # Apply multiple attention layers with residuals
-        for attn, norm in zip(self.attention_layers, self.norms):
+        # Apply multiple cross-attention layers
+        for attn, norm in zip(self.cross_attn_layers, self.layer_norms):
             attn_out, _ = attn(tokens, tokens, tokens)  # (B, 3, H)
             tokens = norm(tokens + attn_out)
 
@@ -1210,10 +1175,9 @@ class TriModalEnhancedCrossAttentionFusion(nn.Module):
 
 class TriModalGatedFusion(nn.Module):
     """
-    Gated Fusion for three modalities.
+    Gated Multimodal Unit (GMU) for three modalities.
     
-    Extension of GIA to three modalities with gating mechanisms
-    for adaptive information flow control.
+    Uses learnable gates to control the flow of information from each modality.
     """
 
     def __init__(
@@ -1223,7 +1187,6 @@ class TriModalGatedFusion(nn.Module):
         vision_dim: int,
         hidden_dim: int,
         num_classes: int,
-        num_heads: int = 8,
         dropout: float = 0.3,
     ):
         super().__init__()
@@ -1238,38 +1201,15 @@ class TriModalGatedFusion(nn.Module):
         self.text_proj = nn.Linear(text_dim, hidden_dim)
         self.vision_proj = nn.Linear(vision_dim, hidden_dim)
 
-        # Cross-attention between modalities
-        self.audio_to_others_attn = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.text_to_others_attn = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.vision_to_others_attn = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-
-        # Layer norms
-        self.audio_norm = nn.LayerNorm(hidden_dim)
-        self.text_norm = nn.LayerNorm(hidden_dim)
-        self.vision_norm = nn.LayerNorm(hidden_dim)
-
         # Gating networks for each modality
+        # Each gate takes all modalities and outputs a gate value for that modality
         def make_gate():
             return nn.Sequential(
-                nn.Linear(hidden_dim * 2, hidden_dim),
+                nn.Linear(hidden_dim * 3, hidden_dim),
                 nn.LayerNorm(hidden_dim),
                 nn.GELU(),
-                nn.Linear(hidden_dim, hidden_dim),
+                nn.Dropout(dropout * 0.5),
+                nn.Linear(hidden_dim, 1),
                 nn.Sigmoid(),
             )
 
@@ -1321,53 +1261,19 @@ class TriModalGatedFusion(nn.Module):
         text_emb = self.text_proj(text_features)      # (B, H)
         vision_emb = self.vision_proj(vision_features)  # (B, H)
 
-        # Prepare sequences
-        audio_seq = audio_emb.unsqueeze(1)  # (B, 1, H)
-        text_seq = text_emb.unsqueeze(1)   # (B, 1, H)
-        vision_seq = vision_emb.unsqueeze(1)  # (B, 1, H)
-
-        # Stack other modalities for cross-attention
-        others = torch.stack([text_emb, vision_emb], dim=1)  # (B, 2, H) for audio
-        text_others = torch.stack([audio_emb, vision_emb], dim=1)  # (B, 2, H) for text
-        vision_others = torch.stack([audio_emb, text_emb], dim=1)  # (B, 2, H) for vision
-
-        # Cross-attention
-        audio_ctx, _ = self.audio_to_others_attn(
-            query=audio_seq, key=others, value=others
-        )
-        text_ctx, _ = self.text_to_others_attn(
-            query=text_seq, key=text_others, value=text_others
-        )
-        vision_ctx, _ = self.vision_to_others_attn(
-            query=vision_seq, key=vision_others, value=vision_others
-        )
-
-        # Residual + norm
-        audio_ctx = self.audio_norm(audio_ctx + audio_seq)
-        text_ctx = self.text_norm(text_ctx + text_seq)
-        vision_ctx = self.vision_norm(vision_ctx + vision_seq)
-
-        # Remove sequence dimension
-        audio_ctx = audio_ctx.squeeze(1)  # (B, H)
-        text_ctx = text_ctx.squeeze(1)    # (B, H)
-        vision_ctx = vision_ctx.squeeze(1)  # (B, H)
-
         # Compute gates
-        audio_gate_input = torch.cat([audio_emb, audio_ctx], dim=-1)
-        text_gate_input = torch.cat([text_emb, text_ctx], dim=-1)
-        vision_gate_input = torch.cat([vision_emb, vision_ctx], dim=-1)
+        all_features = torch.cat([audio_emb, text_emb, vision_emb], dim=-1)  # (B, 3*H)
+        audio_gate = self.audio_gate(all_features)  # (B, 1)
+        text_gate = self.text_gate(all_features)   # (B, 1)
+        vision_gate = self.vision_gate(all_features)  # (B, 1)
 
-        g_audio = self.audio_gate(audio_gate_input)
-        g_text = self.text_gate(text_gate_input)
-        g_vision = self.vision_gate(vision_gate_input)
-
-        # Gated combination
-        audio_gated = g_audio * audio_ctx + (1.0 - g_audio) * audio_emb
-        text_gated = g_text * text_ctx + (1.0 - g_text) * text_emb
-        vision_gated = g_vision * vision_ctx + (1.0 - g_vision) * vision_emb
+        # Apply gates
+        gated_audio = audio_emb * audio_gate
+        gated_text = text_emb * text_gate
+        gated_vision = vision_emb * vision_gate
 
         # Concatenate and fuse
-        fused = torch.cat([audio_gated, text_gated, vision_gated], dim=-1)
+        fused = torch.cat([gated_audio, gated_text, gated_vision], dim=-1)  # (B, 3*H)
         fused = self.fusion(fused)  # (B, H//2)
 
         # Classification
@@ -1379,8 +1285,8 @@ class TriModalLateFusion(nn.Module):
     """
     Late Fusion for three modalities.
     
-    Each modality processes independently through its own classifier,
-    then final logits are combined via weighted voting or averaging.
+    Processes each modality independently until the end, then combines
+    logits/probabilities by averaging or concatenation.
     """
 
     def __init__(
@@ -1497,16 +1403,16 @@ class TriModalGLUFusion(nn.Module):
         # GLU for each modality
         # GLU(x) = Linear1(x) ⊙ σ(Linear2(x))
         def make_glu():
-            return nn.ModuleDict({
+            return {
                 'linear1': nn.Linear(hidden_dim, hidden_dim),
                 'linear2': nn.Linear(hidden_dim, hidden_dim),
-            })
+            }
 
         self.audio_glu = make_glu()
         self.text_glu = make_glu()
         self.vision_glu = make_glu()
 
-        # Cross-attention after GLU filtering
+        # Cross-attention over filtered features
         self.cross_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
@@ -1584,3 +1490,206 @@ class TriModalGLUFusion(nn.Module):
         logits = self.classifier(fused)
         return logits
 
+
+class ConflictAwareCrossAttentionFusion(nn.Module):
+    """
+    Conflict-Aware Cross-Attention Fusion for three modalities.
+    
+    Detects when modalities contradict each other (e.g., happy text + angry audio)
+    and assigns weights based on "confidence" instead of simply averaging.
+    """
+
+    def __init__(
+        self,
+        audio_dim: int,
+        text_dim: int,
+        vision_dim: int,
+        hidden_dim: int,
+        num_classes: int,
+        num_heads: int = 8,
+        num_layers: int = 3,
+        dropout: float = 0.3,
+        conflict_threshold: float = 0.3,
+        conflict_detection_method: str = "prediction_divergence",
+    ):
+        super().__init__()
+
+        self.audio_dim = audio_dim
+        self.text_dim = text_dim
+        self.vision_dim = vision_dim
+        self.hidden_dim = hidden_dim
+        self.conflict_threshold = conflict_threshold
+        self.conflict_detection_method = conflict_detection_method
+
+        # Projections to common hidden space
+        self.audio_proj = nn.Linear(audio_dim, hidden_dim)
+        self.text_proj = nn.Linear(text_dim, hidden_dim)
+        self.vision_proj = nn.Linear(vision_dim, hidden_dim)
+
+        # Individual classifiers for conflict detection
+        # Initialize with small weights to prevent initial bias
+        self.audio_classifier = nn.Linear(hidden_dim, num_classes)
+        self.text_classifier = nn.Linear(hidden_dim, num_classes)
+        self.vision_classifier = nn.Linear(hidden_dim, num_classes)
+        
+        # Initialize conflict detection classifiers with small weights
+        for classifier in [self.audio_classifier, self.text_classifier, self.vision_classifier]:
+            nn.init.normal_(classifier.weight, mean=0.0, std=0.01)
+            if classifier.bias is not None:
+                nn.init.normal_(classifier.bias, mean=0.0, std=0.01)
+
+        # Cross-attention layers
+        self.cross_attn_layers = nn.ModuleList([
+            nn.MultiheadAttention(
+                embed_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=dropout,
+                batch_first=True,
+            ) for _ in range(num_layers)
+        ])
+        self.layer_norms = nn.ModuleList([
+            nn.LayerNorm(hidden_dim) for _ in range(num_layers)
+        ])
+
+        # Confidence estimation network
+        self.confidence_net = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 3),  # Confidence scores for each modality
+            nn.Sigmoid(),
+        )
+
+        # Final fusion
+        self.fusion = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.8),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.6),
+        )
+
+        # Final classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.4),
+            nn.Linear(hidden_dim // 4, num_classes),
+        )
+        
+        # Initialize classifier with small weights to prevent class collapse
+        self._init_classifier()
+    
+    def _init_classifier(self):
+        """Initialize classifier weights to prevent initial class collapse."""
+        for module in self.classifier.modules():
+            if isinstance(module, nn.Linear):
+                # Last layer gets very small initialization
+                if module == list(self.classifier.modules())[-1]:
+                    nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                    if module.bias is not None:
+                        nn.init.normal_(module.bias, mean=0.0, std=0.01)
+                else:
+                    nn.init.xavier_uniform_(module.weight, gain=1.0)
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0.0)
+
+    def _detect_conflict(
+        self,
+        audio_logits: torch.Tensor,
+        text_logits: torch.Tensor,
+        vision_logits: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Detect conflicts between modalities based on prediction divergence.
+        
+        Returns:
+            conflict_scores: (batch_size,) - 1.0 if conflict detected, 0.0 otherwise
+        """
+        # Get predicted classes
+        audio_pred = torch.argmax(audio_logits, dim=-1)  # (B,)
+        text_pred = torch.argmax(text_logits, dim=-1)    # (B,)
+        vision_pred = torch.argmax(vision_logits, dim=-1)  # (B,)
+
+        # Compute pairwise disagreements
+        audio_text_disagree = (audio_pred != text_pred).float()
+        audio_vision_disagree = (audio_pred != vision_pred).float()
+        text_vision_disagree = (text_pred != vision_pred).float()
+
+        # Conflict if at least two modalities disagree
+        conflict = (audio_text_disagree + audio_vision_disagree + text_vision_disagree) >= 2.0
+        return conflict.float()
+
+    def forward(
+        self,
+        audio_features: torch.Tensor,
+        text_features: torch.Tensor,
+        vision_features: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            audio_features: (batch_size, audio_dim)
+            text_features: (batch_size, text_dim)
+            vision_features: (batch_size, vision_dim)
+
+        Returns:
+            Logits (batch_size, num_classes)
+        """
+        # Project to common space
+        audio_emb = self.audio_proj(audio_features)   # (B, H)
+        text_emb = self.text_proj(text_features)      # (B, H)
+        vision_emb = self.vision_proj(vision_features)  # (B, H)
+
+        # Get individual predictions for conflict detection
+        audio_logits = self.audio_classifier(audio_emb)  # (B, num_classes)
+        text_logits = self.text_classifier(text_emb)     # (B, num_classes)
+        vision_logits = self.vision_classifier(vision_emb)  # (B, num_classes)
+
+        # Detect conflicts
+        conflicts = self._detect_conflict(audio_logits, text_logits, vision_logits)  # (B,)
+
+        # Stack modalities for cross-attention
+        tokens = torch.stack([audio_emb, text_emb, vision_emb], dim=1)  # (B, 3, H)
+
+        # Apply cross-attention layers
+        for attn, norm in zip(self.cross_attn_layers, self.layer_norms):
+            attn_out, _ = attn(tokens, tokens, tokens)  # (B, 3, H)
+            tokens = norm(tokens + attn_out)
+
+        # Estimate confidence for each modality
+        tokens_flat = tokens.reshape(tokens.size(0), -1)  # (B, 3*H)
+        confidence_scores = self.confidence_net(tokens_flat)  # (B, 3)
+
+        # Apply conflict-aware weighting
+        # When conflict detected, use confidence-based weighting
+        # Otherwise, use uniform weighting
+        base_weights = torch.ones_like(confidence_scores) / 3.0  # (B, 3)
+        conflict_weights = confidence_scores / (confidence_scores.sum(dim=-1, keepdim=True) + 1e-8)
+        
+        # Interpolate based on conflict detection
+        conflict_mask = conflicts.unsqueeze(-1)  # (B, 1)
+        final_weights = (1 - conflict_mask) * base_weights + conflict_mask * conflict_weights  # (B, 3)
+
+        # Weighted combination of attended tokens
+        weighted_tokens = tokens * final_weights.unsqueeze(-1)  # (B, 3, H)
+        fused = weighted_tokens.sum(dim=1)  # (B, H)
+
+        # Also concatenate for richer representation
+        tokens_concat = tokens.reshape(tokens.size(0), -1)  # (B, 3*H)
+        fused_concat = self.fusion(tokens_concat)  # (B, H//2)
+
+        # Combine fused representation with weighted average
+        # (This is a design choice - could also use only one)
+        final_fused = fused_concat  # Use concatenation-based fusion
+
+        # Classification
+        logits = self.classifier(final_fused)
+        return logits

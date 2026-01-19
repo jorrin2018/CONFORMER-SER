@@ -15,4 +15,14 @@ tqdm
 matplotlib
 seaborn
 accelerate
+opensmile>=2.4.0
+
+# Optional optimizations for RTX 4060 (8GB VRAM)
+# bitsandbytes>=0.41.0  # 8-bit optimizers (uncomment if needed)
+# xformers>=0.0.22  # FlashAttention-2 (uncomment if needed)
+# transformer-engine>=1.0.0  # FP8 support (uncomment if needed)
+# triton  # Required for torch.compile optimal performance
+#         # Install with: pip install triton
+#         # Documentation: https://triton-lang.org/main/getting-started/installation.html
+#         # Note: Binary wheels available for CPython 3.10-3.14
 
