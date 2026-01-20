@@ -54,6 +54,7 @@ from src.ablation_studies import (
     Ablation36AModel,
     Ablation36BModel,
     Ablation36CModel,
+    Ablation39Model,
     create_ablation_optimizer
 )
 from src.ablation_studies.ablation_30_dirichlet import Ablation30Model
@@ -178,8 +179,8 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation36AModel(config)
     elif study_number == 38:  # Ablation 38: OpenSMILE + Attention Gates + Residual
         model = Ablation38Model(config)
-    elif study_number == 39:  # 36C
-        model = Ablation36CModel(config)
+    elif study_number == 39:
+        model = Ablation39Model(config)
     else:
         raise ValueError(f"Invalid study number: {study_number}. Must be 1-39.")
     
