@@ -116,3 +116,4 @@ class BidirectionalConnectionAttentionFusion(nn.Module):
         }
         return outputs, total_loss
 
+

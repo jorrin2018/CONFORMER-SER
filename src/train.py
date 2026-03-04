@@ -492,7 +492,7 @@ def train_epoch(
         # Backward pass
         optimizer.zero_grad()
         
-        if config['training']['mixed_precision']:
+        if config['training']['mixed_precision'] and scaler is not None:
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             

@@ -188,6 +188,34 @@ class DirichletEvidenceLoss(nn.Module):
         self.epoch_num = epoch
 
 
+class CompositeLoss(nn.Module):
+    """
+    Weighted sum of multiple loss components (e.g. cross_entropy + focal).
+    """
+
+    def __init__(self, components: list):
+        """
+        Args:
+            components: List of (loss_module, weight) or dict with 'module' and 'weight'.
+        """
+        super().__init__()
+        self.components = nn.ModuleList()
+        self.weights = []
+        for c in components:
+            if isinstance(c, (list, tuple)):
+                mod, w = c[0], c[1]
+            else:
+                mod, w = c["module"], c["weight"]
+            self.components.append(mod)
+            self.weights.append(w)
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        total = 0.0
+        for mod, w in zip(self.components, self.weights):
+            total = total + w * mod(inputs, targets)
+        return total
+
+
 def create_loss_function(
     loss_type: str = 'cross_entropy',
     class_weights: Optional[torch.Tensor] = None,
@@ -195,21 +223,15 @@ def create_loss_function(
     gamma: float = 2.0,
     label_smoothing: float = 0.0,
     device: str = 'cuda',
-    num_classes: int = 4  # Added for Dirichlet
+    num_classes: int = 4,
+    loss_config: Optional[dict] = None,
 ) -> nn.Module:
     """
     Factory function to create loss function.
-    
+
     Args:
-        loss_type: Type of loss ('cross_entropy', 'focal', 'label_smoothing')
-        class_weights: Class weights for CrossEntropyLoss
-        alpha: Alpha weights for FocalLoss
-        gamma: Gamma parameter for FocalLoss
-        label_smoothing: Label smoothing factor
-        device: Device to move tensors to
-        
-    Returns:
-        Loss function module
+        loss_type: Type of loss ('cross_entropy', 'focal', 'label_smoothing', 'composite_loss', ...)
+        loss_config: Full loss config dict; required for composite_loss (must have 'components').
     """
     if loss_type == 'cross_entropy':
         if class_weights is not None:
@@ -246,7 +268,39 @@ def create_loss_function(
             neutral_class_idx=neutral_class_idx,
             neutral_weight=neutral_weight
         )
-    
+
+    elif loss_type == 'composite_loss':
+        if not loss_config or 'components' not in loss_config:
+            raise ValueError("composite_loss requires loss_config with 'components'")
+        comp_list = []
+        for name, cfg in loss_config['components'].items():
+            if not isinstance(cfg, dict):
+                continue
+            weight = cfg.get('weight', 1.0)
+            if name == 'cross_entropy':
+                ls = cfg.get('label_smoothing', 0.0)
+                if class_weights is not None:
+                    class_weights = class_weights.to(device)
+                sub = nn.CrossEntropyLoss(
+                    weight=class_weights,
+                    label_smoothing=ls
+                )
+            elif name == 'focal_loss' and cfg.get('enabled', True):
+                a = alpha
+                if a is not None:
+                    a = a.to(device)
+                sub = FocalLoss(
+                    alpha=a,
+                    gamma=cfg.get('gamma', 2.0),
+                    label_smoothing=cfg.get('label_smoothing', 0.0)
+                )
+            else:
+                continue
+            comp_list.append((sub, weight))
+        if not comp_list:
+            raise ValueError("composite_loss components must include at least cross_entropy or focal_loss")
+        return CompositeLoss(comp_list)
+
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")
 

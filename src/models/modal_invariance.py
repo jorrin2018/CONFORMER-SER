@@ -54,3 +54,4 @@ class ModalInvarianceConstraint(nn.Module):
         skl = 0.5 * (kl_pq + kl_qp)
         return skl
 
+

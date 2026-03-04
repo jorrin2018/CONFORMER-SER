@@ -274,3 +274,143 @@ class CNN1DClassificationHead(nn.Module):
         
         return logits
 
+
+class MultiScaleTemporalClassificationHead(nn.Module):
+    """
+    Multi-scale temporal classification head.
+
+    Combines temporal pooling (mean, max, attention), optional LSTM,
+    and optional self-attention before final classification.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_classes: int,
+        dropout: float = 0.3,
+        use_temporal_pooling: bool = True,
+        pooling_types: Optional[list] = None,
+        use_lstm: bool = True,
+        lstm_num_layers: int = 2,
+        lstm_bidirectional: bool = True,
+        lstm_hidden: int = 512,
+        lstm_dropout: float = 0.3,
+        use_self_attention: bool = True,
+        attention_heads: int = 4,
+        final_dropout: float = 0.4,
+    ):
+        super().__init__()
+        pooling_types = pooling_types or ["mean", "max", "attention"]
+        self.hidden_dim = hidden_dim
+        self.num_classes = num_classes
+        self.use_temporal_pooling = use_temporal_pooling
+        self.pooling_types = pooling_types
+        self.use_lstm = use_lstm
+        self.use_self_attention = use_self_attention
+
+        # Temporal pooling: for (B, 1, D) we get one vector per type
+        pool_dim = hidden_dim * len(pooling_types)
+        if "attention" in pooling_types:
+            self.attn_query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+            self.attn_pool = nn.MultiheadAttention(
+                embed_dim=hidden_dim,
+                num_heads=min(attention_heads, hidden_dim // 4 or 1),
+                dropout=dropout,
+                batch_first=True,
+            )
+        else:
+            self.attn_query = None
+            self.attn_pool = None
+
+        # LSTM: input (B, num_pool_vectors, hidden_dim) -> last hidden
+        self.lstm = None
+        if use_lstm:
+            lstm_out = lstm_hidden * 2 if lstm_bidirectional else lstm_hidden
+            self.lstm = nn.LSTM(
+                input_size=hidden_dim,
+                hidden_size=lstm_hidden,
+                num_layers=lstm_num_layers,
+                batch_first=True,
+                dropout=lstm_dropout if lstm_num_layers > 1 else 0,
+                bidirectional=lstm_bidirectional,
+            )
+            self.lstm_out_dim = lstm_out
+        else:
+            self.lstm_out_dim = 0
+
+        # Self-attention over pooled tokens
+        self.self_attn = None
+        if use_self_attention:
+            self.self_attn = nn.MultiheadAttention(
+                embed_dim=hidden_dim,
+                num_heads=min(attention_heads, hidden_dim // 4 or 1),
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.self_attn_norm = nn.LayerNorm(hidden_dim)
+            self.self_attn_out_dim = hidden_dim
+        else:
+            self.self_attn_out_dim = 0
+
+        # Combine: pool_concat + lstm_out (if used) + self_attn_out (if used)
+        combined_dim = pool_dim
+        if self.lstm is not None:
+            combined_dim += self.lstm_out_dim
+        if self.self_attn is not None:
+            combined_dim += self.self_attn_out_dim
+        self.final_dropout = nn.Dropout(final_dropout)
+        self.classifier = nn.Linear(combined_dim, num_classes)
+
+    def forward(self, fused_features: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            fused_features: (batch_size, hidden_dim) from fusion
+        Returns:
+            Logits (batch_size, num_classes)
+        """
+        x = fused_features.unsqueeze(1)  # (B, 1, D)
+        B = x.size(0)
+        num_tokens = len(self.pooling_types) if self.pooling_types else 1
+
+        # Build pooling vectors (one per pooling type)
+        pool_vecs = []
+        for ptype in (self.pooling_types or ["mean"]):
+            if ptype == "mean":
+                pool_vecs.append(x.mean(dim=1))
+            elif ptype == "max":
+                pool_vecs.append(x.max(dim=1).values)
+            elif ptype == "attention" and self.attn_pool is not None:
+                q = self.attn_query.expand(B, -1, -1)
+                out, _ = self.attn_pool(query=q, key=x, value=x)
+                pool_vecs.append(out.squeeze(1))
+            else:
+                pool_vecs.append(x.squeeze(1))
+        if not pool_vecs:
+            pool_vecs = [x.squeeze(1)]
+
+        # Sequence of tokens for LSTM / self-attention: (B, num_tokens, D)
+        seq = torch.stack(pool_vecs, dim=1)
+
+        parts = []
+        if self.use_temporal_pooling and pool_vecs:
+            parts.append(torch.cat(pool_vecs, dim=-1))
+
+        if self.lstm is not None:
+            lstm_out, (h, _) = self.lstm(seq)
+            if self.lstm.bidirectional:
+                h_forward = h[-2]
+                h_backward = h[-1]
+                h_concat = torch.cat([h_forward, h_backward], dim=-1)
+            else:
+                h_concat = h[-1]
+            parts.append(h_concat)
+
+        if self.self_attn is not None:
+            attn_out, _ = self.self_attn(seq, seq, seq)
+            attn_out = self.self_attn_norm(attn_out.mean(dim=1))
+            parts.append(attn_out)
+
+        out = torch.cat(parts, dim=-1)
+        out = self.final_dropout(out)
+        return self.classifier(out)
+

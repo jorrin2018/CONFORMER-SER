@@ -481,6 +481,159 @@ class GIAFusion(nn.Module):
         return logits
 
 
+class GatedInteractiveAttentionFusion(nn.Module):
+    """
+    Gated Interactive Attention Fusion (bimodal).
+
+    Multi-layer bidirectional cross-attention between audio and text with
+    modality-specific gating. Configurable via fusion_config (num_heads,
+    num_interaction_layers, gate_activation, residual_connections, etc.).
+    """
+
+    def __init__(
+        self,
+        audio_dim: int,
+        text_dim: int,
+        hidden_dim: int,
+        num_classes: int,
+        fusion_config: Optional[dict] = None,
+        dropout: float = 0.3,
+    ):
+        super().__init__()
+        cfg = fusion_config or {}
+        proj_dim = cfg.get("projection_dim", cfg.get("hidden_dim", hidden_dim))
+        num_heads = cfg.get("num_heads", 8)
+        num_layers = cfg.get("num_interaction_layers", 3)
+        use_gated = cfg.get("use_gated_mechanism", True)
+        gate_act = cfg.get("gate_activation", "sigmoid")
+        bidirectional_gates = cfg.get("bidirectional_gates", True)
+        use_residual = cfg.get("residual_connections", True)
+        use_ln = cfg.get("layer_norm", True)
+        attn_dropout = cfg.get("attention_dropout", 0.1)
+
+        self.audio_dim = audio_dim
+        self.text_dim = text_dim
+        self.hidden_dim = proj_dim
+        self.num_layers = num_layers
+        self.use_gated = use_gated
+        self.use_residual = use_residual
+        self.use_ln = use_ln
+
+        self.audio_proj = nn.Linear(audio_dim, proj_dim)
+        self.text_proj = nn.Linear(text_dim, proj_dim)
+
+        self.audio_norms = nn.ModuleList([nn.LayerNorm(proj_dim) for _ in range(num_layers)])
+        self.text_norms = nn.ModuleList([nn.LayerNorm(proj_dim) for _ in range(num_layers)])
+
+        self.audio_to_text_attns = nn.ModuleList([
+            nn.MultiheadAttention(
+                embed_dim=proj_dim,
+                num_heads=num_heads,
+                dropout=attn_dropout,
+                batch_first=True,
+            )
+            for _ in range(num_layers)
+        ])
+        self.text_to_audio_attns = nn.ModuleList([
+            nn.MultiheadAttention(
+                embed_dim=proj_dim,
+                num_heads=num_heads,
+                dropout=attn_dropout,
+                batch_first=True,
+            )
+            for _ in range(num_layers)
+        ])
+
+        if use_gated:
+            act = nn.Sigmoid() if gate_act == "sigmoid" else nn.Tanh()
+            def make_gate():
+                layers = [
+                    nn.Linear(proj_dim * 2, proj_dim),
+                    nn.GELU(),
+                    nn.Dropout(dropout * 0.5),
+                    nn.Linear(proj_dim, proj_dim),
+                    act,
+                ]
+                if use_ln:
+                    layers.insert(1, nn.LayerNorm(proj_dim))
+                return nn.Sequential(*layers)
+            self.audio_gates = nn.ModuleList([make_gate() for _ in range(num_layers)])
+            self.text_gates = nn.ModuleList([make_gate() for _ in range(num_layers)]) if bidirectional_gates else self.audio_gates
+        else:
+            self.audio_gates = None
+            self.text_gates = None
+
+        self.fusion = nn.Sequential(
+            nn.Linear(proj_dim * 2, proj_dim),
+            nn.LayerNorm(proj_dim) if use_ln else nn.Identity(),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(proj_dim, proj_dim // 2),
+            nn.LayerNorm(proj_dim // 2) if use_ln else nn.Identity(),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.8),
+        )
+        fusion_out_dim = proj_dim // 2
+
+        self.classifier = nn.Sequential(
+            nn.Linear(fusion_out_dim, fusion_out_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.4),
+            nn.Linear(fusion_out_dim // 2, num_classes),
+        )
+
+    def forward(
+        self,
+        audio_features: torch.Tensor,
+        text_features: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Args:
+            audio_features: (batch_size, audio_dim) or (batch_size, seq_len, audio_dim)
+            text_features: (batch_size, text_dim) or (batch_size, seq_len, text_dim)
+        Returns:
+            Logits (batch_size, num_classes)
+        """
+        if audio_features.dim() == 2:
+            audio_emb = self.audio_proj(audio_features).unsqueeze(1)
+            text_emb = self.text_proj(text_features).unsqueeze(1)
+        else:
+            audio_emb = self.audio_proj(audio_features)
+            text_emb = self.text_proj(text_features)
+        B = audio_emb.size(0)
+
+        for i in range(self.num_layers):
+            audio_ctx, _ = self.audio_to_text_attns[i](
+                query=audio_emb, key=text_emb, value=text_emb
+            )
+            text_ctx, _ = self.text_to_audio_attns[i](
+                query=text_emb, key=audio_emb, value=audio_emb
+            )
+            if self.use_residual:
+                audio_ctx = audio_ctx + audio_emb
+                text_ctx = text_ctx + text_emb
+            if self.use_ln:
+                audio_ctx = self.audio_norms[i](audio_ctx)
+                text_ctx = self.text_norms[i](text_ctx)
+            if self.use_gated and self.audio_gates is not None:
+                a_cat = torch.cat([audio_emb, audio_ctx], dim=-1).squeeze(1)
+                t_cat = torch.cat([text_emb, text_ctx], dim=-1).squeeze(1)
+                g_a = self.audio_gates[i](a_cat).unsqueeze(1)
+                gate_t = self.text_gates[i] if self.text_gates is not self.audio_gates else self.audio_gates[i]
+                g_t = gate_t(t_cat).unsqueeze(1)
+                audio_emb = g_a * audio_ctx + (1 - g_a) * audio_emb
+                text_emb = g_t * text_ctx + (1 - g_t) * text_emb
+            else:
+                audio_emb = audio_ctx
+                text_emb = text_ctx
+
+        audio_emb = audio_emb.squeeze(1)
+        text_emb = text_emb.squeeze(1)
+        fused = torch.cat([audio_emb, text_emb], dim=-1)
+        fused = self.fusion(fused)
+        return self.classifier(fused)
+
+
 class TriModalCrossAttentionFusion(nn.Module):
     """
     Cross-attention-style fusion for three modalities: audio, text, and vision.

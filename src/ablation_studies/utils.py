@@ -38,52 +38,51 @@ def create_ablation_optimizer(
     lr_audio = float(training_config.get('learning_rate_audio', 1e-6))
     lr_text = float(training_config.get('learning_rate_text', 2e-5))
     lr_fusion = float(training_config.get('learning_rate_fusion', 5e-5))
+    lr_classifier = float(training_config.get('learning_rate_classifier', lr_fusion))
     weight_decay = training_config.get('weight_decay', 0.1)
     adam_epsilon = float(training_config.get('adam_epsilon', 1e-8))
-    
-    if study_number in (1, 5, 6, 7, 8, 9, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28):
-        # Ablation 01, 05, 06, 07, 08, 09, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28:
-        # Separate groups for audio, text, and fusion (encoders parcialmente descongelados)
+
+    studies_with_separate_lr = (
+        1, 5, 6, 7, 8, 9, 11, 13, 14, 15, 16, 17, 18, 19, 20,
+        21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+    )
+    if study_number in studies_with_separate_lr:
         audio_params = []
         text_params = []
         fusion_params = []
-        
+        classifier_params = []
+
+        use_classifier_lr = training_config.get('learning_rate_classifier') is not None
+
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            
             if 'audio_encoder' in name:
                 audio_params.append(param)
             elif 'text_encoder' in name:
                 text_params.append(param)
+            elif use_classifier_lr and (
+                'classifier' in name or 'fusion.classifier' in name or '_aux' in name
+            ):
+                classifier_params.append(param)
             else:
                 fusion_params.append(param)
-        
-        # Create optimizer with separate groups
+
         param_groups = []
         if audio_params:
-            param_groups.append({
-                'params': audio_params,
-                'lr': lr_audio,
-                'weight_decay': weight_decay
-            })
+            param_groups.append({'params': audio_params, 'lr': lr_audio, 'weight_decay': weight_decay})
         if text_params:
-            param_groups.append({
-                'params': text_params,
-                'lr': lr_text,
-                'weight_decay': weight_decay
-            })
+            param_groups.append({'params': text_params, 'lr': lr_text, 'weight_decay': weight_decay})
         if fusion_params:
+            param_groups.append({'params': fusion_params, 'lr': lr_fusion, 'weight_decay': weight_decay})
+        if classifier_params:
             param_groups.append({
-                'params': fusion_params,
-                'lr': lr_fusion,
+                'params': classifier_params,
+                'lr': lr_classifier,
                 'weight_decay': weight_decay
             })
-        
-        optimizer = optim.AdamW(
-            param_groups,
-            eps=adam_epsilon
-        )
+
+        optimizer = optim.AdamW(param_groups, eps=adam_epsilon)
     else:
         # Other studies: Standard grouping (fusion only, encoders frozen)
         trainable_params = [p for p in model.parameters() if p.requires_grad]

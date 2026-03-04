@@ -1,8 +1,5 @@
-# Ablation Study 34: Conflict-Aware Cross-Attention
-# Base: Ablation 25 (Enhanced Cross-Attention - mejor resultado)
-# Modificación: Mecanismo de atención que detecta explícitamente cuando dos modalidades
-#               se contradicen (ej. Texto feliz + Audio enojado) y asigna pesos basados
-#               en "confianza" en lugar de simplemente promediar
+# Ablation Study 34: Phase1 - WavLM-large + RoBERTa + Gated Interactive Attention Fusion
+# Bimodal (audio + text), no vision. Optional conflict-aware weighting.
 
 dataset:
   data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
@@ -15,6 +12,7 @@ dataset:
   val_sessions: [4]
   test_sessions: [5]
   sample_rate: 16000
+  use_speaker_normalization: false
 
 audio:
   n_mels: 80
@@ -28,9 +26,11 @@ audio:
     apply_noise: true
     apply_speed_perturb: true
     apply_pitch_shift: true
+    apply_mixup: true
+    mixup_alpha: 0.2
     time_mask_prob: 0.5
     time_mask_max: 4000
-    num_time_masks: 1
+    num_time_masks: 2
     noise_prob: 0.3
     noise_snr_min: 10.0
     noise_snr_max: 30.0
@@ -40,9 +40,9 @@ audio:
     pitch_range: [-2, 2]
 
 text:
-  model_name: "distilbert-base-uncased"
+  model_name: "roberta-base"
   max_length: 128
-  apply_text_augment: false
+  apply_text_augment: true
   augmentation:
     apply_random_mask: true
     apply_random_insert: false
@@ -51,91 +51,131 @@ text:
   use_prosody_cues: true
 
 model:
+  audio_encoder: "microsoft/wavlm-large"
+  text_encoder: "roberta-base"
   freeze_audio_encoder: false
-  audio_unfreeze_last_n_layers: 6
-  freeze_text_encoder: true
-  text_unfreeze_last_n_layers: 4
-
-  classification_head_type: "lstm"
-  lstm_num_layers: 2
-  lstm_bidirectional: true
-
-  audio_encoder: "facebook/wav2vec2-base"
-  text_encoder: "distilbert-base-uncased"
-  hidden_dim: 512
-  dropout: 0.6
+  freeze_text_encoder: false
+  hidden_dim: 768
+  dropout: 0.3
   num_classes: 4
 
-  fusion_type: "conflict_aware_cross_attention"  # Reemplaza Enhanced Cross-Attention de Ablation 25
-  fusion_num_heads: 8
-  fusion_num_layers: 3
-  
-  # Conflict-aware attention parameters
+  fusion_type: "gated_interactive_attention"
+  fusion_config:
+    type: "gated_interactive_attention"
+    use_gated_mechanism: true
+    gate_activation: "sigmoid"
+    num_heads: 12
+    num_interaction_layers: 3
+    bidirectional_gates: true
+    residual_connections: true
+    layer_norm: true
+    attention_dropout: 0.1
+    projection_dim: 768
+    use_position_encoding: false
+
+  audio_unfreeze_last_n_layers: 8
+  text_unfreeze_last_n_layers: 6
+
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+
   conflict_aware:
     enabled: true
-    conflict_detection_method: "prediction_divergence"  # Options: prediction_divergence, feature_distance, learned
-    conflict_threshold: 0.3  # Threshold for detecting conflicts (0-1)
-    confidence_weighting: true  # Use confidence-based weighting when conflict detected
-    conflict_resolution: "confidence_weighted"  # Options: confidence_weighted, modality_selection, adaptive_fusion
-
-  vision_encoder: "google/vit-base-patch16-224"
-  freeze_vision_encoder: true
-  vision_unfreeze_last_n_layers: 4
-  vision_image_size: 224
-
-  mel_n_mels: 80
-  mel_n_fft: 400
-  mel_hop_length: 160
-  mel_win_length: 400
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.25
+    confidence_weighting: true
+    conflict_resolution: "adaptive_gated_weighted"
+    use_uncertainty_estimation: true
+    uncertainty_method: "entropy"
 
 training:
-  learning_rate_audio: 3.0e-7
-  learning_rate_text: 1.5e-6
-  learning_rate_fusion: 5.0e-6
+  batch_size: 8
+  num_epochs: 120
+  gradient_accumulation_steps: 4
+  mixed_precision: true
+  gradient_checkpointing: false
 
-  batch_size: 4
-  num_epochs: 100
-  gradient_accumulation_steps: 8
-  mixed_precision: false
-  weight_decay: 0.1
-  adam_epsilon: 1.0e-8
+  learning_rate_audio: 1.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 1.0e-4
+  learning_rate_classifier: 5.0e-5
+
+  optimizer: "adamw"
+  weight_decay: 0.01
+  adam_epsilon: 1.0e-08
+  adam_beta1: 0.9
+  adam_beta2: 0.999
   max_grad_norm: 1.0
 
   loss:
-    type: "cross_entropy"
-    gamma: 2.0
-    label_smoothing: 0.15
+    type: "composite_loss"
+    components:
+      cross_entropy:
+        weight: 1.0
+        label_smoothing: 0.1
+      focal_loss:
+        enabled: true
+        weight: 0.3
+        gamma: 2.0
+        alpha: 0.25
 
-  warmup_ratio: 0.1
-  scheduler_type: "plateau"
-  scheduler_metric: "val_loss"
-  scheduler_mode: "min"
-  scheduler_factor: 0.5
-  scheduler_patience: 3
-  scheduler_threshold: 1.0e-4
-  scheduler_min_lr: 1.0e-7
-  scheduler_cooldown: 1
-  scheduler_verbose: true
+  warmup_ratio: 0.15
+  scheduler_type: "cosine_with_restarts"
+  scheduler_config:
+    T_0: 15
+    T_mult: 2
+    eta_min: 1.0e-7
 
-  early_stopping_patience: 8
-  save_top_k: 3
+  early_stopping_patience: 15
+  save_top_k: 5
+  monitor_metric: "val_wa"
+  monitor_mode: "max"
+
+  regularization:
+    use_ema: false
+    ema_decay: 0.999
+    use_swa: false
 
 evaluation:
-  batch_size: 4
-
-compute:
-  num_workers: 2
-  pin_memory: true
-  device: "cuda"
-
-seed: 42
+  batch_size: 8
+  use_tta: false
+  metrics:
+    - accuracy
+    - wa
+    - ua
+    - f1_macro
+    - f1_weighted
 
 logging:
-  log_dir: "./logs/ablation_34"
-  checkpoint_dir: "./checkpoints/ablation_34"
+  log_dir: "./logs/phase1_wavlm_gated"
+  checkpoint_dir: "./checkpoints/phase1_wavlm_gated"
   log_every_n_steps: 10
   val_every_n_epochs: 1
   use_tensorboard: true
-  use_wandb: false
+  use_wandb: true
+  wandb_project: "iemocap-ser-phase1"
+  wandb_entity: null
+  log_gradients: true
+  log_learning_rates: true
+  save_predictions: true
   project_name: "conformer-iemocap-ser-ablation-34"
 
+compute:
+  num_workers: 4
+  pin_memory: true
+  device: "cuda"
+  use_amp: true
+  deterministic: false
+  benchmark: true
+
+seed: 42

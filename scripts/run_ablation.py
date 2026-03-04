@@ -352,12 +352,13 @@ def _run_ablation_with_config(
     
     criterion = create_loss_function(
         loss_type=loss_type,
-        class_weights=class_weights if loss_type == 'cross_entropy' else None,
+        class_weights=class_weights if loss_type in ('cross_entropy', 'composite_loss') else None,
         alpha=alpha,
         gamma=gamma,
         label_smoothing=label_smoothing,
         device=device,
-        num_classes=num_classes
+        num_classes=num_classes,
+        loss_config=loss_config if loss_type == 'composite_loss' else None,
     )
     
     # For Dirichlet losses, need to update epoch in loss function
@@ -451,6 +452,18 @@ def _run_ablation_with_config(
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps
         )
+    elif scheduler_type == 'cosine_with_restarts':
+        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+        sched_cfg = config['training'].get('scheduler_config', {})
+        T_0 = sched_cfg.get('T_0', 15)
+        T_mult = sched_cfg.get('T_mult', 2)
+        eta_min = float(sched_cfg.get('eta_min', 1e-7))
+        scheduler = CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=T_0,
+            T_mult=T_mult,
+            eta_min=eta_min,
+        )
     elif scheduler_type == 'plateau':
         scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
         scheduler_mode = config['training'].get('scheduler_mode', 'min')
@@ -488,13 +501,13 @@ def _run_ablation_with_config(
     else:
         scheduler = None
     
-    # Handle mixed precision: "bf16", "fp16", "fp8", or False
+    # Handle mixed precision: True/"fp16"/"fp8" (need GradScaler), "bf16" (no scaler), or False
     mixed_precision = config['training'].get('mixed_precision', False)
     use_loss_scaling = config['training'].get('use_loss_scaling', True)  # Default True for FP16, False for BF16
-    
-    # Initialize scaler only if needed (FP16 requires it, BF16 doesn't)
+
+    # Initialize scaler when FP16/FP8 or when mixed_precision is True (treat as fp16)
     scaler = None
-    if mixed_precision in ['fp16', 'fp8']:
+    if mixed_precision in ['fp16', 'fp8'] or mixed_precision is True:
         if config['compute']['device'] == 'cuda':
             try:
                 from torch.amp import GradScaler
@@ -511,14 +524,20 @@ def _run_ablation_with_config(
         logger.info("Using BFloat16 mixed precision (no loss scaling needed)")
     
     # Training loop (reuse from train.py)
-    best_val_ua = 0.0
+    monitor_metric = config['training'].get('monitor_metric', 'val_ua')
+    monitor_mode = config['training'].get('monitor_mode', 'max')
+    def _get_monitor_value(metrics):
+        if monitor_metric == 'val_wa':
+            return metrics.get('weighted_accuracy', metrics.get('unweighted_accuracy', 0.0))
+        return metrics.get('unweighted_accuracy', 0.0)
+    best_val_metric = -1.0 if monitor_mode == 'max' else float('inf')
     patience_counter = 0
-    
+
     train_losses = []
     val_losses = []
     train_metrics_list = []
     val_metrics_list = []
-    
+
     logger.info("Starting training...")
     
     for epoch in range(1, config['training']['num_epochs'] + 1):
@@ -535,20 +554,20 @@ def _run_ablation_with_config(
         )
         
         train_losses.append(train_loss)
-        train_metrics_list.append(train_metrics['unweighted_accuracy'])
-        
+        train_metrics_list.append(_get_monitor_value(train_metrics))
+
         # Validate
         if epoch % config['logging']['val_every_n_epochs'] == 0:
             val_loss, val_metrics, val_metrics_tracker = validate(
                 model, val_loader, criterion, device, config, logger, audio_only=False
             )
-            
+
             val_losses.append(val_loss)
-            val_metrics_list.append(val_metrics['unweighted_accuracy'])
+            val_metrics_list.append(_get_monitor_value(val_metrics))
             
             # Log metrics
-            logger.info(f"Train Loss: {train_loss:.4f}, Train UA: {train_metrics['unweighted_accuracy']:.4f}")
-            logger.info(f"Val Loss: {val_loss:.4f}, Val UA: {val_metrics['unweighted_accuracy']:.4f}")
+            logger.info(f"Train Loss: {train_loss:.4f}, Train {monitor_metric}: {train_metrics_list[-1]:.4f}")
+            logger.info(f"Val Loss: {val_loss:.4f}, Val {monitor_metric}: {val_metrics_list[-1]:.4f}")
             
             # Log to TensorBoard
             if tb_logger:
@@ -565,10 +584,14 @@ def _run_ablation_with_config(
                 **{f'val_{k}': v for k, v in val_metrics.items()}
             }, epoch)
             
-            # Check if best model
-            if val_metrics['unweighted_accuracy'] > best_val_ua:
-                best_val_ua = val_metrics['unweighted_accuracy']
-                logger.info(f"New best model! UA: {best_val_ua:.4f}")
+            # Check if best model (by monitor_metric)
+            val_monitor = _get_monitor_value(val_metrics)
+            is_best = (monitor_mode == 'max' and val_monitor > best_val_metric) or (
+                monitor_mode == 'min' and val_monitor < best_val_metric
+            )
+            if is_best:
+                best_val_metric = val_monitor
+                logger.info(f"New best model! {monitor_metric}: {best_val_metric:.4f}")
                 
                 # Save best model
                 best_checkpoint_dir = os.path.join(checkpoint_dir, experiment_name)
@@ -608,8 +631,10 @@ def _run_ablation_with_config(
                     scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
                     if scheduler_metric == 'val_loss':
                         metric_value = val_loss
-                    elif scheduler_metric == 'val_unweighted_accuracy':
-                        metric_value = val_metrics['unweighted_accuracy']
+                    elif scheduler_metric in ('val_ua', 'val_unweighted_accuracy'):
+                        metric_value = val_metrics.get('unweighted_accuracy', val_loss)
+                    elif scheduler_metric == 'val_wa':
+                        metric_value = val_metrics.get('weighted_accuracy', val_metrics.get('unweighted_accuracy', val_loss))
                     else:
                         metric_value = val_loss
                     scheduler.step(metric_value)
@@ -631,7 +656,16 @@ def _run_ablation_with_config(
         if tb_logger:
             tb_logger.log_figure('training/curves', fig, epoch)
         fig.savefig(Path(checkpoint_dir) / experiment_name / 'training_curves.png')
-    
+
+    # Load best checkpoint so test evaluation uses the best model, not the last epoch
+    best_checkpoint_path = os.path.join(checkpoint_dir, experiment_name, 'best_model.pt')
+    if os.path.isfile(best_checkpoint_path):
+        logger.info(f"Loading best model from {best_checkpoint_path} for test evaluation...")
+        checkpoint = torch.load(best_checkpoint_path, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+    else:
+        logger.warning("No best_model.pt found; evaluating on last-epoch weights.")
+
     # Final evaluation on test set
     logger.info("\nEvaluating on test set...")
     test_loss, test_metrics, test_metrics_tracker = validate(
@@ -649,7 +683,10 @@ def _run_ablation_with_config(
         tb_logger.log_metrics(test_metrics, 0, prefix='test/')
         tb_logger.log_figure('test/confusion_matrix', cm_fig, 0)
         tb_logger.close()
-    
+
+    # Alias for aggregation/LOSO code that expects best_val_ua
+    best_val_ua = float(best_val_metric)
+
     # Save final results for this run
     results_dir = Path(checkpoint_dir) / experiment_name
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -660,15 +697,15 @@ def _run_ablation_with_config(
             'best_val_ua': best_val_ua,
             'final_epoch': epoch
         }, f, indent=2)
-    
+
     logger.info(f"Ablation Study {study_number} run completed!")
     logger.info(f"Results saved to: {results_dir}")
-    
+
     # Return key metrics for potential aggregation (e.g., LOSO)
     test_ua = test_metrics.get('unweighted_accuracy', None)
     test_wa = test_metrics.get('weighted_accuracy', None)
     return {
-        'best_val_ua': float(best_val_ua),
+        'best_val_ua': best_val_ua,
         'test_unweighted_accuracy': float(test_ua) if test_ua is not None else None,
         'test_weighted_accuracy': float(test_wa) if test_wa is not None else None,
         'final_epoch': int(epoch),
