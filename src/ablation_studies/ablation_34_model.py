@@ -15,19 +15,33 @@ from transformers import AutoModel, AutoConfig
 
 from .ablation_25_enhanced_cross_attention import Ablation25Model
 from src.models.fusion import ConflictAwareCrossAttentionFusion, GatedInteractiveAttentionFusion
-from .classification_heads import LSTMClassificationHead, MultiScaleTemporalClassificationHead
+from .classification_heads import (
+    LSTMClassificationHead,
+    MultiScaleTemporalClassificationHead,
+    TransformerClassificationHead,
+    CNN1DClassificationHead,
+)
 
 
 class Ablation34Model(Ablation25Model):
-    """
-    - Si fusion_type != "gated_interactive_attention": modelo trimodal con
-      Conflict-Aware Cross-Attention (hereda Ablation25).
-    - Si fusion_type == "gated_interactive_attention": modelo bimodal
-      (WavLM + RoBERTa) con GatedInteractiveAttentionFusion +
-      MultiScaleTemporalClassificationHead y opcional conflict-aware.
+    """Trimodal Conflict-Aware Cross-Attention or bimodal Gated Interactive Attention.
+
+    If fusion_type is not "gated_interactive_attention": trimodal model with
+    Conflict-Aware Cross-Attention (inherits Ablation25). Conflict detection
+    method is read from config.model.conflict_aware.conflict_detection_method
+    (prediction_divergence, feature_distance, or learned).
+    If fusion_type == "gated_interactive_attention": bimodal (WavLM + RoBERTa)
+    with GatedInteractiveAttentionFusion and MultiScaleTemporalClassificationHead.
     """
 
     def __init__(self, config: Dict):
+        """Build Ablation34 model from config (trimodal Conflict-Aware or bimodal Gated).
+
+        Args:
+            config: Full config dict with keys "model", "dataset", etc. For trimodal,
+                model.conflict_aware.conflict_detection_method selects the conflict
+                detection method (prediction_divergence, feature_distance, learned).
+        """
         model_config = config.get("model", {})
         fusion_type = model_config.get("fusion_type", "")
 
@@ -58,13 +72,57 @@ class Ablation34Model(Ablation25Model):
             ),
         )
         fusion_output_dim = self.hidden_dim // 2
-        self.fusion.classifier = LSTMClassificationHead(
-            hidden_dim=fusion_output_dim,
-            num_classes=self.num_classes,
-            dropout=model_config.get("dropout", 0.3),
-            num_layers=model_config.get("lstm_num_layers", 2),
-            bidirectional=model_config.get("lstm_bidirectional", True),
-        )
+
+        head_type = model_config.get("classification_head_type", "lstm")
+        dropout = model_config.get("dropout", 0.3)
+
+        if head_type == "transformer":
+            num_layers = model_config.get("transformer_num_layers", 1)
+            num_heads = model_config.get("transformer_num_heads", 8)
+            self.fusion.classifier = TransformerClassificationHead(
+                hidden_dim=fusion_output_dim,
+                num_classes=self.num_classes,
+                dropout=dropout,
+                num_layers=num_layers,
+                num_heads=num_heads,
+            )
+        elif head_type == "multi_scale_temporal":
+            head_config = model_config.get("classification_head", {})
+            self.fusion.classifier = MultiScaleTemporalClassificationHead(
+                hidden_dim=fusion_output_dim,
+                num_classes=self.num_classes,
+                dropout=dropout,
+                use_temporal_pooling=head_config.get("use_temporal_pooling", True),
+                pooling_types=head_config.get(
+                    "pooling_types", ["mean", "max", "attention"]
+                ),
+                use_lstm=head_config.get("use_lstm", True),
+                lstm_num_layers=head_config.get("lstm_num_layers", 2),
+                lstm_bidirectional=head_config.get("lstm_bidirectional", True),
+                lstm_hidden=head_config.get("lstm_hidden", 512),
+                lstm_dropout=head_config.get("lstm_dropout", 0.3),
+                use_self_attention=head_config.get("use_self_attention", True),
+                attention_heads=head_config.get("attention_heads", 4),
+                final_dropout=head_config.get("final_dropout", 0.4),
+            )
+        elif head_type == "cnn1d":
+            cnn_num_layers = model_config.get("cnn_num_layers", 2)
+            cnn_dropout = model_config.get("cnn_dropout", dropout)
+            self.fusion.classifier = CNN1DClassificationHead(
+                hidden_dim=fusion_output_dim,
+                num_classes=self.num_classes,
+                dropout=cnn_dropout,
+                num_layers=cnn_num_layers,
+            )
+        else:
+            # Default: LSTM classification head (original behavior, e.g., Ablation 34)
+            self.fusion.classifier = LSTMClassificationHead(
+                hidden_dim=fusion_output_dim,
+                num_classes=self.num_classes,
+                dropout=dropout,
+                num_layers=model_config.get("lstm_num_layers", 2),
+                bidirectional=model_config.get("lstm_bidirectional", True),
+            )
 
     def _init_bimodal_gated(self, config: Dict):
         """Build bimodal model: WavLM + RoBERTa + GatedInteractiveAttention + MultiScaleTemporal head."""

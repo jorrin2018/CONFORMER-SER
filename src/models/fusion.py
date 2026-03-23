@@ -1,5 +1,15 @@
-"""
-Fusion modules for combining audio and text modalities.
+"""Fusion modules for combining audio, text, and vision modalities.
+
+This module provides various fusion strategies for multimodal emotion recognition.
+ConflictAwareCrossAttentionFusion supports three conflict detection methods (set via
+config `model.conflict_aware.conflict_detection_method`):
+
+- prediction_divergence: Conflict when two or more modalities predict different
+  classes (e.g. audio=angry, text=happy). Uses per-modality logits.
+- feature_distance: Conflict when modality embeddings are far apart in representation
+  space (mean pairwise cosine distance > conflict_threshold). Uses embeddings only.
+- learned: A small MLP predicts conflict probability from concatenated embeddings;
+  conflict when probability > conflict_threshold. Adds trainable parameters.
 """
 
 import torch
@@ -1663,6 +1673,7 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         num_layers: int = 3,
         dropout: float = 0.3,
         conflict_threshold: float = 0.3,
+        # One of: "prediction_divergence" (logits disagree), "feature_distance" (embedding cosine distance), "learned" (MLP)
         conflict_detection_method: str = "prediction_divergence",
     ):
         super().__init__()
@@ -1714,6 +1725,29 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
             nn.Sigmoid(),
         )
 
+        # Learned conflict detector (only when conflict_detection_method == "learned")
+        if conflict_detection_method == "learned":
+            self.conflict_detector_net = nn.Sequential(
+                nn.Linear(hidden_dim * 3, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, 1),
+                nn.Sigmoid(),
+            )
+            for module in self.conflict_detector_net.modules():
+                if isinstance(module, nn.Linear):
+                    if module == list(self.conflict_detector_net.modules())[-2]:
+                        nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                        if module.bias is not None:
+                            nn.init.normal_(module.bias, mean=0.0, std=0.01)
+                    else:
+                        nn.init.xavier_uniform_(module.weight, gain=1.0)
+                        if module.bias is not None:
+                            nn.init.constant_(module.bias, 0.0)
+        else:
+            self.conflict_detector_net = None
+
         # Final fusion
         self.fusion = nn.Sequential(
             nn.Linear(hidden_dim * 3, hidden_dim),
@@ -1755,31 +1789,133 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
                     if module.bias is not None:
                         nn.init.constant_(module.bias, 0.0)
 
-    def _detect_conflict(
+    def _detect_conflict_prediction_divergence(
         self,
         audio_logits: torch.Tensor,
         text_logits: torch.Tensor,
         vision_logits: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Detect conflicts between modalities based on prediction divergence.
-        
-        Returns:
-            conflict_scores: (batch_size,) - 1.0 if conflict detected, 0.0 otherwise
-        """
-        # Get predicted classes
-        audio_pred = torch.argmax(audio_logits, dim=-1)  # (B,)
-        text_pred = torch.argmax(text_logits, dim=-1)    # (B,)
-        vision_pred = torch.argmax(vision_logits, dim=-1)  # (B,)
+        """Detect conflicts when two or more modalities predict different classes.
 
-        # Compute pairwise disagreements
+        Uses argmax of per-modality logits; conflict if at least two pairwise
+        predictions disagree (e.g. audio=angry, text=happy).
+
+        Args:
+            audio_logits: Per-sample logits from audio branch. Shape (B, num_classes).
+            text_logits: Per-sample logits from text branch. Shape (B, num_classes).
+            vision_logits: Per-sample logits from vision branch. Shape (B, num_classes).
+
+        Returns:
+            Binary conflict scores. Shape (B,) with 1.0 if conflict, 0.0 otherwise.
+        """
+        audio_pred = torch.argmax(audio_logits, dim=-1)
+        text_pred = torch.argmax(text_logits, dim=-1)
+        vision_pred = torch.argmax(vision_logits, dim=-1)
         audio_text_disagree = (audio_pred != text_pred).float()
         audio_vision_disagree = (audio_pred != vision_pred).float()
         text_vision_disagree = (text_pred != vision_pred).float()
-
-        # Conflict if at least two modalities disagree
+        # Conflict when at least two modality pairs disagree
         conflict = (audio_text_disagree + audio_vision_disagree + text_vision_disagree) >= 2.0
         return conflict.float()
+
+    def _detect_conflict_feature_distance(
+        self,
+        audio_emb: torch.Tensor,
+        text_emb: torch.Tensor,
+        vision_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """Detect conflicts from embedding space: low similarity implies potential conflict.
+
+        L2-normalizes embeddings, computes pairwise cosine similarity, converts to
+        distance (1 - cos). Conflict when mean of the three pairwise distances
+        exceeds conflict_threshold.
+
+        Args:
+            audio_emb: Audio embeddings. Shape (B, hidden_dim).
+            text_emb: Text embeddings. Shape (B, hidden_dim).
+            vision_emb: Vision embeddings. Shape (B, hidden_dim).
+
+        Returns:
+            Binary conflict scores. Shape (B,) with 1.0 if conflict, 0.0 otherwise.
+        """
+        a = F.normalize(audio_emb, p=2, dim=-1)
+        t = F.normalize(text_emb, p=2, dim=-1)
+        v = F.normalize(vision_emb, p=2, dim=-1)
+        cos_at = (a * t).sum(dim=-1).clamp(-1.0, 1.0)
+        cos_av = (a * v).sum(dim=-1).clamp(-1.0, 1.0)
+        cos_tv = (t * v).sum(dim=-1).clamp(-1.0, 1.0)
+        d_at = (1.0 - cos_at)
+        d_av = (1.0 - cos_av)
+        d_tv = (1.0 - cos_tv)
+        mean_dist = (d_at + d_av + d_tv) / 3.0
+        conflict = (mean_dist > self.conflict_threshold).float()
+        return conflict
+
+    def _detect_conflict_learned(
+        self,
+        audio_emb: torch.Tensor,
+        text_emb: torch.Tensor,
+        vision_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """Learned conflict detection: MLP predicts conflict probability from concatenated embeddings.
+
+        conflict_detector_net is only created when conflict_detection_method == "learned"
+        for checkpoint compatibility.
+
+        Args:
+            audio_emb: Audio embeddings. Shape (B, hidden_dim).
+            text_emb: Text embeddings. Shape (B, hidden_dim).
+            vision_emb: Vision embeddings. Shape (B, hidden_dim).
+
+        Returns:
+            Binary conflict scores. Shape (B,) with 1.0 if conflict, 0.0 otherwise.
+        """
+        x = torch.cat([audio_emb, text_emb, vision_emb], dim=-1)
+        conflict_prob = self.conflict_detector_net(x).squeeze(-1)
+        conflict = (conflict_prob > self.conflict_threshold).float()
+        return conflict
+
+    def _detect_conflict(
+        self,
+        audio_emb: torch.Tensor,
+        text_emb: torch.Tensor,
+        vision_emb: torch.Tensor,
+        audio_logits: torch.Tensor,
+        text_logits: torch.Tensor,
+        vision_logits: torch.Tensor,
+    ) -> torch.Tensor:
+        """Dispatch to the configured conflict detection method.
+
+        Supported methods (set in config as model.conflict_aware.conflict_detection_method):
+        - prediction_divergence: use when you want conflict = "modalities disagree on class".
+        - feature_distance: use when you want conflict = "embeddings are far apart".
+        - learned: use when you want the model to learn what counts as conflict.
+
+        Args:
+            audio_emb: Audio embeddings (B, hidden_dim). Used by feature_distance and learned.
+            text_emb: Text embeddings (B, hidden_dim).
+            vision_emb: Vision embeddings (B, hidden_dim).
+            audio_logits: Audio classifier logits (B, num_classes). Used by prediction_divergence.
+            text_logits: Text classifier logits (B, num_classes).
+            vision_logits: Vision classifier logits (B, num_classes).
+
+        Returns:
+            Binary conflict mask. Shape (B,) with 1.0 if conflict, 0.0 otherwise.
+
+        Raises:
+            ValueError: If conflict_detection_method is not one of the three supported values.
+        """
+        if self.conflict_detection_method == "prediction_divergence":
+            return self._detect_conflict_prediction_divergence(audio_logits, text_logits, vision_logits)
+        elif self.conflict_detection_method == "feature_distance":
+            return self._detect_conflict_feature_distance(audio_emb, text_emb, vision_emb)
+        elif self.conflict_detection_method == "learned":
+            return self._detect_conflict_learned(audio_emb, text_emb, vision_emb)
+        else:
+            raise ValueError(
+                f"Unknown conflict_detection_method: {self.conflict_detection_method}. "
+                "Use prediction_divergence, feature_distance, or learned."
+            )
 
     def forward(
         self,
@@ -1807,7 +1943,10 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         vision_logits = self.vision_classifier(vision_emb)  # (B, num_classes)
 
         # Detect conflicts
-        conflicts = self._detect_conflict(audio_logits, text_logits, vision_logits)  # (B,)
+        conflicts = self._detect_conflict(
+            audio_emb, text_emb, vision_emb,
+            audio_logits, text_logits, vision_logits,
+        )  # (B,)
 
         # Stack modalities for cross-attention
         tokens = torch.stack([audio_emb, text_emb, vision_emb], dim=1)  # (B, 3, H)

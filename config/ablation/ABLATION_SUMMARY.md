@@ -2,6 +2,15 @@
 
 Este documento resume las diferencias clave y el objetivo de cada configuración de experimentación ("ablation") en el proyecto.
 
+**Total**: estudios 1-50, 52 y 53 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34
+
+### Ejecución
+```powershell
+python scripts/run_ablation.py --study N   # N = 1 a 50, o 52, 53
+```
+
+---
+
 ## Serie 01-04: Arquitecturas de Clasificación (Classification Heads)
 El objetivo de esta serie fue determinar cuál es la mejor arquitectura para procesar las características fusionadas antes de la predicción final.
 
@@ -47,10 +56,13 @@ El foco actual. Se mantiene la arquitectura base (generalmente basada en `13c`) 
 *   **`ablation_22_tensor_fusion.yaml`**: **Tensor Fusion Network**. Producto exterior de las modalidades para capturar todas las interacciones posibles (costoso computacionalmente).
 *   **`ablation_23_bilinear_fusion.yaml`**: **Bilinear Pooling**. Interacciones multiplicativas de segundo orden entre modalidades.
 *   **`ablation_24_adaptive_weighted_fusion.yaml`**: **Fusión Ponderada Adaptativa**. El modelo aprende pesos escalares (sigmoide) para dar más o menos importancia a cada modalidad dinámicamente.
-*   **`ablation_25_enhanced_cross_attention.yaml`**: **Enhanced Cross-Attention**. Múltiples capas de atención cruzada donde cada modalidad atiende a las demás. (Configuración actual en análisis).
+*   **`ablation_25_enhanced_cross_attention.yaml`**: **Enhanced Cross-Attention** ⭐. Múltiples capas de atención cruzada donde cada modalidad atiende a las demás. **Mejor fusión base** (77.44% UA). Base para series 31-35.
 *   **`ablation_26_gated_fusion.yaml`**: **Gated Multimodal Unit (GMU)**. Usa compuertas aprendibles para controlar el flujo de información de cada modalidad.
 *   **`ablation_27_late_fusion.yaml`**: **Late Fusion**. Procesamiento independiente hasta el final, donde se promedian o concatenan los logits/probabilidades.
 *   **`ablation_28_glu_fusion.yaml`**: **GLU Fusion**. Uso de Gated Linear Units para una fusión no lineal eficiente.
+
+## Serie 30: Dirichlet Evidence Learning
+*   **`ablation_30_dirichlet.yaml`**: **Dirichlet Evidence Learning**. Sustituye softmax por distribución Dirichlet para modelar incertidumbre epistémica. Mejor calibración de confianza. Basado en Ablation 25.
 
 ## Serie 31-35: Innovaciones Multimodales Avanzadas
 Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal, robustez y manejo de conflictos.
@@ -59,6 +71,84 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 *   **`ablation_31_temporal_alignment.yaml`**: **Temporal Alignment Learning (Adaptive DTW)**. Módulo insertado antes de la fusión que aprende a "estirar" o "comprimir" temporalmente los features de audio/texto para que coincidan evento-a-evento antes de fusionarlos. Resuelve la asincronía real entre modalidades. Basado en Ablation 25.
 *   **`ablation_32_temporal_bucketing.yaml`**: **Temporal-Aligned Multimodal Bucketing**. Divide el audio en "buckets" (ventanas) de ~400ms. Fusiona modalidades dentro de cada bucket y luego usa una LSTM para conectar la secuencia de buckets. Mejora la precisión local evitando que el ruido de un segmento largo contamine la decisión emocional de una frase corta. Basado en Ablation 25.
 *   **`ablation_33_noise_aware_speechcue.yaml`**: **Noise-Aware SpeechCue**. Modifica el generador de prompts para que detecte ruido de fondo. Si el audio es ruidoso, inyecta un token [UNCERTAIN] al texto, avisando a BERT que "desconfíe" de la prosodia. Aporta robustez en mundo real. Basado en Ablation 25.
-*   **`ablation_34_conflict_aware_attention.yaml`**: **Conflict-Aware Cross-Attention**. Mecanismo de atención que detecta explícitamente cuando dos modalidades se contradicen (ej. Texto feliz + Audio enojado) y asigna pesos basados en "confianza" en lugar de simplemente promediar. Maneja ironía y sarcasmo. Basado en Ablation 25.
+*   **`ablation_34_conflict_aware_attention.yaml`**: **Conflict-Aware Cross-Attention** 🏆. Detecta contradicciones entre modalidades (ej. texto feliz + audio enojado) y pondera por confianza. **Mejor resultado global** (77.98% UA, gap 2.68%). Base para series 36-39.
+    *   **Conflict Detection Methods**: En `model.conflict_aware.conflict_detection_method` se puede elegir: `prediction_divergence` (por defecto: conflicto cuando 2+ modalidades predicen distinta clase), `feature_distance` (conflicto cuando la distancia coseno media entre embeddings > umbral), o `learned` (MLP que predice conflicto). Ver [docs/CONFLICT_DETECTION.md](../../docs/CONFLICT_DETECTION.md).
 *   **`ablation_35_modal_stratified_al.yaml`**: **Modal-Stratified Active Learning**. Estrategia de entrenamiento donde el modelo identifica qué modalidad le confunde más y puede solicitar etiquetas adicionales solo para esa modalidad. Eficiencia de datos y reducción de costos de anotación. Basado en Ablation 25.
 
+## Serie 36-39: Conflict-Aware + Dirichlet y SOTA
+**Base: Ablation 34 (Conflict-Aware Cross-Attention)** - Combina Conflict-Aware con Dirichlet, Focal Loss y mejoras state-of-the-art.
+
+*   **`ablation_36a_dirichlet_conflict.yaml`**: **Conflict-Aware + Dirichlet (Pure)**. Combina Conflict-Aware Fusion con Dirichlet Classification Head. Regularización: Dropout 0.5, Weight decay 0.1.
+*   **`ablation_36b_focal_conflict.yaml`**: **Conflict-Aware + Focal Loss**. Focal Loss con pesos aumentados para neutral (2.0x), gamma=2.5.
+*   **`ablation_36c_hybrid_conflict.yaml`**: **Conflict-Aware + Dirichlet Hybrid**. Dirichlet con regularización adicional para neutral (DirichletNeutralRegularizedLoss).
+*   **`ablation_37_dirichlet_conflict_aware.yaml`**: **Dirichlet + Conflict-Aware**. Configuración específica que combina Dirichlet Evidence Loss con Conflict-Aware Cross-Attention.
+*   **`ablation_38_opensmile_residual.yaml`**: **OpenSMILE + Attention Gates + Residual**. Rama OpenSMILE (eGeMAPSv02, 88 features), attention gates, cross-attention Wav2Vec2↔OpenSMILE, conexiones residuales.
+*   **`ablation_39_sota_improvements.yaml`**: **ACN + MIC + BCAF**. Audio Context Network, Modal Invariance Constraint (SKL), Bidirectional Connection Attention Fusion con autoencoder.
+
+## Ablation 40: WavLM-base + Conflict-Aware (Trimodal)
+*   **`ablation_40_wavlm_conflict_aware.yaml`**: **WavLM-base + Conflict-Aware Cross-Attention**. Misma arquitectura que Ablation 34 (trimodal, Conflict-Aware, ViT, DistilBERT, LSTM head) pero con encoder de audio **microsoft/wavlm-base** en lugar de Wav2Vec2-base. Objetivo: evaluar si WavLM mejora el rendimiento por mejor modelado de ruido y speaker identity. Para cambiar el método de detección de conflicto (`prediction_divergence` | `feature_distance` | `learned`), ver [docs/CONFLICT_DETECTION.md](../../docs/CONFLICT_DETECTION.md).
+
+## Ablation 41 (Study 41): WavLM-base + ViT + Conflict-Aware, K-Fold
+*   **`ablation_41_wavlm_base_vit_kfold.yaml`**: **Ablation 41 = WavLM-base + ViT + Conflict-Aware, K-Fold**. Misma arquitectura que Ablation 40 (WavLM-base + DistilBERT + ViT + Conflict-Aware trimodal) con validación cruzada 5 folds (leave-one-session-out).
+
+## Ablation 42 (Study 42): WavLM-base + ViT + Conflict-Aware, single split
+*   **`ablation_42_wavlm_base_vit.yaml`**: **WavLM-base + ViT + Conflict-Aware, single split**. Mismo diseño que 34/40 con modelo más pequeño y rama visual; sin K-Fold (train 1,2,3 / val 4 / test 5). Evalúa si añadir ViT con WavLM-base mejora respecto a 34 bimodal grande.
+
+## Ablation 44 (Study 44): Conflict-Aware + Transformer Head
+*   **`ablation_44_transformer_head.yaml`**: **Conflict-Aware Cross-Attention (trimodal) + TransformerClassificationHead**. Misma configuración que Ablation 34 (Wav2Vec2-base + DistilBERT + ViT, Conflict-Aware) pero sustituyendo la cabeza LSTM por una cabeza basada en **TransformerEncoder** sobre el vector fusionado.
+
+## Ablation 45 (Study 45): Conflict-Aware + MultiScaleTemporal Head
+*   **`ablation_45_multiscale_head.yaml`**: **Conflict-Aware Cross-Attention (trimodal) + MultiScaleTemporalClassificationHead**. Igual que Ablation 34, pero usando una cabeza **MultiScaleTemporal** (pooling mean/max/attention + LSTM + self-attention) aplicada al output de la fusión para capturar representaciones más ricas antes de clasificar.
+
+## Ablation 46 (Study 46): Conflict-Aware + CNN1D Head
+*   **`ablation_46_cnn1d_head.yaml`**: **Conflict-Aware Cross-Attention (trimodal) + CNN1DClassificationHead**. Misma arquitectura base que 34, pero reemplazando la cabeza LSTM por una cabeza **CNN 1D** que aplica convoluciones 1D y pooling global sobre el vector fusionado antes de la capa lineal final.
+
+## Ablation 47 (Study 47): Conflict-Aware + SupCon (pre-fusión, 2 vistas)
+*   **`ablation_47_supcon.yaml`**: **Conflict-Aware Cross-Attention (trimodal) + Supervised Contrastive Loss (SupCon)**. Misma arquitectura que Ablation 34 (Wav2Vec2-base + DistilBERT + ViT, Conflict-Aware), pero añade una pérdida contrastiva supervisada sobre los embeddings **audio/texto** normalizados antes de la fusión Conflict-Aware. La pérdida total combina Cross Entropy sobre los logits finales con SupCon ponderada por `contrastive_weight`.
+
+## Ablation 48 (Study 48): Conflict-Aware + SupCon (pre-fusión, 3 vistas)
+*   **`ablation_48_supcon_3views.yaml`**: **Conflict-Aware + SupCon (audio + texto + visión)**. Igual que Ablation 47 pero la pérdida contrastiva supervisada se aplica sobre **tres vistas**: audio, texto y visión (en lugar de solo audio y texto). Objetivo: alinear las tres modalidades en el espacio de embeddings antes de la fusión Conflict-Aware.
+
+## Ablation 49 (Study 49): Conflict-Aware + SupCon (3 vistas) + WavLM-base
+*   **`ablation_49_supcon_wavlm.yaml`**: **Conflict-Aware + SupCon (audio + texto + visión) con encoder de audio WavLM-base**. Misma arquitectura que Ablation 48 (SupCon con 3 vistas y Conflict-Aware trimodal), pero sustituyendo Wav2Vec2-base por **microsoft/wavlm-base** como encoder de audio para explotar mejor robustez al ruido y modelado de locutor.
+
+## Ablation 50 (Study 50): Conflict-Aware + SupCon (3 vistas) + Emotion2Vec
+*   **`ablation_50_emotion2vec.yaml`**: **Conflict-Aware + SupCon (audio + texto + visión) con encoder de audio Emotion2Vec**. Misma arquitectura que Ablation 48 (SupCon con 3 vistas y Conflict-Aware trimodal), pero el encoder de audio es **Emotion2Vec** (emotion2vec/emotion2vec_base), cargado vía FunASR. Requiere `pip install funasr` para ejecutar el estudio 50.
+
+## Ablation 52 (Study 52): Igual que 49 + sin augment de waveform + SpecAugment en mel del ViT
+*   **`ablation_52_supcon_wavlm_specaug_vit.yaml`**: **Misma base que Ablation 49** (WavLM + SupCon 3 vistas + Conflict-Aware). Diferencias: `audio.apply_waveform_augment: false` (el preprocessor sigue aplicando **z-score** al waveform para escala estable); en la rama visual, `model.vision_mel_spec_augment: true` activa **SpecAugment** (FrequencyMasking / TimeMasking de torchaudio) sobre el **log-mel** antes del resize a imagen ViT, solo en entrenamiento (`model.training`). Cualquier estudio trimodal puede activar lo mismo con `vision_mel_spec_augment` y opcionalmente `vision_spec_augment.freq_mask_param` / `time_mask_param`.
+
+## Ablation 53 (Study 53): Run tipo 174035 de 52 + WavLM suma ponderada por capas
+*   **`ablation_53_wavlm_weighted_hidden_states.yaml`**: **Misma receta operativa que el checkpoint `ablation_52_20260320_174035`** (p. ej. `freeze_text_encoder: false`, `freeze_vision_encoder: true`, sin augment de waveform, SpecAugment en mel del ViT, WavLM-base + SupCon 3 vistas + Conflict-Aware). **Novedad**: `model.wavlm_weighted_hidden_states: true` activa en `Ablation11Model` una combinación **softmax-aprendida** de todos los `hidden_states` de WavLM (embeddings + capas del transformer) antes del pooling temporal, alineado con la recomendación de explotar varias capas de WavLM.
+
+---
+
+## Mapeo Study → Config (run_ablation.py)
+
+| Study | Config | Modelo |
+|-------|--------|--------|
+| 1-11 | ablation_01...ablation_11 | Ablation01Model...Ablation11Model |
+| 12 | ablation_12_speechcue_loso | Ablation10Model (LOSO) |
+| 13-20 | ablation_13...ablation_13d_kfold | Ablation13Model |
+| 21-28 | ablation_21...ablation_28 | Ablation21Model...Ablation28Model |
+| 29 | ablation_25_kfold | Ablation25Model |
+| 30 | ablation_30_dirichlet | Ablation30Model |
+| 31-35 | ablation_31...ablation_35 | Ablation31Model...Ablation35Model |
+| 36 | ablation_36a_dirichlet_conflict | Ablation36AModel |
+| 37 | ablation_37_dirichlet_conflict_aware | Ablation36AModel |
+| 38 | ablation_38_opensmile_residual | Ablation38Model |
+| 39 | ablation_36c_hybrid_conflict | Ablation39Model |
+| 40 | ablation_40_wavlm_conflict_aware | Ablation34Model |
+| 41 | ablation_41_wavlm_base_vit_kfold | Ablation34Model |
+| 42 | ablation_42_wavlm_base_vit | Ablation34Model |
+| 44 | ablation_44_transformer_head | Ablation34Model |
+| 45 | ablation_45_multiscale_head | Ablation34Model |
+| 46 | ablation_46_cnn1d_head | Ablation34Model |
+| 47 | ablation_47_supcon | Ablation47Model |
+| 48 | ablation_48_supcon_3views | Ablation48Model |
+| 49 | ablation_49_supcon_wavlm | Ablation48Model |
+| 50 | ablation_50_emotion2vec | Ablation48Model |
+| 52 | ablation_52_supcon_wavlm_specaug_vit | Ablation48Model |
+| 53 | ablation_53_wavlm_weighted_hidden_states | Ablation48Model |
+
+*Última actualización: Marzo 2026*

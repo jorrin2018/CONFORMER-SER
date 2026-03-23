@@ -1,0 +1,184 @@
+# Ablation Study 34 K-Fold: WavLM-large + RoBERTa + Gated Interactive Attention
+# Same as Ablation 34 but with K-Fold Cross-Validation (5 folds, leave-one-session-out).
+# Bimodal (audio + text), no vision. Optional conflict-aware weighting.
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  all_sessions: [1, 2, 3, 4, 5]
+  # In K-Fold these are set dynamically per fold
+  train_sessions: []
+  val_sessions: []
+  test_sessions: []
+  sample_rate: 16000
+  use_speaker_normalization: false
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    apply_mixup: true
+    mixup_alpha: 0.2
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 2
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "roberta-base"
+  max_length: 128
+  apply_text_augment: true
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "microsoft/wavlm-large"
+  text_encoder: "roberta-base"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 768
+  dropout: 0.3
+  num_classes: 4
+
+  fusion_type: "gated_interactive_attention"
+  fusion_config:
+    type: "gated_interactive_attention"
+    use_gated_mechanism: true
+    gate_activation: "sigmoid"
+    num_heads: 12
+    num_interaction_layers: 3
+    bidirectional_gates: true
+    residual_connections: true
+    layer_norm: true
+    attention_dropout: 0.1
+    projection_dim: 768
+    use_position_encoding: false
+
+  audio_unfreeze_last_n_layers: 8
+  text_unfreeze_last_n_layers: 6
+
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+
+  conflict_aware:
+    enabled: true
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.25
+    confidence_weighting: true
+    conflict_resolution: "adaptive_gated_weighted"
+    use_uncertainty_estimation: true
+    uncertainty_method: "entropy"
+
+training:
+  batch_size: 8
+  num_epochs: 120
+  gradient_accumulation_steps: 4
+  mixed_precision: true
+  gradient_checkpointing: false
+
+  learning_rate_audio: 1.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 1.0e-4
+  learning_rate_classifier: 5.0e-5
+
+  optimizer: "adamw"
+  weight_decay: 0.01
+  adam_epsilon: 1.0e-08
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  max_grad_norm: 1.0
+
+  loss:
+    type: "composite_loss"
+    components:
+      cross_entropy:
+        weight: 1.0
+        label_smoothing: 0.1
+      focal_loss:
+        enabled: true
+        weight: 0.3
+        gamma: 2.0
+        alpha: 0.25
+
+  warmup_ratio: 0.15
+  scheduler_type: "cosine_with_restarts"
+  scheduler_config:
+    T_0: 15
+    T_mult: 2
+    eta_min: 1.0e-7
+
+  early_stopping_patience: 15
+  save_top_k: 5
+  monitor_metric: "val_wa"
+  monitor_mode: "max"
+
+  regularization:
+    use_ema: false
+    ema_decay: 0.999
+    use_swa: false
+
+evaluation:
+  batch_size: 8
+  use_tta: false
+  metrics:
+    - accuracy
+    - wa
+    - ua
+    - f1_macro
+    - f1_weighted
+
+logging:
+  log_dir: "./logs/ablation_34_kfold"
+  checkpoint_dir: "./checkpoints/ablation_34_kfold"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: true
+  wandb_project: "iemocap-ser-phase1"
+  wandb_entity: null
+  log_gradients: true
+  log_learning_rates: true
+  save_predictions: true
+  project_name: "conformer-iemocap-ser-ablation-34-kfold"
+
+compute:
+  num_workers: 4
+  pin_memory: true
+  device: "cuda"
+  use_amp: true
+  deterministic: false
+  benchmark: true
+
+seed: 42

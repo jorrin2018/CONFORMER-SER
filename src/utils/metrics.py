@@ -1,5 +1,7 @@
-"""
-Evaluation metrics for emotion recognition.
+"""Evaluation metrics for emotion recognition.
+
+Provides EmotionMetrics for accuracy, F1, confusion matrix, and classification
+report, plus compute_class_weights and plot_training_curves for training.
 """
 
 import torch

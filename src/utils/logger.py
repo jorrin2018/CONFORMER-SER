@@ -1,5 +1,7 @@
-"""
-Logging utilities for training and evaluation.
+"""Logging utilities for training and evaluation.
+
+Provides setup_logger, TensorBoardLogger, and ExperimentTracker for logging
+and experiment management during training and ablation runs.
 """
 
 import os

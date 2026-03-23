@@ -11,6 +11,7 @@ Idea:
   y usar una cabeza LSTM para clasificación (como en Ablation 07/09).
 """
 
+import warnings
 from typing import Dict, Optional
 
 import torch
@@ -104,6 +105,20 @@ class Ablation11Model(ConformerMultimodalModel):
             normalized=True,
         )
 
+        # Optional SpecAugment on log-mel for ViT only (training); does not affect audio encoder input
+        self._vision_mel_spec_augment = bool(
+            model_config.get("vision_mel_spec_augment", False)
+        )
+        _sa = model_config.get("vision_spec_augment", {}) or {}
+        _fparam = int(_sa.get("freq_mask_param", 10))
+        _tparam = int(_sa.get("time_mask_param", 40))
+        if self._vision_mel_spec_augment:
+            self._vit_freq_mask = torchaudio.transforms.FrequencyMasking(_fparam)
+            self._vit_time_mask = torchaudio.transforms.TimeMasking(_tparam)
+        else:
+            self._vit_freq_mask = None
+            self._vit_time_mask = None
+
         # -----------------------------
         # Fusión trimodal + cabeza LSTM
         # -----------------------------
@@ -134,6 +149,26 @@ class Ablation11Model(ConformerMultimodalModel):
             bidirectional=lstm_bidirectional,
         )
 
+        # Optional: WavLM — weighted combination of all hidden states (paper recommendation)
+        self._wavlm_weighted_hidden_states = False
+        self.wavlm_layer_logits: Optional[nn.Parameter] = None
+        want_weighted = bool(model_config.get("wavlm_weighted_hidden_states", False))
+        enc_name = str(model_config.get("audio_encoder", "")).lower()
+        model_type = getattr(self.audio_encoder.config, "model_type", "") or ""
+        is_wavlm = model_type == "wavlm" or "wavlm" in enc_name
+        if want_weighted and is_wavlm:
+            n_layers = 1 + int(
+                getattr(self.audio_encoder.config, "num_hidden_layers", 12)
+            )
+            self.wavlm_layer_logits = nn.Parameter(torch.zeros(n_layers))
+            self._wavlm_weighted_hidden_states = True
+        elif want_weighted and not is_wavlm:
+            warnings.warn(
+                "model.wavlm_weighted_hidden_states=True ignored: audio encoder is not WavLM.",
+                UserWarning,
+                stacklevel=2,
+            )
+
     def _waveform_to_vit_image(self, audio: torch.Tensor) -> torch.Tensor:
         """
         Convierte un batch de waveforms (B, T) en imágenes (B, 3, H, W) para ViT
@@ -147,8 +182,22 @@ class Ablation11Model(ConformerMultimodalModel):
             waveform = audio[i]
             mel = self.mel_transform(waveform)  # (n_mels, time)
 
-            # Escala log y normalización por muestra
+            # Log-mel; optional SpecAugment (ViT branch only, training mode)
             mel = torch.log(mel + 1e-9)
+            if (
+                self.training
+                and self._vision_mel_spec_augment
+                and self._vit_freq_mask is not None
+                and self._vit_time_mask is not None
+            ):
+                # torchaudio expects (..., freq, time); add batch dim
+                m = mel.unsqueeze(0)
+                if m.size(-1) > 1:
+                    m = self._vit_freq_mask(m)
+                    m = self._vit_time_mask(m)
+                mel = m.squeeze(0)
+
+            # Normalización por muestra
             mel = (mel - mel.mean()) / (mel.std() + 1e-9)
 
             # A (1, 1, H', W') para hacer resize
@@ -181,11 +230,32 @@ class Ablation11Model(ConformerMultimodalModel):
         - visión: Mel-espectrograma -> imagen -> ViT
         """
         # -----------------------------
-        # Audio (igual que en ConformerMultimodalModel)
+        # Audio (WavLM optional: weighted hidden states)
         # -----------------------------
-        audio_outputs = self.audio_encoder(audio)
-        audio_features = audio_outputs.last_hidden_state  # (B, S, H_a)
-        audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
+        if self._wavlm_weighted_hidden_states and self.wavlm_layer_logits is not None:
+            audio_outputs = self.audio_encoder(
+                audio, output_hidden_states=True
+            )
+            hidden_states = getattr(audio_outputs, "hidden_states", None)
+            if hidden_states is None:
+                raise RuntimeError(
+                    "wavlm_weighted_hidden_states is enabled but the audio encoder "
+                    "returned no hidden_states; ensure output_hidden_states=True is supported."
+                )
+            # (L, B, T, H)
+            stacked = torch.stack(hidden_states, dim=0)
+            w = F.softmax(self.wavlm_layer_logits, dim=0).view(
+                -1, 1, 1, 1
+            )
+            audio_features = (w * stacked).sum(dim=0)
+            audio_attn = getattr(audio_outputs, "attention_mask", None)
+            audio_pooled = self.pool_audio_features(
+                audio_features, attention_mask=audio_attn
+            )
+        else:
+            audio_outputs = self.audio_encoder(audio)
+            audio_features = audio_outputs.last_hidden_state  # (B, S, H_a)
+            audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
 
         # -----------------------------
         # Texto

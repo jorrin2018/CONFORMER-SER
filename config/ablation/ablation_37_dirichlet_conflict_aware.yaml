@@ -70,11 +70,14 @@ model:
   fusion_type: "conflict_aware_cross_attention"
   fusion_num_heads: 4  # From ablation 30 (more conservative than 8)
   fusion_num_layers: 3
-  
-  # Conflict-aware attention parameters from Ablation 34
+
+  # Conflict detection: prediction_divergence | feature_distance | learned
+  # - prediction_divergence: conflict when 2+ modalities disagree on predicted class
+  # - feature_distance: conflict when mean cosine distance between embeddings > threshold
+  # - learned: small MLP predicts conflict from concatenated embeddings
   conflict_aware:
     enabled: true
-    conflict_detection_method: "prediction_divergence"  # Options: prediction_divergence, feature_distance, learned
+    conflict_detection_method: "prediction_divergence"
     conflict_threshold: 0.3  # Threshold for detecting conflicts (0-1)
     confidence_weighting: true  # Use confidence-based weighting when conflict detected
     conflict_resolution: "confidence_weighted"  # Options: confidence_weighted, modality_selection, adaptive_fusion

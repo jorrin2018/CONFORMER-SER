@@ -305,6 +305,69 @@ def create_loss_function(
         raise ValueError(f"Unknown loss type: {loss_type}")
 
 
+class SupConLoss(nn.Module):
+    """
+    Supervised Contrastive Loss for multimodal features.
 
+    Expects multiple "views" (e.g. audio and text) per sample and pulls
+    together embeddings from the same class while pushing apart different classes.
+    """
 
+    def __init__(self, temperature: float = 0.1, base_temperature: float = 0.1):
+        super().__init__()
+        self.temperature = temperature
+        self.base_temperature = base_temperature
 
+    def forward(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            features: Tensor of shape (batch_size, n_views, hidden_dim)
+            labels:   Tensor of shape (batch_size,)
+        """
+        device = features.device
+        bsz = features.size(0)
+        n_views = features.size(1)
+
+        if bsz <= 1:
+            return features.new_zeros(())
+
+        labels = labels.contiguous().view(-1, 1)
+        mask = torch.eq(labels, labels.T).float().to(device)  # (B, B)
+
+        # Flatten views: (B * V, D)
+        contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
+
+        # Similarity matrix scaled by temperature
+        anchor_dot_contrast = torch.div(
+            torch.matmul(contrast_feature, contrast_feature.T),
+            self.temperature,
+        )
+
+        # For numerical stability
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        logits = anchor_dot_contrast - logits_max.detach()
+
+        # Mask self-contrast
+        logits_mask = torch.ones_like(anchor_dot_contrast, device=device)
+        logits_mask = logits_mask.fill_(1.0)
+        indices = torch.arange(bsz * n_views, device=device)
+        logits_mask.scatter_(1, indices.view(-1, 1), 0.0)
+
+        # Repeat mask for views
+        mask = mask.repeat(n_views, n_views)
+        mask = mask * logits_mask
+
+        # Compute log-probabilities
+        exp_logits = torch.exp(logits) * logits_mask
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-20)
+
+        # Mean of log-likelihood over positive pairs
+        mask_sum = mask.sum(1)
+        # Avoid division by zero
+        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask_sum + 1e-20)
+
+        # Loss
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        loss = loss.view(n_views, bsz).mean()
+
+        return loss

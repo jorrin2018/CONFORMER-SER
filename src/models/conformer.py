@@ -1,5 +1,10 @@
-"""
-Conformer-based multimodal model for emotion recognition.
+"""Conformer-based multimodal model for speech emotion recognition.
+
+This module provides the base ConformerMultimodalModel (audio + text fusion with
+configurable fusion type and encoder freezing) and AudioOnlyModel baseline.
+Supports Wav2Vec2 and WavLM audio encoders via AutoModel, and BERT/DistilBERT
+for text. Trimodal fusion types (e.g. conflict_aware_cross_attention) are
+handled by ablation study models that build on this base.
 """
 
 import torch
@@ -12,6 +17,8 @@ from transformers import (
     AutoConfig
 )
 from typing import Dict, Optional
+
+from .emotion2vec_encoder import Emotion2VecEncoder, _is_emotion2vec_model
 from .fusion import (
     FusionModule, CrossAttentionFusion, GatedFusion, GIAFusion,
     TriModalHierarchicalFusion, TriModalTensorFusion, TriModalBilinearFusion,
@@ -21,10 +28,13 @@ from .fusion import (
 
 
 class ConformerMultimodalModel(nn.Module):
+    """Multimodal emotion recognition model (audio + text, or placeholder for trimodal).
+
+    Uses a pretrained audio encoder (Wav2Vec2/WavLM) and text encoder (BERT/DistilBERT),
+    with configurable fusion (concat, cross_attention, gated, etc.). For trimodal
+    types (e.g. conflict_aware_cross_attention), ablation models replace the fusion.
     """
-    Multimodal emotion recognition model using Conformer for audio and BERT for text.
-    """
-    
+
     def __init__(
         self,
         audio_encoder_name: str = "facebook/wav2vec2-conformer-rel-pos-large",
@@ -60,16 +70,26 @@ class ConformerMultimodalModel(nn.Module):
         self.audio_pooling = audio_pooling
         self.fusion_num_heads = fusion_num_heads
         
-        # Audio encoder (Conformer/Wav2Vec2)
-        try:
-            self.audio_encoder = Wav2Vec2Model.from_pretrained(audio_encoder_name)
-            audio_hidden_size = self.audio_encoder.config.hidden_size
-        except Exception as e:
-            print(f"Warning: Could not load audio encoder {audio_encoder_name}: {e}")
-            print("Using default Wav2Vec2 configuration")
-            config = Wav2Vec2Config()
-            self.audio_encoder = Wav2Vec2Model(config)
-            audio_hidden_size = config.hidden_size
+        # Audio encoder (Wav2Vec2 / WavLM via AutoModel, or Emotion2Vec via FunASR wrapper)
+        if _is_emotion2vec_model(audio_encoder_name):
+            try:
+                self.audio_encoder = Emotion2VecEncoder(model_name=audio_encoder_name)
+                audio_hidden_size = self.audio_encoder.config.hidden_size
+            except ImportError as e:
+                raise RuntimeError(
+                    "Emotion2Vec encoder requested but FunASR is not installed. "
+                    "Install with: pip install funasr"
+                ) from e
+        else:
+            try:
+                self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name)
+                audio_hidden_size = self.audio_encoder.config.hidden_size
+            except Exception as e:
+                print(f"Warning: Could not load audio encoder {audio_encoder_name}: {e}")
+                print("Using default Wav2Vec2 configuration")
+                config = Wav2Vec2Config()
+                self.audio_encoder = Wav2Vec2Model(config)
+                audio_hidden_size = config.hidden_size
         
         # Freezing strategy for audio encoder
         if freeze_audio_encoder:
@@ -79,15 +99,20 @@ class ConformerMultimodalModel(nn.Module):
             # Optionally unfreeze last N transformer layers for fine-tuning
             if audio_unfreeze_last_n_layers and audio_unfreeze_last_n_layers > 0:
                 try:
-                    # Unfreeze last N encoder layers if present
+                    # Unfreeze last N encoder layers (Wav2Vec2/WavLM use encoder.layers)
                     if hasattr(self.audio_encoder, 'encoder') and hasattr(self.audio_encoder.encoder, 'layers'):
                         encoder_layers = self.audio_encoder.encoder.layers
                         for layer in encoder_layers[-audio_unfreeze_last_n_layers:]:
                             for p in layer.parameters():
                                 p.requires_grad = True
-                        # Unfreeze encoder layer_norm if exists
                         if hasattr(self.audio_encoder.encoder, 'layer_norm'):
                             for p in self.audio_encoder.encoder.layer_norm.parameters():
+                                p.requires_grad = True
+                    elif hasattr(self.audio_encoder, 'encoder') and hasattr(self.audio_encoder.encoder, 'layer'):
+                        # Fallback for encoder.layer (BERT-style)
+                        encoder_layers = self.audio_encoder.encoder.layer
+                        for layer in encoder_layers[-audio_unfreeze_last_n_layers:]:
+                            for p in layer.parameters():
                                 p.requires_grad = True
                     # Also unfreeze projection heads if present
                     if hasattr(self.audio_encoder, 'project_hid'):
@@ -327,10 +352,8 @@ class ConformerMultimodalModel(nn.Module):
 
 
 class AudioOnlyModel(nn.Module):
-    """
-    Audio-only baseline model using Conformer/Wav2Vec2.
-    """
-    
+    """Audio-only baseline using a pretrained Wav2Vec2/Conformer encoder and a classifier head."""
+
     def __init__(
         self,
         audio_encoder_name: str = "facebook/wav2vec2-conformer-rel-pos-large",
@@ -340,8 +363,18 @@ class AudioOnlyModel(nn.Module):
         freeze_encoder: bool = False,
         audio_unfreeze_last_n_layers: int = 0
     ):
+        """Initialize the audio-only model.
+
+        Args:
+            audio_encoder_name: HuggingFace model name for the audio encoder.
+            num_classes: Number of output emotion classes.
+            hidden_dim: Hidden dimension of the classifier MLP.
+            dropout: Dropout rate for the classifier.
+            freeze_encoder: If True, freeze encoder; optionally unfreeze last N layers.
+            audio_unfreeze_last_n_layers: Number of top encoder layers to unfreeze (0 = none).
+        """
         super().__init__()
-        
+
         # Audio encoder
         self.audio_encoder = Wav2Vec2Model.from_pretrained(audio_encoder_name)
         audio_hidden_size = self.audio_encoder.config.hidden_size
@@ -407,7 +440,16 @@ class AudioOnlyModel(nn.Module):
         audio: torch.Tensor,
         labels: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
-        """Forward pass."""
+        """Forward pass.
+
+        Args:
+            audio: Raw audio waveform. Shape (batch_size, n_samples).
+            labels: Optional ground-truth class indices. Shape (batch_size,).
+
+        Returns:
+            Dict with keys: logits (batch_size, num_classes), predictions (batch_size,),
+            loss (scalar or None if labels not provided).
+        """
         # Extract features
         outputs = self.audio_encoder(audio)
         features = outputs.last_hidden_state.mean(dim=1)

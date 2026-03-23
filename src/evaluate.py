@@ -1,5 +1,7 @@
-"""
-Evaluation script for Conformer multimodal emotion recognition.
+"""Evaluation script for Conformer multimodal SER.
+
+Loads a checkpoint and config, runs inference on a specified split (train/val/test),
+and reports metrics (e.g. WA, UA, per-class accuracy). Optionally saves predictions to CSV.
 """
 
 import os
@@ -42,14 +44,30 @@ def parse_args():
 
 
 def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
+    """Load configuration from a YAML file.
+
+    Args:
+        config_path: Path to the YAML config file.
+
+    Returns:
+        Nested dict with model and dataset configuration.
+    """
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
 
 
 def load_model(checkpoint_path: str, config: dict, device: str):
-    """Load model from checkpoint."""
+    """Load model from checkpoint and move to device.
+
+    Args:
+        checkpoint_path: Path to the .pt checkpoint file.
+        config: Model/dataset config dict (e.g. from load_config).
+        device: Target device string (e.g. 'cuda' or 'cpu').
+
+    Returns:
+        Model loaded with checkpoint weights, on device, in eval mode.
+    """
     print(f"Loading model from {checkpoint_path}...")
     
     # Create model

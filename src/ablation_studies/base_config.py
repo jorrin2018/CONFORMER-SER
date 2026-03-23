@@ -1,5 +1,7 @@
-"""
-Load and adjust base configuration from checkpoint 20251029_190659.
+"""Load and adjust base configuration from a reference checkpoint.
+
+Used by ablation studies that need a 4-class (angry, happy, sad, neutral) setup
+derived from an existing checkpoint config.
 """
 
 import json
@@ -8,15 +10,16 @@ from typing import Dict, Any
 
 
 def load_base_config() -> Dict[str, Any]:
-    """
-    Load base configuration from checkpoint 20251029_190659.
+    """Load base configuration from checkpoint 20251029_190659 and adapt to 4 classes.
 
-    Adjusts:
-    - num_classes from 10 to 4 (merges happy/excited and removes others)
-    - emotions list to match 4 classes
-    
+    Adjusts num_classes to 4 and emotions to ['angry', 'happy', 'sad', 'neutral'].
+    Fails if the checkpoint config path does not exist.
+
     Returns:
-        Dictionary with base configuration
+        Dictionary with base configuration (dataset, model, etc.).
+
+    Raises:
+        FileNotFoundError: If the base checkpoint config file is missing.
     """
     # Path to base checkpoint config
     base_config_path = Path("checkpoints/20251029_190659/config.json")

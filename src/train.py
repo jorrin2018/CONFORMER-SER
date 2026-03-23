@@ -1,5 +1,8 @@
-"""
-Training script for Conformer multimodal emotion recognition.
+"""Training script for Conformer multimodal speech emotion recognition.
+
+Loads config and dataset, builds the model (or ablation model), and runs
+training with optional mixed precision, gradient accumulation, and
+learning-rate scheduling. Supports resuming from checkpoint.
 """
 
 import os
@@ -26,7 +29,11 @@ from src.utils.losses import create_loss_function
 
 
 def parse_args():
-    """Parse command line arguments."""
+    """Parse command line arguments for training.
+
+    Returns:
+        Namespace with config path, optional checkpoint, device, and experiment_name.
+    """
     parser = argparse.ArgumentParser(description='Train Conformer multimodal SER model')
     parser.add_argument('--config', type=str, default='config/config.yaml',
                         help='Path to configuration file')
@@ -40,7 +47,14 @@ def parse_args():
 
 
 def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
+    """Load configuration from a YAML file.
+
+    Args:
+        config_path: Path to the YAML config file.
+
+    Returns:
+        Nested dict with dataset, model, training, logging, etc.
+    """
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     return config
@@ -460,6 +474,11 @@ def train_epoch(
                 loss = criterion(outputs['alphas'], labels)
             else:
                 loss = criterion(outputs['logits'], labels)
+            # Add optional supervised contrastive loss (e.g. Ablation 43)
+            if outputs.get('loss_contrastive') is not None:
+                cw = config.get('training', {}).get('loss', {}).get('contrastive_weight', 0.0)
+                if cw > 0:
+                    loss = loss + cw * outputs['loss_contrastive']
         else:
             if audio_only:
                 outputs = model(audio, labels)
@@ -472,6 +491,11 @@ def train_epoch(
                 loss = criterion(outputs['alphas'], labels)
             else:
                 loss = criterion(outputs['logits'], labels)
+            # Add optional supervised contrastive loss (e.g. Ablation 43)
+            if outputs.get('loss_contrastive') is not None:
+                cw = config.get('training', {}).get('loss', {}).get('contrastive_weight', 0.0)
+                if cw > 0:
+                    loss = loss + cw * outputs['loss_contrastive']
         
         # Check for NaN/Inf in loss
         if not torch.isfinite(loss):

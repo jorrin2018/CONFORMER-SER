@@ -69,8 +69,11 @@ model:
   fusion_type: "conflict_aware_cross_attention"  # From Ablation 34
   fusion_num_heads: 4
   fusion_num_layers: 3
-  
-  # Conflict-aware attention parameters
+
+  # Conflict detection: prediction_divergence | feature_distance | learned
+  # - prediction_divergence: conflict when 2+ modalities disagree on predicted class
+  # - feature_distance: conflict when mean cosine distance between embeddings > threshold
+  # - learned: small MLP predicts conflict from concatenated embeddings
   conflict_aware:
     enabled: true
     conflict_detection_method: "prediction_divergence"

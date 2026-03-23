@@ -1,5 +1,8 @@
-"""
-Ablation studies for Conformer multimodal emotion recognition.
+"""Ablation studies for Conformer multimodal SER (studies 01-39, 40).
+
+Provides model classes (Ablation01Model through Ablation39Model, etc.) and
+shared components (classification heads, base config loader, optimizer factory)
+for running ablation experiments via scripts/run_ablation.py.
 """
 
 from .base_config import load_base_config
@@ -33,6 +36,9 @@ from .ablation_31_model import Ablation31Model
 from .ablation_32_model import Ablation32Model
 from .ablation_33_model import Ablation33Model, NoiseAwareProsodyCueExtractor
 from .ablation_34_model import Ablation34Model
+from .ablation_43_model import Ablation43Model
+from .ablation_47_supcon_model import Ablation47Model
+from .ablation_48_supcon_model import Ablation48Model
 from .ablation_35_model import Ablation35Model
 from .ablation_36a_model import Ablation36AModel
 from .ablation_36b_model import Ablation36BModel
@@ -71,6 +77,9 @@ __all__ = [
     'Ablation32Model',
     'Ablation33Model',
     'Ablation34Model',
+    'Ablation43Model',
+    'Ablation47Model',
+    'Ablation48Model',
     'Ablation35Model',
     'Ablation36AModel',
     'Ablation36BModel',

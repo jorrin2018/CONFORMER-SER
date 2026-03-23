@@ -44,7 +44,8 @@ def create_ablation_optimizer(
 
     studies_with_separate_lr = (
         1, 5, 6, 7, 8, 9, 11, 13, 14, 15, 16, 17, 18, 19, 20,
-        21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+        21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+        53,
     )
     if study_number in studies_with_separate_lr:
         audio_params = []
@@ -57,7 +58,7 @@ def create_ablation_optimizer(
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            if 'audio_encoder' in name:
+            if 'audio_encoder' in name or name == 'wavlm_layer_logits':
                 audio_params.append(param)
             elif 'text_encoder' in name:
                 text_params.append(param)

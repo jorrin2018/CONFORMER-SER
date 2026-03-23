@@ -1,5 +1,8 @@
-"""
-Master script to run all ablation studies.
+"""Master script to run ablation studies (studies 1-40).
+
+Loads study-specific YAML config, builds the corresponding ablation model,
+and runs training with the same training loop as src.train. Use --study N
+to select the experiment (e.g. 34 for Conflict-Aware, 40 for WavLM + Conflict-Aware).
 """
 
 import os
@@ -50,6 +53,9 @@ from src.ablation_studies import (
     Ablation33Model,
     Ablation38Model,
     Ablation34Model,
+    Ablation43Model,
+    Ablation47Model,
+    Ablation48Model,
     Ablation35Model,
     Ablation36AModel,
     Ablation36BModel,
@@ -71,15 +77,17 @@ from src.train import (
 
 
 def load_ablation_config(config_path: str, base_config: dict) -> dict:
-    """
-    Load ablation-specific config and merge with base config.
-    
+    """Load ablation-specific YAML config and merge with base config.
+
+    Ablation keys override base_config. Used to get dataset, model, and
+    training settings for the selected study.
+
     Args:
-        config_path: Path to ablation YAML config
-        base_config: Base configuration dictionary
-        
+        config_path: Path to the ablation YAML config file.
+        base_config: Base configuration dict (e.g. from load_base_config).
+
     Returns:
-        Merged configuration dictionary
+        Merged configuration dictionary.
     """
     # Load ablation config (force UTF-8 to avoid Windows cp1252 issues)
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -181,8 +189,38 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation38Model(config)
     elif study_number == 39:
         model = Ablation39Model(config)
+    elif study_number == 40:
+        model = Ablation34Model(config)
+    elif study_number == 41:
+        # Ablation 41: WavLM-base + ViT + Conflict-Aware, K-Fold
+        model = Ablation34Model(config)
+    elif study_number == 42:
+        model = Ablation34Model(config)
+    elif study_number == 43:
+        model = Ablation43Model(config)
+    elif study_number in (44, 45, 46):
+        # Ablations 44-46: Conflict-Aware Cross-Attention (trimodal) with alternative heads
+        model = Ablation34Model(config)
+    elif study_number == 47:
+        # Ablation 47: Conflict-Aware + SupCon pre-fusión (2 views)
+        model = Ablation47Model(config)
+    elif study_number == 48:
+        # Ablation 48: Conflict-Aware + SupCon pre-fusión (3 views: audio + text + vision)
+        model = Ablation48Model(config)
+    elif study_number == 49:
+        # Ablation 49: Conflict-Aware + SupCon (3 views) + WavLM-base
+        model = Ablation48Model(config)
+    elif study_number == 50:
+        # Ablation 50: Conflict-Aware + SupCon (3 views) + Emotion2Vec audio encoder
+        model = Ablation48Model(config)
+    elif study_number == 52:
+        # Ablation 52: like 49 + no waveform aug + SpecAugment on mel for ViT
+        model = Ablation48Model(config)
+    elif study_number == 53:
+        # Ablation 53: like run 174035 of 52 (freeze flags) + WavLM weighted hidden states
+        model = Ablation48Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-39.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52, or 53.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1004,7 +1042,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-39). If not specified, runs all.')
+                        help='Run specific study (1-50, 52, 53). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1052,13 +1090,26 @@ def main():
         (37, "config/ablation/ablation_37_dirichlet_conflict_aware.yaml"),  # 37: Dirichlet + Conflict-Aware
         (38, "config/ablation/ablation_38_opensmile_residual.yaml"),  # Ablation 38: OpenSMILE + Attention Gates + Residual
         (39, "config/ablation/ablation_36c_hybrid_conflict.yaml"),  # 36C
+        (40, "config/ablation/ablation_40_wavlm_conflict_aware.yaml"),  # WavLM-base + Conflict-Aware
+        (41, "config/ablation/ablation_41_wavlm_base_vit_kfold.yaml"),  # WavLM-base + ViT + Conflict-Aware, K-Fold
+        (42, "config/ablation/ablation_42_wavlm_base_vit.yaml"),  # WavLM-base + ViT + Conflict-Aware, single split
+        (43, "config/ablation/ablation_43_training_improvements.yaml"),  # Focal + Contrastive + Augmentation
+        (44, "config/ablation/ablation_44_transformer_head.yaml"),  # Conflict-Aware + Transformer Head
+        (45, "config/ablation/ablation_45_multiscale_head.yaml"),  # Conflict-Aware + MultiScaleTemporal Head
+        (46, "config/ablation/ablation_46_cnn1d_head.yaml"),  # Conflict-Aware + CNN1D Head
+        (47, "config/ablation/ablation_47_supcon.yaml"),  # Conflict-Aware + SupCon pre-fusión (2 views)
+        (48, "config/ablation/ablation_48_supcon_3views.yaml"),  # Conflict-Aware + SupCon (3 views: audio+text+vision)
+        (49, "config/ablation/ablation_49_supcon_wavlm.yaml"),  # Conflict-Aware + SupCon (3 views) + WavLM-base
+        (50, "config/ablation/ablation_50_emotion2vec.yaml"),  # Conflict-Aware + SupCon (3 views) + Emotion2Vec
+        (52, "config/ablation/ablation_52_supcon_wavlm_specaug_vit.yaml"),  # Like 49: no wf aug, SpecAugment on ViT mel
+        (53, "config/ablation/ablation_53_wavlm_weighted_hidden_states.yaml"),  # 52/174035-style + WavLM layer weights
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-39")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52, 53")
             return
     
     # Run each study
@@ -1073,8 +1124,8 @@ def main():
                     device=args.device,
                     experiment_name=experiment_name
                 )
-            elif study_number in (20, 29):
-                # Special case: Ablation 20 and 29 run K-Fold cross-validation with cache clearing
+            elif study_number in (20, 29, 41):
+                # Special case: Ablation 20, 29 and 41 run K-Fold cross-validation with cache clearing
                 run_ablation_study_kfold(
                     study_number=study_number,
                     config_path=config_path,

@@ -1,5 +1,7 @@
-"""
-Alternative classification heads for ablation studies.
+"""Alternative classification heads for ablation studies.
+
+Provides LSTMClassificationHead, TransformerClassificationHead, and
+CNN1DClassificationHead used on top of fusion outputs for emotion classification.
 """
 
 import torch
