@@ -14,6 +14,8 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
+import math
+import warnings
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
@@ -268,7 +270,13 @@ def create_model(config: dict, device: str, logger, audio_only: bool = False):
     return model
 
 
-def create_optimizer_and_scheduler(model, config: dict, num_training_steps: int, audio_only: bool = False):
+def create_optimizer_and_scheduler(
+    model,
+    config: dict,
+    num_training_steps: int,
+    audio_only: bool = False,
+    logger=None,
+):
     """Create optimizer and learning rate scheduler."""
     
     if audio_only:
@@ -343,7 +351,18 @@ def create_optimizer_and_scheduler(model, config: dict, num_training_steps: int,
     
     # Create scheduler
     scheduler_type = config['training'].get('scheduler_type', 'cosine')
-    
+    warmup_ratio = float(config['training'].get('warmup_ratio', 0.0) or 0.0)
+
+    if scheduler_type == 'plateau' and warmup_ratio > 0:
+        msg = (
+            "training.warmup_ratio is set but scheduler_type is 'plateau': "
+            "ReduceLROnPlateau does not use warmup_ratio; warmup is ignored. "
+            "Use cosine/linear scheduler for warmup, or remove warmup_ratio from config."
+        )
+        warnings.warn(msg, UserWarning, stacklevel=2)
+        if logger is not None:
+            logger.warning(msg)
+
     if scheduler_type == 'linear':
         from transformers import get_linear_schedule_with_warmup
         num_warmup_steps = int(config['training'].get('warmup_ratio', 0.1) * num_training_steps)
@@ -352,7 +371,7 @@ def create_optimizer_and_scheduler(model, config: dict, num_training_steps: int,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps
         )
-    elif scheduler_type == 'cosine':
+    elif scheduler_type in ('cosine', 'cosine_with_warmup'):
         from transformers import get_cosine_schedule_with_warmup
         num_warmup_steps = int(config['training'].get('warmup_ratio', 0.1) * num_training_steps)
         scheduler = get_cosine_schedule_with_warmup(
@@ -427,192 +446,192 @@ def train_epoch(
     tb_logger,
     audio_only: bool = False
 ):
-    """Train for one epoch."""
+    """Train for one epoch with optional gradient accumulation."""
     model.train()
-    
+
     metrics_tracker = EmotionMetrics(config['dataset']['emotions'])
-    total_loss = 0
-    
+    total_loss = 0.0
+    num_loss_batches = 0
+
+    accum_steps = max(1, int(config['training'].get('gradient_accumulation_steps', 1)))
+    mixed_precision = config['training'].get('mixed_precision', False)
+    use_amp_scaler = scaler is not None
+    num_batches = len(train_loader)
+    steps_per_epoch = math.ceil(num_batches / accum_steps) if num_batches else 0
+
+    optimizer.zero_grad(set_to_none=True)
+    accum_count = 0
+    optimizer_step_idx = 0
+
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
-    
+
+    def _optimizer_step(batch_idx: int) -> bool:
+        """Clip, step optimizer, zero grad, step scheduler. Returns True if stepped."""
+        nonlocal optimizer_step_idx
+        max_norm = float(config['training']['max_grad_norm'])
+
+        if use_amp_scaler:
+            scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            if not torch.isfinite(grad_norm.clone().detach()):
+                logger.warning(
+                    f"NaN/Inf gradients at batch {batch_idx}, skipping optimizer step."
+                )
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                return False
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            if not torch.isfinite(grad_norm.clone().detach()):
+                logger.warning(
+                    f"NaN/Inf gradients at batch {batch_idx}, skipping optimizer step."
+                )
+                optimizer.zero_grad(set_to_none=True)
+                return False
+            optimizer.step()
+
+        optimizer.zero_grad(set_to_none=True)
+        if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
+            scheduler.step()
+        optimizer_step_idx += 1
+        return True
+
     for batch_idx, batch in enumerate(pbar):
-        # Move to device with non_blocking for parallel transfers (RTX 4060 PCIe x8 optimization)
         non_blocking = getattr(train_loader, 'non_blocking', False)
         audio = batch['audio'].to(device, non_blocking=non_blocking)
         labels = batch['labels'].to(device, non_blocking=non_blocking)
-        
-        # DEBUG: Check for NaN/Inf in input data
+
         if not torch.isfinite(audio).all():
             logger.error(f"NaN/Inf detected in audio input at batch {batch_idx}!")
-            logger.error(f"Audio stats: min={audio.min().item()}, max={audio.max().item()}, mean={audio.mean().item()}")
-            logger.error(f"Non-finite count: {(~torch.isfinite(audio)).sum().item()}")
-            # Skip this batch
             continue
-        
-        # Forward pass with mixed precision
-        mixed_precision = config['training'].get('mixed_precision', False)
+
         if mixed_precision:
-            # Use appropriate dtype for mixed precision
             dtype = None
             if mixed_precision == 'bf16':
                 dtype = torch.bfloat16
-            elif mixed_precision == 'fp16':
+            elif mixed_precision in ('fp16', True):
                 dtype = torch.float16
             elif mixed_precision == 'fp8':
-                # FP8 requires transformer_engine, fallback to BF16
                 dtype = torch.bfloat16
-            
+
             with autocast(device_type='cuda', dtype=dtype):
                 if audio_only:
                     outputs = model(audio, labels)
                 else:
-                    text_input_ids = batch['text_input_ids'].to(device, non_blocking=non_blocking)
-                    text_attention_mask = batch['text_attention_mask'].to(device, non_blocking=non_blocking)
-                    outputs = model(audio, text_input_ids, text_attention_mask, labels)
-            # Handle Dirichlet models that output alphas instead of logits
+                    text_input_ids = batch['text_input_ids'].to(
+                        device, non_blocking=non_blocking
+                    )
+                    text_attention_mask = batch['text_attention_mask'].to(
+                        device, non_blocking=non_blocking
+                    )
+                    outputs = model(
+                        audio, text_input_ids, text_attention_mask, labels
+                    )
             if 'alphas' in outputs:
                 loss = criterion(outputs['alphas'], labels)
             else:
                 loss = criterion(outputs['logits'], labels)
-            # Add optional supervised contrastive loss (e.g. Ablation 43)
             if outputs.get('loss_contrastive') is not None:
-                cw = config.get('training', {}).get('loss', {}).get('contrastive_weight', 0.0)
+                cw = config.get('training', {}).get('loss', {}).get(
+                    'contrastive_weight', 0.0
+                )
                 if cw > 0:
                     loss = loss + cw * outputs['loss_contrastive']
         else:
             if audio_only:
                 outputs = model(audio, labels)
             else:
-                text_input_ids = batch['text_input_ids'].to(device)
-                text_attention_mask = batch['text_attention_mask'].to(device)
-                outputs = model(audio, text_input_ids, text_attention_mask, labels)
-            # Handle Dirichlet models that output alphas instead of logits
+                text_input_ids = batch['text_input_ids'].to(
+                    device, non_blocking=non_blocking
+                )
+                text_attention_mask = batch['text_attention_mask'].to(
+                    device, non_blocking=non_blocking
+                )
+                outputs = model(
+                    audio, text_input_ids, text_attention_mask, labels
+                )
             if 'alphas' in outputs:
                 loss = criterion(outputs['alphas'], labels)
             else:
                 loss = criterion(outputs['logits'], labels)
-            # Add optional supervised contrastive loss (e.g. Ablation 43)
             if outputs.get('loss_contrastive') is not None:
-                cw = config.get('training', {}).get('loss', {}).get('contrastive_weight', 0.0)
+                cw = config.get('training', {}).get('loss', {}).get(
+                    'contrastive_weight', 0.0
+                )
                 if cw > 0:
                     loss = loss + cw * outputs['loss_contrastive']
-        
-        # Check for NaN/Inf in loss
+
         if not torch.isfinite(loss):
             logger.error(f"NaN/Inf loss detected at batch {batch_idx}!")
-            logger.error(f"Loss value: {loss.item()}")
-            logger.error(f"Logits stats: min={outputs['logits'].min().item()}, max={outputs['logits'].max().item()}, mean={outputs['logits'].mean().item()}, std={outputs['logits'].std().item()}")
-            logger.error(f"Audio input stats: min={audio.min().item()}, max={audio.max().item()}, mean={audio.mean().item()}, std={audio.std().item()}")
-            
-            # Check model parameters
-            for name, param in model.named_parameters():
-                if param.requires_grad and not torch.isfinite(param).all():
-                    logger.error(f"NaN/Inf in parameter: {name}")
-            
-            # Skip this batch instead of stopping
+            if 'logits' in outputs:
+                lo = outputs['logits']
+                logger.error(
+                    f"Logits stats: min={lo.min().item()}, max={lo.max().item()}, "
+                    f"mean={lo.mean().item()}, std={lo.std().item()}"
+                )
             logger.warning("Skipping this batch and continuing...")
             continue
-        
-        # Backward pass
-        optimizer.zero_grad()
-        
-        if config['training']['mixed_precision'] and scaler is not None:
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            
-            # Check for NaN/Inf gradients before clipping
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config['training']['max_grad_norm']
-            )
-            
-            if not torch.isfinite(grad_norm.clone().detach()):
-                logger.warning(f"NaN/Inf gradients detected at batch {batch_idx}, skipping update.")
-                logger.warning(f"  Grad norm: {grad_norm.item()}, Loss: {loss.item():.4f}")
-                logger.warning(f"  Logits range: [{outputs['logits'].min().item():.4f}, {outputs['logits'].max().item():.4f}]")
-                
-                # Check which parameters have NaN gradients
-                nan_params = []
-                for name, param in model.named_parameters():
-                    if param.requires_grad and param.grad is not None:
-                        if not torch.isfinite(param.grad).all():
-                            nan_params.append(name)
-                if nan_params:
-                    logger.warning(f"  Parameters with NaN gradients: {nan_params[:5]}")  # Show first 5
-                
-                scaler.update()
-                optimizer.zero_grad()
-                continue
-            
-            scaler.step(optimizer)
-            scaler.update()
+
+        loss_scaled = loss / accum_steps
+
+        if use_amp_scaler:
+            scaler.scale(loss_scaled).backward()
         else:
-            loss.backward()
-            
-            # Check for NaN/Inf gradients before clipping
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config['training']['max_grad_norm']
-            )
-            
-            if not torch.isfinite(grad_norm.clone().detach()):
-                logger.warning(f"NaN/Inf gradients detected at batch {batch_idx}, skipping update.")
-                logger.warning(f"  Grad norm: {grad_norm.item()}, Loss: {loss.item():.4f}")
-                logger.warning(f"  Logits range: [{outputs['logits'].min().item():.4f}, {outputs['logits'].max().item():.4f}]")
-                
-                # Check which parameters have NaN gradients
-                nan_params = []
-                for name, param in model.named_parameters():
-                    if param.requires_grad and param.grad is not None:
-                        if not torch.isfinite(param.grad).all():
-                            nan_params.append(name)
-                if nan_params:
-                    logger.warning(f"  Parameters with NaN gradients: {nan_params[:5]}")  # Show first 5
-                
-                optimizer.zero_grad()
-                continue
-            
-            optimizer.step()
-        
-        # Step scheduler (only for step-based schedulers, not for plateau)
-        if scheduler is not None and not isinstance(scheduler, ReduceLROnPlateau):
-            scheduler.step()
-        
-        # Update metrics (only if loss is finite)
+            loss_scaled.backward()
+
+        accum_count += 1
+
+        should_step = accum_count >= accum_steps or (batch_idx + 1 == num_batches)
+        if should_step and accum_count > 0:
+            stepped = _optimizer_step(batch_idx)
+            accum_count = 0
+            if (
+                stepped
+                and tb_logger
+                and scheduler is not None
+                and not isinstance(scheduler, ReduceLROnPlateau)
+            ):
+                tb_logger.log_scalar(
+                    'train/lr',
+                    scheduler.get_last_lr()[0],
+                    (epoch - 1) * steps_per_epoch + optimizer_step_idx - 1,
+                )
+
         loss_value = loss.item()
         if torch.isfinite(loss):
             total_loss += loss_value
-            predictions_np = outputs['predictions'].cpu().numpy()
+            num_loss_batches += 1
             metrics_tracker.update(outputs['predictions'], labels)
-            
-            # Debug: Log predictions distribution for first batch of first epoch
-            if batch_idx == 0 and epoch == 1:
+
+            if batch_idx == 0 and epoch == 1 and 'logits' in outputs:
+                predictions_np = outputs['predictions'].cpu().numpy()
                 unique_preds = torch.unique(outputs['predictions']).cpu().numpy()
+                lo = outputs['logits']
                 logger.info(f"First training batch - Predictions: {predictions_np[:10]}")
                 logger.info(f"First training batch - Labels: {labels.cpu().numpy()[:10]}")
-                logger.info(f"First training batch - Logits range: [{outputs['logits'].min().item():.4f}, {outputs['logits'].max().item():.4f}]")
-                logger.info(f"First training batch - Logits mean: {outputs['logits'].mean().item():.4f}, std: {outputs['logits'].std().item():.4f}")
+                logger.info(
+                    f"First training batch - Logits range: [{lo.min().item():.4f}, {lo.max().item():.4f}]"
+                )
+                logger.info(
+                    f"First training batch - Logits mean: {lo.mean().item():.4f}, std: {lo.std().item():.4f}"
+                )
                 logger.info(f"First training batch - Unique predictions: {unique_preds}")
                 if len(unique_preds) == 1:
-                    logger.warning(f"[WARNING] Model is predicting only class {unique_preds[0]} for all samples!")
-                    logger.warning(f"   This is a sign of class collapse. Check configuration immediately.")
-        
-        # Update progress bar
+                    logger.warning(
+                        f"[WARNING] Model is predicting only class {unique_preds[0]} for all samples!"
+                    )
+
         pbar.set_postfix({'loss': loss_value})
-        
-        # Log to tensorboard
-        global_step = epoch * len(train_loader) + batch_idx
+
+        global_step = epoch * num_batches + batch_idx
         if batch_idx % config['logging']['log_every_n_steps'] == 0:
             if torch.isfinite(loss) and tb_logger:
                 tb_logger.log_scalar('train/loss_step', loss.item(), global_step)
-            if scheduler is not None and tb_logger and not isinstance(scheduler, ReduceLROnPlateau):
-                # Log LR for step-based schedulers (not plateau)
-                tb_logger.log_scalar('train/lr', scheduler.get_last_lr()[0], global_step)
-    
-    # Compute epoch metrics
-    avg_loss = total_loss / len(train_loader)
+
+    avg_loss = total_loss / max(num_loss_batches, 1)
     metrics = metrics_tracker.compute()
-    
     return avg_loss, metrics
 
 
@@ -664,8 +683,12 @@ def validate(model, val_loader, criterion, device, config, logger, audio_only: b
             if audio_only:
                 outputs = model(audio, labels)
             else:
-                text_input_ids = batch['text_input_ids'].to(device)
-                text_attention_mask = batch['text_attention_mask'].to(device)
+                text_input_ids = batch['text_input_ids'].to(
+                    device, non_blocking=non_blocking
+                )
+                text_attention_mask = batch['text_attention_mask'].to(
+                    device, non_blocking=non_blocking
+                )
                 outputs = model(audio, text_input_ids, text_attention_mask, labels)
             # Handle Dirichlet models that output alphas instead of logits
             if 'alphas' in outputs:
@@ -850,9 +873,18 @@ def main():
         device=device
     )
     
-    # Create optimizer and scheduler
-    num_training_steps = len(train_loader) * config['training']['num_epochs']
-    optimizer, scheduler = create_optimizer_and_scheduler(model, config, num_training_steps, audio_only=audio_only)
+    # Create optimizer and scheduler (steps = optimizer updates per epoch * epochs)
+    accum_steps = max(1, int(config['training'].get('gradient_accumulation_steps', 1)))
+    steps_per_epoch = math.ceil(len(train_loader) / accum_steps)
+    num_training_steps = steps_per_epoch * int(config['training']['num_epochs'])
+    if accum_steps > 1:
+        logger.info(
+            f"Gradient accumulation: {accum_steps} micro-batches per step; "
+            f"~{steps_per_epoch} optimizer steps/epoch; total scheduler steps ≈ {num_training_steps}"
+        )
+    optimizer, scheduler = create_optimizer_and_scheduler(
+        model, config, num_training_steps, audio_only=audio_only, logger=logger
+    )
     
     # Initialize mixed precision scaler
     scaler = None

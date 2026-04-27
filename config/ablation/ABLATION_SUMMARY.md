@@ -2,11 +2,11 @@
 
 Este documento resume las diferencias clave y el objetivo de cada configuración de experimentación ("ablation") en el proyecto.
 
-**Total**: estudios 1-50, 52 y 53 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34
+**Total**: estudios 1-50, 52, 53 y 54 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34
 
 ### Ejecución
 ```powershell
-python scripts/run_ablation.py --study N   # N = 1 a 50, o 52, 53
+python scripts/run_ablation.py --study N   # N = 1 a 50, o 52, 53, 54
 ```
 
 ---
@@ -121,6 +121,9 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 ## Ablation 53 (Study 53): Run tipo 174035 de 52 + WavLM suma ponderada por capas
 *   **`ablation_53_wavlm_weighted_hidden_states.yaml`**: **Misma receta operativa que el checkpoint `ablation_52_20260320_174035`** (p. ej. `freeze_text_encoder: false`, `freeze_vision_encoder: true`, sin augment de waveform, SpecAugment en mel del ViT, WavLM-base + SupCon 3 vistas + Conflict-Aware). **Novedad**: `model.wavlm_weighted_hidden_states: true` activa en `Ablation11Model` una combinación **softmax-aprendida** de todos los `hidden_states` de WavLM (embeddings + capas del transformer) antes del pooling temporal, alineado con la recomendación de explotar varias capas de WavLM.
 
+## Ablation 54 (Study 54): Igual que 53 con WavLM-Base+
+*   **`ablation_54_wavlm_base_plus_weighted.yaml`**: **Misma configuración que el estudio 53** (weighted hidden states, SupCon 3 vistas, Conflict-Aware, etc.) sustituyendo el encoder de audio por **`microsoft/wavlm-base-plus`**. Sirve para comparar Base vs Base+ bajo el mismo protocolo de entrenamiento.
+
 ---
 
 ## Mapeo Study → Config (run_ablation.py)
@@ -150,5 +153,6 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 | 50 | ablation_50_emotion2vec | Ablation48Model |
 | 52 | ablation_52_supcon_wavlm_specaug_vit | Ablation48Model |
 | 53 | ablation_53_wavlm_weighted_hidden_states | Ablation48Model |
+| 54 | ablation_54_wavlm_base_plus_weighted | Ablation48Model |
 
 *Última actualización: Marzo 2026*

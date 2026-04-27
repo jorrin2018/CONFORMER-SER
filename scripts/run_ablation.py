@@ -15,6 +15,8 @@ from torch.amp import autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
 import json
+import math
+import warnings
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
@@ -71,8 +73,7 @@ from src.train import (
     create_dataloaders,
     train_epoch,
     validate,
-    create_optimizer_and_scheduler,
-    detect_class_collapse
+    detect_class_collapse,
 )
 
 
@@ -219,8 +220,11 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     elif study_number == 53:
         # Ablation 53: like run 174035 of 52 (freeze flags) + WavLM weighted hidden states
         model = Ablation48Model(config)
+    elif study_number == 54:
+        # Ablation 54: same as 53 but microsoft/wavlm-base-plus
+        model = Ablation48Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52, or 53.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52, 53, or 54.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -471,9 +475,25 @@ def _run_ablation_with_config(
         optimizer = create_ablation_optimizer(model, config, study_number)
     
     # Create scheduler (reuse logic from train.py)
-    num_training_steps = len(train_loader) * config['training']['num_epochs']
+    accum_steps = max(1, int(config['training'].get('gradient_accumulation_steps', 1)))
+    steps_per_epoch = math.ceil(len(train_loader) / accum_steps)
+    num_training_steps = steps_per_epoch * int(config['training']['num_epochs'])
+    if accum_steps > 1:
+        logger.info(
+            f"Gradient accumulation: {accum_steps} micro-batches/step; "
+            f"scheduler total steps ≈ {num_training_steps}"
+        )
+
     scheduler_type = config['training'].get('scheduler_type', 'cosine')
-    
+    warmup_ratio = float(config['training'].get('warmup_ratio', 0.0) or 0.0)
+    if scheduler_type == 'plateau' and warmup_ratio > 0:
+        msg = (
+            "training.warmup_ratio is set but scheduler_type is 'plateau': "
+            "warmup_ratio is ignored. Use cosine/linear for warmup."
+        )
+        warnings.warn(msg, UserWarning, stacklevel=2)
+        logger.warning(msg)
+
     if scheduler_type == 'linear':
         from transformers import get_linear_schedule_with_warmup
         num_warmup_steps = int(config['training'].get('warmup_ratio', 0.1) * num_training_steps)
@@ -482,7 +502,7 @@ def _run_ablation_with_config(
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps
         )
-    elif scheduler_type == 'cosine':
+    elif scheduler_type in ('cosine', 'cosine_with_warmup'):
         from transformers import get_cosine_schedule_with_warmup
         num_warmup_steps = int(config['training'].get('warmup_ratio', 0.1) * num_training_steps)
         scheduler = get_cosine_schedule_with_warmup(
@@ -663,21 +683,18 @@ def _run_ablation_with_config(
                 patience_counter += 1
                 logger.info(f"Patience: {patience_counter}/{config['training']['early_stopping_patience']}")
             
-            # Step scheduler
-            if scheduler is not None:
-                if isinstance(scheduler, ReduceLROnPlateau):
-                    scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
-                    if scheduler_metric == 'val_loss':
-                        metric_value = val_loss
-                    elif scheduler_metric in ('val_ua', 'val_unweighted_accuracy'):
-                        metric_value = val_metrics.get('unweighted_accuracy', val_loss)
-                    elif scheduler_metric == 'val_wa':
-                        metric_value = val_metrics.get('weighted_accuracy', val_metrics.get('unweighted_accuracy', val_loss))
-                    else:
-                        metric_value = val_loss
-                    scheduler.step(metric_value)
+            # Step plateau scheduler only (step-based schedulers step inside train_epoch)
+            if scheduler is not None and isinstance(scheduler, ReduceLROnPlateau):
+                scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
+                if scheduler_metric == 'val_loss':
+                    metric_value = val_loss
+                elif scheduler_metric in ('val_ua', 'val_unweighted_accuracy'):
+                    metric_value = val_metrics.get('unweighted_accuracy', val_loss)
+                elif scheduler_metric == 'val_wa':
+                    metric_value = val_metrics.get('weighted_accuracy', val_metrics.get('unweighted_accuracy', val_loss))
                 else:
-                    scheduler.step()
+                    metric_value = val_loss
+                scheduler.step(metric_value)
             
             # Early stopping
             if patience_counter >= config['training']['early_stopping_patience']:
@@ -1042,7 +1059,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52, 53). If not specified, runs all.')
+                        help='Run specific study (1-50, 52, 53, 54). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1103,13 +1120,14 @@ def main():
         (50, "config/ablation/ablation_50_emotion2vec.yaml"),  # Conflict-Aware + SupCon (3 views) + Emotion2Vec
         (52, "config/ablation/ablation_52_supcon_wavlm_specaug_vit.yaml"),  # Like 49: no wf aug, SpecAugment on ViT mel
         (53, "config/ablation/ablation_53_wavlm_weighted_hidden_states.yaml"),  # 52/174035-style + WavLM layer weights
+        (54, "config/ablation/ablation_54_wavlm_base_plus_weighted.yaml"),  # Like 53 + wavlm-base-plus
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52, 53")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52, 53, 54")
             return
     
     # Run each study

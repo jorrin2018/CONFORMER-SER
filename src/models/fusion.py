@@ -1563,13 +1563,15 @@ class TriModalGLUFusion(nn.Module):
         self.text_proj = nn.Linear(text_dim, hidden_dim)
         self.vision_proj = nn.Linear(vision_dim, hidden_dim)
 
-        # GLU for each modality
+        # GLU for each modality (ModuleDict so parameters register with the model)
         # GLU(x) = Linear1(x) ⊙ σ(Linear2(x))
         def make_glu():
-            return {
-                'linear1': nn.Linear(hidden_dim, hidden_dim),
-                'linear2': nn.Linear(hidden_dim, hidden_dim),
-            }
+            return nn.ModuleDict(
+                {
+                    "linear1": nn.Linear(hidden_dim, hidden_dim),
+                    "linear2": nn.Linear(hidden_dim, hidden_dim),
+                }
+            )
 
         self.audio_glu = make_glu()
         self.text_glu = make_glu()
@@ -1970,17 +1972,10 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         conflict_mask = conflicts.unsqueeze(-1)  # (B, 1)
         final_weights = (1 - conflict_mask) * base_weights + conflict_mask * conflict_weights  # (B, 3)
 
-        # Weighted combination of attended tokens
+        # Conflict-aware weights apply to tokens before the fusion MLP (not only unused sum)
         weighted_tokens = tokens * final_weights.unsqueeze(-1)  # (B, 3, H)
-        fused = weighted_tokens.sum(dim=1)  # (B, H)
-
-        # Also concatenate for richer representation
-        tokens_concat = tokens.reshape(tokens.size(0), -1)  # (B, 3*H)
-        fused_concat = self.fusion(tokens_concat)  # (B, H//2)
-
-        # Combine fused representation with weighted average
-        # (This is a design choice - could also use only one)
-        final_fused = fused_concat  # Use concatenation-based fusion
+        tokens_concat = weighted_tokens.reshape(tokens.size(0), -1)  # (B, 3*H)
+        final_fused = self.fusion(tokens_concat)  # (B, H//2)
 
         # Classification
         logits = self.classifier(final_fused)
