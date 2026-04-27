@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.0] - 2026-04-27
+
+### Added
+- Central documentation index in `docs/README.md` with active, operational and historical documents.
+- Architecture and workflow guide in `docs/ARCHITECTURE_AND_WORKFLOWS.md`.
+- Documentation for the current execution paths:
+  - baseline training with `src/train.py`;
+  - ablation training with `scripts/run_ablation.py`;
+  - baseline evaluation with `src/evaluate.py`;
+  - ablation and ensemble evaluation with `src/evaluate_ensemble.py`;
+  - test-only checkpoint evaluation with `scripts/run_test_only.py`.
+- Ablation 43 entry in `config/ablation/ABLATION_SUMMARY.md`.
+
+### Changed
+- Updated `README.md` and `quickstart.md` to reflect the current project layout, Windows/PowerShell commands and the difference between baseline, ablation, ensemble and test-only workflows.
+- Updated `src/ablation_studies/README.md` from the previous 40-study description to the current `1-50, 52, 53, 54` study set.
+- Clarified that study 51 is not defined in the current `scripts/run_ablation.py` study list.
+
+### Documentation
+- Marked older experiment-analysis documents as historical where they mainly cover studies 1-40.
+- Linked the canonical ablation catalog: `config/ablation/ABLATION_SUMMARY.md`.
+- Documented that checkpoints from ablation models should be evaluated with `src/evaluate_ensemble.py` or `scripts/run_test_only.py`, not generally with `src/evaluate.py`.
+- Clarified in `ABLATION_SUMMARY.md`, `README.md`, `docs/ARCHITECTURE_AND_WORKFLOWS.md` and `src/ablation_studies/README.md` that **ViT log-mel is computed on-the-fly from the batch waveform**; IEMOCAP in this pipeline does **not** ship pre-extracted mel features as a separate dataset field.
+
 ## [4.0.0] - 2025-11-26
 
 ### Added
@@ -28,7 +52,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Trimodal Architecture**: Integration of Audio, Text, and Vision streams.
-- **Vision Branch**: ViT (Vision Transformer) processing Mel-Spectrograms.
+- **Vision Branch**: ViT (Vision Transformer) on log-mel views **computed in the model** from the waveform (not pre-stored mel in the dataset).
 - **SpeechCue**: Injection of prosodic prompts into the text stream.
 - **Ablation Series 13**: Robust baseline establishing the state-of-the-art (~80% Acc).
 - **Regularization**: Advanced dropout and weight decay tuning.
@@ -77,8 +101,6 @@ All notable changes to this project will be documented in this file.
 
 ### [1.1.0] - Planned
 - Data augmentation (SpecAugment, back-translation)
-- Cross-validation support
-- Model ensemble
 - Attention visualization
 - Gradio demo interface
 

@@ -9,6 +9,10 @@ Este documento resume las diferencias clave y el objetivo de cada configuración
 python scripts/run_ablation.py --study N   # N = 1 a 50, o 52, 53, 54
 ```
 
+### Datos de audio y rama visual (ViT)
+
+**El dataset IEMOCAP en este flujo no incluye mel-spectrogramas precalculados.** Los dataloaders entregan **waveform** (16 kHz) y **texto** (transcripciones; con SpeechCue cuando la config lo activa). En estudios trimodales, el **log-mel que entra al ViT se obtiene en el propio forward** a partir del **mismo** tensor de audio del batch (p. ej. `MelSpectrogram` de torchaudio, opcional SpecAugment, resize a imagen), como en `Ablation11Model._waveform_to_vit_image` en `src/ablation_studies/ablation_11_model.py`. No es una modalidad leída de disco ni un campo separado del parquet: es una vista **derivada** del audio.
+
 ---
 
 ## Serie 01-04: Arquitecturas de Clasificación (Classification Heads)
@@ -31,10 +35,10 @@ Experimentos enfocados en qué capas de los encoders pre-entrenados (Wav2Vec2, D
 *   **`ablation_09_gia_lstm.yaml`**: Introduce **Gated Interaction Attention (GIA)** como mecanismo de fusión preliminar.
 
 ## Serie 10-12: Integración Multimodal y SpeechCue
-Incorporación de características visuales (Espectrogramas como imágenes) y texto enriquecido.
+Incorporación de la rama visual (log-mel **calculado a partir del waveform** y tratado como imagen para ViT) y texto enriquecido.
 
 *   **`ablation_10_speechcue_internal.yaml`**: Incorporación de **SpeechCue** (texto enriquecido con información prosódica).
-*   **`ablation_11_melspec_vit.yaml`**: Incorporación de la rama visual usando **ViT (Vision Transformer)** procesando Mel-Spectrograms como imágenes.
+*   **`ablation_11_melspec_vit.yaml`**: Incorporación de la rama visual usando **ViT (Vision Transformer)** sobre log-mel generado en el modelo a partir del mismo audio del batch (ver nota arriba).
 *   **`ablation_12_speechcue_loso.yaml`**: Validación con estrategia Leave-One-Session-Out (LOSO) usando SpeechCue.
 
 ## Serie 13: Refinamiento y Regularización (Baseline Robusto)
@@ -94,6 +98,9 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 ## Ablation 42 (Study 42): WavLM-base + ViT + Conflict-Aware, single split
 *   **`ablation_42_wavlm_base_vit.yaml`**: **WavLM-base + ViT + Conflict-Aware, single split**. Mismo diseño que 34/40 con modelo más pequeño y rama visual; sin K-Fold (train 1,2,3 / val 4 / test 5). Evalúa si añadir ViT con WavLM-base mejora respecto a 34 bimodal grande.
 
+## Ablation 43 (Study 43): Conflict-Aware + mejoras de entrenamiento
+*   **`ablation_43_training_improvements.yaml`**: **Conflict-Aware + Focal Loss + Supervised Contrastive Loss + augmentación**. Extiende Ablation 34 con una receta de entrenamiento más fuerte: focal loss para clases difíciles, componente contrastivo supervisado y augmentaciones orientadas a mejorar separación entre clases y robustez. Implementado por `Ablation43Model`.
+
 ## Ablation 44 (Study 44): Conflict-Aware + Transformer Head
 *   **`ablation_44_transformer_head.yaml`**: **Conflict-Aware Cross-Attention (trimodal) + TransformerClassificationHead**. Misma configuración que Ablation 34 (Wav2Vec2-base + DistilBERT + ViT, Conflict-Aware) pero sustituyendo la cabeza LSTM por una cabeza basada en **TransformerEncoder** sobre el vector fusionado.
 
@@ -115,11 +122,11 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 ## Ablation 50 (Study 50): Conflict-Aware + SupCon (3 vistas) + Emotion2Vec
 *   **`ablation_50_emotion2vec.yaml`**: **Conflict-Aware + SupCon (audio + texto + visión) con encoder de audio Emotion2Vec**. Misma arquitectura que Ablation 48 (SupCon con 3 vistas y Conflict-Aware trimodal), pero el encoder de audio es **Emotion2Vec** (emotion2vec/emotion2vec_base), cargado vía FunASR. Requiere `pip install funasr` para ejecutar el estudio 50.
 
-## Ablation 52 (Study 52): Igual que 49 + sin augment de waveform + SpecAugment en mel del ViT
-*   **`ablation_52_supcon_wavlm_specaug_vit.yaml`**: **Misma base que Ablation 49** (WavLM + SupCon 3 vistas + Conflict-Aware). Diferencias: `audio.apply_waveform_augment: false` (el preprocessor sigue aplicando **z-score** al waveform para escala estable); en la rama visual, `model.vision_mel_spec_augment: true` activa **SpecAugment** (FrequencyMasking / TimeMasking de torchaudio) sobre el **log-mel** antes del resize a imagen ViT, solo en entrenamiento (`model.training`). Cualquier estudio trimodal puede activar lo mismo con `vision_mel_spec_augment` y opcionalmente `vision_spec_augment.freq_mask_param` / `time_mask_param`.
+## Ablation 52 (Study 52): Igual que 49 + sin augment de waveform + SpecAugment sobre log-mel del ViT (derivado del waveform)
+*   **`ablation_52_supcon_wavlm_specaug_vit.yaml`**: **Misma base que Ablation 49** (WavLM + SupCon 3 vistas + Conflict-Aware). Diferencias: `audio.apply_waveform_augment: false` (el preprocessor sigue aplicando **z-score** al waveform para escala estable); en la rama visual, `model.vision_mel_spec_augment: true` activa **SpecAugment** (FrequencyMasking / TimeMasking de torchaudio) sobre el **log-mel calculado desde ese waveform** antes del resize a imagen ViT, solo en entrenamiento (`model.training`). Cualquier estudio trimodal puede activar lo mismo con `vision_mel_spec_augment` y opcionalmente `vision_spec_augment.freq_mask_param` / `time_mask_param`.
 
 ## Ablation 53 (Study 53): Run tipo 174035 de 52 + WavLM suma ponderada por capas
-*   **`ablation_53_wavlm_weighted_hidden_states.yaml`**: **Misma receta operativa que el checkpoint `ablation_52_20260320_174035`** (p. ej. `freeze_text_encoder: false`, `freeze_vision_encoder: true`, sin augment de waveform, SpecAugment en mel del ViT, WavLM-base + SupCon 3 vistas + Conflict-Aware). **Novedad**: `model.wavlm_weighted_hidden_states: true` activa en `Ablation11Model` una combinación **softmax-aprendida** de todos los `hidden_states` de WavLM (embeddings + capas del transformer) antes del pooling temporal, alineado con la recomendación de explotar varias capas de WavLM.
+*   **`ablation_53_wavlm_weighted_hidden_states.yaml`**: **Misma receta operativa que el checkpoint `ablation_52_20260320_174035`** (p. ej. `freeze_text_encoder: false`, `freeze_vision_encoder: true`, sin augment de waveform, SpecAugment sobre log-mel del ViT derivado del waveform, WavLM-base + SupCon 3 vistas + Conflict-Aware). **Novedad**: `model.wavlm_weighted_hidden_states: true` activa en `Ablation48Model` una combinación **softmax-aprendida** de todos los `hidden_states` de WavLM (embeddings + capas del transformer) antes del pooling temporal, alineado con la recomendación de explotar varias capas de WavLM.
 
 ## Ablation 54 (Study 54): Igual que 53 con WavLM-Base+
 *   **`ablation_54_wavlm_base_plus_weighted.yaml`**: **Misma configuración que el estudio 53** (weighted hidden states, SupCon 3 vistas, Conflict-Aware, etc.) sustituyendo el encoder de audio por **`microsoft/wavlm-base-plus`**. Sirve para comparar Base vs Base+ bajo el mismo protocolo de entrenamiento.
@@ -144,6 +151,7 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 | 40 | ablation_40_wavlm_conflict_aware | Ablation34Model |
 | 41 | ablation_41_wavlm_base_vit_kfold | Ablation34Model |
 | 42 | ablation_42_wavlm_base_vit | Ablation34Model |
+| 43 | ablation_43_training_improvements | Ablation43Model |
 | 44 | ablation_44_transformer_head | Ablation34Model |
 | 45 | ablation_45_multiscale_head | Ablation34Model |
 | 46 | ablation_46_cnn1d_head | Ablation34Model |

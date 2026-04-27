@@ -1,10 +1,12 @@
 # Estudios de Ablación - Conformer Multimodal SER
 
-Este módulo contiene la implementación de **40 estudios de ablación** para evaluar el impacto de modificaciones arquitectónicas sobre el modelo base de reconocimiento de emociones multimodal (Audio + Texto + Visual).
+Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52, 53 y 54**. El estudio 51 no está definido en el listado de ejecución actual.
 
 ## 📋 Descripción General
 
 Los estudios de ablación analizan sistemáticamente la contribución de diferentes componentes del modelo.
+
+**Rama ViT y datos**: IEMOCAP se carga como **waveform + texto** (y SpeechCue cuando aplica). El **log-mel que usa el ViT no es una feature precalculada del dataset**: se obtiene en el **forward** del modelo a partir del **mismo** audio del batch (ver `ablation_11_model.py`, `_waveform_to_vit_image`). Cualquier mención a “mel para ViT” en configs o docs se refiere a esa vista derivada, no a un archivo mel en el repositorio de datos.
 
 **Mejores resultados**: Ablation 34 (77.98% UA, gap 2.68%) | Ablation 25 (77.44% UA, base fusión)
 
@@ -15,7 +17,10 @@ Los estudios de ablación analizan sistemáticamente la contribución de diferen
 - **Estudios 30**: Dirichlet Evidence Learning (modelado de incertidumbre).
 - **Estudios 31-35**: Innovaciones multimodales avanzadas (**basados en Ablation 25** - mejor resultado).
 - **Estudios 36-39**: Conflict-Aware + Dirichlet, OpenSMILE, SOTA (**basados en Ablation 34**).
-- **Estudio 40**: WavLM-base + Conflict-Aware (trimodal; misma arquitectura que 34 con encoder **microsoft/wavlm-base**).
+- **Estudios 40-42**: Variantes WavLM + Conflict-Aware y K-Fold.
+- **Estudio 43**: `Ablation43Model` con mejoras de entrenamiento.
+- **Estudios 44-46**: Ablation 34 con cabezas Transformer, MultiScaleTemporal y CNN1D.
+- **Estudios 47-50, 52-54**: SupCon, WavLM, Emotion2Vec, SpecAugment y weighted hidden states.
 
 ## 🗂️ Estructura de Archivos
 
@@ -36,12 +41,14 @@ src/ablation_studies/
 ├── ablation_36c_model.py                           # Conflict-Aware + Dirichlet Hybrid
 ├── ablation_38_model.py                            # OpenSMILE + Attention Gates + Residual
 ├── ablation_39_model.py                            # ACN + MIC + BCAF (SOTA improvements)
+├── ablation_43_model.py                            # Conflict-Aware + training improvements
+├── ablation_47_supcon_model.py, ablation_48_supcon_model.py  # SupCon variants
 ├── ablation_07_architecture.mmd                     # Diagrama Mermaid de arquitectura
 ├── base_config.py, classification_heads.py, utils.py
 └── __init__.py
 ```
 
-*Study 40*: usa `ablation_34_model.py` con config `ablation_40_wavlm_conflict_aware.yaml` (WavLM-base).
+*Study 40-42, 44-46*: reutilizan principalmente `Ablation34Model` con cambios declarados por YAML. *Study 43* usa `Ablation43Model`. *Studies 47-50 y 52-54* usan la familia SupCon (`Ablation47Model` / `Ablation48Model`) según el mapeo de `scripts/run_ablation.py`.
 
 *Mapeo study→config: ver `config/ablation/ABLATION_SUMMARY.md`*
 
@@ -54,10 +61,10 @@ src/ablation_studies/
 
 ### Ablation 11: MelSpec ViT (Trimodal Baseline)
 
-**Objetivo**: Evaluar el impacto de añadir una tercera rama visual que procese espectrogramas.
+**Objetivo**: Evaluar el impacto de añadir una tercera rama visual que procese una vista **time-frequency derivada del waveform** (no mel almacenado en el dataset).
 
 **Modificaciones**:
-- Añade rama visual: `MelSpectrogram` -> `Vision Transformer (ViT)`.
+- Añade rama visual en el forward: `MelSpectrogram(audio_batch)` → log-mel opcionalmente con SpecAugment → resize a imagen → `Vision Transformer (ViT)`.
 - Utiliza `TriModalCrossAttentionFusion` para integrar Audio, Texto y Visual.
 - Reduce el problema a **4 clases**.
 
@@ -318,6 +325,26 @@ Estudios que combinan Conflict-Aware Cross-Attention (Ablation 34) con Dirichlet
 
 ---
 
+## 🚀 Serie 41-54: WavLM, SupCon y mejoras recientes
+
+Estos estudios extienden la línea Conflict-Aware con validación K-Fold, nuevas cabezas de clasificación, pérdidas contrastivas y encoders de audio más robustos.
+
+**Resumen**:
+- **41**: WavLM-base + ViT + Conflict-Aware con K-Fold.
+- **42**: WavLM-base + ViT + Conflict-Aware en split simple.
+- **43**: Conflict-Aware + Focal Loss + Supervised Contrastive Loss + augmentación (`Ablation43Model`).
+- **44-46**: Conflict-Aware con cabezas Transformer, MultiScaleTemporal y CNN1D.
+- **47-48**: Conflict-Aware + SupCon pre-fusión con 2 o 3 vistas.
+- **49**: SupCon 3 vistas con WavLM-base.
+- **50**: SupCon 3 vistas con Emotion2Vec; requiere `funasr`.
+- **52**: Variante de 49 sin waveform augmentation y con SpecAugment sobre el **log-mel del ViT** (derivado del mismo waveform en el forward).
+- **53**: WavLM con suma ponderada aprendible de hidden states.
+- **54**: Misma receta que 53 con `microsoft/wavlm-base-plus`.
+
+El catálogo completo y el mapeo study -> YAML -> modelo se mantiene en `config/ablation/ABLATION_SUMMARY.md`.
+
+---
+
 ## 🚀 Uso
 
 ### Ejecutar Estudios de Ablación
@@ -345,6 +372,11 @@ python scripts/run_ablation.py --study 37  # Dirichlet + Conflict-Aware
 python scripts/run_ablation.py --study 38  # OpenSMILE + Residual
 python scripts/run_ablation.py --study 39  # 36C / ACN+MIC+BCAF
 python scripts/run_ablation.py --study 40  # WavLM-base + Conflict-Aware
+
+# Estudios recientes
+python scripts/run_ablation.py --study 43  # Training improvements
+python scripts/run_ablation.py --study 48  # SupCon 3 vistas
+python scripts/run_ablation.py --study 54  # WavLM-base-plus + weighted hidden states
 ```
 
 ### Configuración
@@ -360,16 +392,17 @@ Todos los estudios usan archivos YAML en `config/ablation/`:
 **Estudios 31-35** (base: Ablation 25):
 - **Audio**: Wav2Vec2 (fine-tuning parcial - últimas 6 capas)
 - **Texto**: DistilBERT con SpeechCue (fine-tuning parcial - últimas 4 capas)
-- **Visión**: ViT congelado (Mel-spectrograms como imágenes)
+- **Visión**: ViT congelado (log-mel **calculado desde el waveform** y pasado como imagen)
 - **Fusión**: Enhanced Cross-Attention (3 capas de cross-attention)
 - **Clasificación**: LSTM Head (2 capas bidireccionales)
 
-**Estudios 34, 36-40** (Conflict-Aware y variantes):
+**Estudios 34, 36-54** (Conflict-Aware y variantes):
 - Misma base que Ablation 25, pero con **Conflict-Aware Cross-Attention**.
 - Detecta contradicciones entre modalidades y pondera por confianza.
 - Ablation 38 añade rama OpenSMILE; Ablation 39 añade ACN, MIC y BCAF.
-- **Ablation 40**: encoder de audio WavLM-base (misma arquitectura que 34).
+- Ablation 40-42 evalúan WavLM y K-Fold.
+- Ablation 43-54 exploran mejoras de entrenamiento, SupCon, Emotion2Vec, SpecAugment y weighted hidden states.
 
 ---
 
-*Última actualización: Marzo 2025*
+*Última actualización: Abril 2026*

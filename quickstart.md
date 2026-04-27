@@ -1,171 +1,199 @@
-# Quick Start Guide
+# Quickstart
 
-This guide will help you get started with training the Conformer multimodal emotion recognition model on IEMOCAP.
+Guía corta para ejecutar CONFORMER-SER en Windows/PowerShell.
 
-## Prerequisites
+## Flujo del proyecto (diagrama)
 
-- Python 3.8 or higher
-- CUDA-capable GPU (recommended) with at least 12GB VRAM
-- IEMOCAP dataset downloaded and extracted
+```mermaid
+graph TB
+    IEM[IEMOCAP]
+    CFG[Config YAML y ablation]
+    LOAD[Dataset y collate]
+    VENV[Venv y requirements]
+    SETUP[setup_check.py]
+    TRB[src/train.py baseline]
+    ABL[scripts/run_ablation.py]
+    CK1[Checkpoint baseline]
+    CK2[Checkpoint ablation config.json]
+    EV1[src/evaluate.py]
+    EV2[src/evaluate_ensemble.py]
+    TST[scripts/run_test_only.py]
+    INF[src/inference.py]
+    TB[TensorBoard logs]
 
-## Installation
-
-### 1. Install Dependencies
-
-```bash
-pip install -r requirements.txt
+    IEM --> CFG
+    CFG --> LOAD
+    VENV --> SETUP
+    SETUP --> LOAD
+    LOAD --> TRB
+    LOAD --> ABL
+    TRB --> CK1
+    ABL --> CK2
+    CK1 --> EV1
+    CK1 --> INF
+    CK2 --> EV2
+    CK2 --> TST
+    TRB --> TB
+    ABL --> TB
 ```
 
-### 2. Verify Setup
+En estudios **trimodales**, el log-mel del ViT se calcula en el modelo a partir del **mismo** waveform del batch; no hay mel precalculado en el dataset. Detalle: [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md) (sección *Datos de audio y rama visual*).
 
-```bash
+## Requisitos
+
+- Python 3.8 o superior.
+- GPU CUDA recomendada para entrenamiento.
+- Dataset IEMOCAP descargado y extraído.
+- Dependencias de `requirements.txt`.
+
+## Instalación
+
+```powershell
+cd d:\DOCTORADO\PROYECTOS\CONFORMER-SER
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python setup_check.py
 ```
 
-This will check:
-- Python version
-- Required packages
-- PyTorch and CUDA
-- Project structure
-- Dataset path
+También puedes ejecutar:
 
-## Configuration
+```powershell
+.\setup.bat
+```
 
-### 1. Update Dataset Path
+`setup_check.py` valida Python, paquetes, CUDA, estructura del proyecto y ruta del dataset.
 
-Edit `config/config.yaml` and update the dataset path:
+## Configuración del dataset
+
+Edita `config\config.yaml`:
 
 ```yaml
 dataset:
-  data_path: "YOUR_PATH_TO_IEMOCAP/IEMOCAP_full_release"
+  data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
-### 2. Adjust Settings (Optional)
+Los YAML de `config\ablation\` pueden sobrescribir esta ruta si defines un estudio específico.
 
-You can modify other settings in `config/config.yaml`:
-- Batch size (reduce if out of memory)
-- Learning rates
-- Number of epochs
-- Session splits
+## Entrenar
 
-## Training
+### Baseline
 
-### Basic Training
+Usa este flujo para el modelo principal definido por `config\config.yaml`:
 
-```bash
-python src/train.py
+```powershell
+python src\train.py --config config\config.yaml --experiment_name baseline --device cuda
 ```
 
-### Custom Configuration
+### Ablación
 
-```bash
-python src/train.py --config config/config.yaml --experiment_name my_exp
+Usa este flujo para experimentos de investigación:
+
+```powershell
+python scripts\run_ablation.py --study 34 --device cuda
 ```
 
-### Monitor Training
+Estudios disponibles en el listado actual: `1-50, 52, 53, 54`. El estudio 51 no está definido.
 
-In a separate terminal:
+Consulta el catálogo:
 
-```bash
+```powershell
+notepad config\ablation\ABLATION_SUMMARY.md
+```
+
+## Monitorear entrenamiento
+
+```powershell
 tensorboard --logdir=logs
 ```
 
-Then open http://localhost:6006
+O:
 
-## Evaluation
-
-### Evaluate Best Model
-
-```bash
-python src/evaluate.py --checkpoint checkpoints/best_model.pt --split test
+```powershell
+.\start_tensorboard.bat
 ```
 
-### Save Predictions
+## Evaluar
 
-```bash
-python src/evaluate.py --checkpoint checkpoints/best_model.pt --split test --save_predictions --output_dir results
+### Checkpoint baseline
+
+`src\evaluate.py` está orientado al modelo base (`ConformerMultimodalModel`):
+
+```powershell
+python src\evaluate.py --checkpoint checkpoints\best_model.pt --config config\config.yaml --split test --device cuda
 ```
 
-## Inference
+### Checkpoint de ablación
 
-### Single Audio File
+Para una ablación concreta con YAML explícito:
 
-```bash
-python src/inference.py --checkpoint checkpoints/best_model.pt --audio path/to/audio.wav --text "Optional transcription"
+```powershell
+python src\evaluate_ensemble.py `
+  --checkpoints checkpoints\ablation_34\run\best_model.pt `
+  --configs config\ablation\ablation_34_conflict_aware_attention.yaml `
+  --study_numbers 34 `
+  --weights 1.0 `
+  --split test `
+  --output_dir evaluation_results\ablation_34 `
+  --device cuda
 ```
 
-## Expected Training Time
+### Solo test sin reentrenar
 
-- **With GPU (RTX 3090)**: ~4-6 hours for 50 epochs
-- **With GPU (RTX 2080 Ti)**: ~6-8 hours for 50 epochs
-- **With CPU**: Not recommended (would take days)
+Si ya tienes un run con `best_model.pt` y `config.json`:
 
-## Expected Performance
+```powershell
+python scripts\run_test_only.py --checkpoint_dir checkpoints\phase1_wavlm_gated\ablation_34_20260203_094355 --study 34 --device cuda
+```
 
-After training, you should see:
-- **Weighted Accuracy (WA)**: 65-72%
-- **Unweighted Accuracy (UA)**: 62-68%
-- **F1-Score**: 64-70%
+También acepta la ruta directa al archivo:
 
-## Troubleshooting
+```powershell
+python scripts\run_test_only.py --checkpoint_dir checkpoints\ablation_34\run\best_model.pt --study 34 --device cuda
+```
 
-### Out of Memory
+El script guarda `final_results.json`, `confusion_matrix_test.png` y `test_eval.log` en el directorio del run.
 
-Reduce batch size in `config/config.yaml`:
+## Inferencia
+
+`src\inference.py` está pensado para el modelo base:
+
+```powershell
+python src\inference.py --checkpoint checkpoints\best_model.pt --audio path\to\audio.wav --text "Transcripción opcional"
+```
+
+## Problemas frecuentes
+
+### Out of memory
+
+Reduce el batch size:
+
 ```yaml
 training:
-  batch_size: 8  # or even 4
+  batch_size: 4
 ```
 
-### Dataset Not Found
+### Dataset no encontrado
 
-Double-check the path in `config/config.yaml` matches your dataset location.
+Revisa `dataset.data_path` en `config\config.yaml` y en el YAML de ablación que estés usando.
 
-### Slow Training
+### CUDA no disponible
 
-Make sure you're using GPU:
-```bash
-python src/train.py --device cuda
-```
+Verifica:
 
-Check GPU usage:
-```bash
+```powershell
+python setup_check.py
 nvidia-smi
 ```
 
-### Low Accuracy
+### Checkpoint de ablación falla con `evaluate.py`
 
-- Train for more epochs (up to 100)
-- Try different fusion types: `concat`, `cross_attention`, or `gated`
-- Adjust learning rates
+Usa `src\evaluate_ensemble.py` o `scripts\run_test_only.py`. `src\evaluate.py` reconstruye el modelo base y no todas las clases de `src\ablation_studies`.
 
-## Next Steps
+## Siguientes pasos
 
-1. **Explore Data**: Check out `notebooks/data_exploration.ipynb`
-2. **Experiment**: Try different fusion strategies and hyperparameters
-3. **Analyze Results**: Look at confusion matrices and per-class performance
-4. **Fine-tune**: Adjust model architecture and training settings
-
-## Common Commands Summary
-
-```bash
-# Setup verification
-python setup_check.py
-
-# Training
-python src/train.py
-
-# Evaluation
-python src/evaluate.py --checkpoint checkpoints/best_model.pt --split test
-
-# Inference
-python src/inference.py --checkpoint checkpoints/best_model.pt --audio audio.wav
-
-# TensorBoard
-tensorboard --logdir=logs
-```
-
-## Need Help?
-
-Check the main README.md for more detailed information or open an issue on GitHub.
+1. Leer [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md).
+2. Revisar [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md).
+3. Ejecutar una ablación corta o evaluar un checkpoint existente.
+4. Comparar resultados con las matrices de confusión y `final_results.json`.
 

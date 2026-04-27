@@ -1,187 +1,153 @@
-# Conformer Multimodal Speech Emotion Recognition on IEMOCAP
+# CONFORMER-SER: Multimodal Speech Emotion Recognition
 
-This project implements a state-of-the-art **Trimodal (Audio + Text + Visual)** emotion recognition system using Conformer, DistilBERT, and Vision Transformer (ViT) architectures for the IEMOCAP dataset.
+CONFORMER-SER es un proyecto de reconocimiento de emociones en habla sobre IEMOCAP. El código combina encoders de audio, texto y visión con múltiples mecanismos de fusión y una línea extensa de estudios de ablación.
 
-## Features
+El objetivo principal del repositorio es investigar arquitecturas multimodales para 4 clases: `angry`, `happy`, `sad` y `neutral`.
 
-- **Trimodal Architecture**: Combines three powerful streams:
-  - **Audio**: Wav2Vec2-Conformer for raw waveform processing.
-  - **Text**: DistilBERT with **SpeechCue** (prosody-aware prompts) for semantic processing.
-  - **Visual**: Vision Transformer (ViT) processing Mel-Spectrograms as images to capture spectral patterns.
-- **4-Class Emotion Recognition**: Focused on **Angry, Happy, Sad, Neutral**.
-  - *Note: Reduced from 7 classes to improve practical performance and eliminate ambiguity (e.g., Happy vs Excited).*
-- **Advanced Fusion**: 
-  - **Enhanced Cross-Attention**: Deep multi-layer attention between Audio, Text, and Vision.
-  - **Conflict-Aware Cross-Attention**: Detects modality contradictions (irony, sarcasm) and weights by confidence. Supports three conflict detection methods: `prediction_divergence`, `feature_distance`, and `learned`. See [docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md).
-  - **Gated Fusion (GMU)**: Learnable gates to control information flow.
-  - **Tensor Fusion**: Captures high-order interactions.
-  - **Hierarchical Fusion**: Multi-stage modality integration.
-- **Uncertainty & Robustness**:
-  - **Dirichlet Evidence Learning**: Models epistemic uncertainty for better calibration.
-  - **Noise-Aware SpeechCue**: Injects [UNCERTAIN] token when background noise is detected.
-  - **OpenSMILE Residual**: eGeMAPSv02 features with attention gates and residual connections.
-- **Robust Training**:
-  - **Speaker-Independent Split**: Ensures generalization to unseen speakers.
-  - **Unfreezing Strategy**: Fine-tuning of top encoder layers for domain adaptation.
-  - **Class Imbalance Handling**: Weighted loss and Focal Loss.
-- **High Performance**: Achieves **~80% Weighted Accuracy** on the 4-class task (State-of-the-art range for this split).
+## Documentación
 
-## Project Structure
+La documentación técnica central está en [docs/README.md](docs/README.md).
 
-```
+Lecturas recomendadas:
+
+- [quickstart.md](quickstart.md): comandos esenciales para instalar, entrenar y evaluar.
+- [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md): mapa real del código y diferencias entre baseline, ablaciones, ensemble y test-only.
+- [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md): catálogo canónico de estudios de ablación.
+- [src/ablation_studies/README.md](src/ablation_studies/README.md): resumen del paquete de modelos de ablación.
+- [docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md): métodos de detección de conflicto para Conflict-Aware Cross-Attention.
+
+## Características principales
+
+- Arquitecturas **bimodales y trimodales** con audio, texto y visión.
+- Encoders de audio basados en Wav2Vec2, WavLM y variantes recientes.
+- Texto con modelos tipo BERT/RoBERTa/DistilBERT y SpeechCue en estudios específicos.
+- Rama visual: el ViT opera sobre **log-mel calculado en el forward** a partir del **mismo** waveform del batch (torchaudio `MelSpectrogram` + conversión a imagen); **no** hay mel precalculado almacenado en el dataset IEMOCAP.
+- Fusiones avanzadas: Enhanced Cross-Attention, Conflict-Aware Cross-Attention, Gated Interactive Attention, Tensor Fusion, GLU, Late Fusion, Hierarchical Fusion y más.
+- Pérdidas y entrenamiento robusto: Cross Entropy ponderada, Focal Loss, Dirichlet Evidence Learning, SupCon y pérdidas compuestas.
+- Evaluación con WA, UA, F1, métricas por clase y matriz de confusión.
+
+## Estructura del proyecto
+
+```text
 CONFORMER-SER/
 ├── config/
-│   ├── config.yaml                    # Main configuration file
-│   └── ablation/                      # Ablation study configurations
-│       ├── ablation_01_... to _39_... # Ablation studies 01-39
-│       ├── ABLATION_SUMMARY.md        # Detailed summary of all experiments
-│       ├── ablation_25_enhanced_cross_attention.yaml
-│       ├── ablation_34_conflict_aware_attention.yaml
-│       └── ...
+│   ├── config.yaml
+│   └── ablation/
+│       ├── ABLATION_SUMMARY.md
+│       └── ablation_*.yaml
+├── docs/
+│   ├── README.md
+│   ├── ARCHITECTURE_AND_WORKFLOWS.md
+│   └── experimentos/
+├── scripts/
+│   ├── run_ablation.py
+│   ├── run_test_only.py
+│   ├── retrain_post_fix_gpu.ps1
+│   └── cleanup_pre_fix_checkpoints.ps1
 ├── src/
-│   ├── data/
-│   │   ├── dataset.py                 # IEMOCAP dataset with ProsodyCue extraction
-│   │   ├── preprocessing.py         # Audio, text, and melspec preprocessing
+│   ├── ablation_studies/
 │   ├── models/
-│   │   ├── conformer.py              # Base Conformer model
-│   │   ├── fusion.py                 # Advanced Fusion modules (GMU, Tensor, etc.)
-│   ├── ablation_studies/             # Ablation studies module (see src/ablation_studies/README.md)
-│   │   ├── ablation_25_enhanced_cross_attention.py
-│   │   ├── ablation_34_model.py       # Conflict-Aware Cross-Attention
-│   │   ├── ablation_38_model.py      # OpenSMILE + Residual
-│   │   └── ...
 │   ├── utils/
-│   │   ├── metrics.py                 # Evaluation metrics
-│   │   └── logger.py                  # Logging utilities
-│   ├── train.py                       # Main training script
-│   └── evaluate.py                    # Evaluation script
-├── checkpoints/                       # Model checkpoints
-├── logs/                              # Training logs
-└── README.md
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── evaluate_ensemble.py
+│   └── inference.py
+├── checkpoints/
+├── logs/
+├── README.md
+└── quickstart.md
 ```
 
-## Installation
+## Instalación
 
-### Requirements
+En Windows/PowerShell:
 
-- Python 3.8+
-- PyTorch 2.0+
-- CUDA 11.7+ (for GPU training)
-- `torchaudio`, `transformers`, `timm` (for ViT)
-- **Ablation 50 (Emotion2Vec)**: `pip install funasr` (optional; required only for study 50)
-
-### Setup
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd CONFORMER-SER
-```
-
-2. Install dependencies:
-```bash
+```powershell
+cd d:\DOCTORADO\PROYECTOS\CONFORMER-SER
+python -m venv venv
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+python setup_check.py
 ```
 
-3. Verify IEMOCAP dataset path in `config/config.yaml`.
+También puedes usar:
 
-## Model Architecture
-
-**Ablation 25** (Enhanced Cross-Attention) and **Ablation 34** (Conflict-Aware) are the main architectures:
-
-1.  **Audio Branch**: `Wav2Vec2-Conformer` takes raw audio (16kHz). Last 6 transformer layers are unfrozen.
-2.  **Visual Branch**: Audio is converted to **Mel-Spectrograms** (224x224 images) processed by `ViT-Base`.
-3.  **Text Branch**: `DistilBERT` with SpeechCue processes transcripts.
-4.  **Fusion**: **TriModal Enhanced Cross-Attention** (Abl 25) or **Conflict-Aware Cross-Attention** (Abl 34).
-    *   Abl 25: Stack of 3 multi-head attention layers; each modality attends to the others.
-    *   Abl 34: Adds conflict detection and confidence-weighted resolution for irony/sarcasm.
-5.  **Classification**: **Bi-Directional LSTM** head (or Dirichlet head in Abl 30, 36, 37).
-
-### Ablation Series Overview
-*   **20-28**: Fusion variants (Hierarchical, Tensor, GMU, Late, GLU, etc.).
-*   **30**: Dirichlet Evidence Learning for uncertainty modeling.
-*   **31-35**: Temporal alignment, bucketing, Noise-Aware SpeechCue, Conflict-Aware, Active Learning.
-*   **36-39**: Conflict-Aware + Dirichlet/Focal, OpenSMILE residual, ACN+MIC+BCAF.
-
-## Usage
-
-### Training
-To train the Enhanced Cross-Attention model (Ablation 25) or Conflict-Aware (Ablation 34):
-
-```bash
-python scripts/run_ablation.py --study 25   # Enhanced Cross-Attention
-python scripts/run_ablation.py --study 34   # Conflict-Aware Cross-Attention
+```powershell
+.\setup.bat
 ```
 
-To train other variants (Dirichlet, OpenSMILE, etc.):
-```bash
-python scripts/run_ablation.py --study 30   # Dirichlet Evidence
-python scripts/run_ablation.py --study 38   # OpenSMILE + Residual
+Configura la ruta del dataset IEMOCAP en `config/config.yaml`:
+
+```yaml
+dataset:
+  data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
-See `src/ablation_studies/README.md` for the full list of studies (1-39).
+El estudio 50 usa Emotion2Vec y requiere instalar `funasr`.
 
-### Evaluation
-Evaluate on the test set (Session 5):
+## Uso rápido
 
-```bash
-python src/evaluate.py --checkpoint checkpoints/ablation_25/best_model.pt --split test
-# Or for Conflict-Aware (Ablation 34):
-python src/evaluate.py --checkpoint checkpoints/ablation_34/best_model.pt --split test
+### Entrenamiento baseline
+
+```powershell
+python src\train.py --config config\config.yaml --experiment_name baseline --device cuda
 ```
 
-## Results
+### Entrenamiento de ablaciones
 
-### Performance Comparison
-
-| Model Version | Classes | Architecture | Weighted Accuracy (WA) | Unweighted Accuracy (UA) |
-| :--- | :---: | :--- | :---: | :---: |
-| **Baseline** | 7 | Audio + Text (Concat) | ~63% | ~55% |
-| **Intermediate** | 7 | GIA Fusion + LSTM | ~65% | ~56% |
-| **Final (Abl 13)** | **4** | **Trimodal (ViT + SpeechCue)** | **~80.3%** | **~82.0%** |
-
-### Per-Class Accuracy (Final Model)
-
-| Emotion | Accuracy | Status |
-| :--- | :---: | :--- |
-| **Sad** | **93.5%** | Excellent |
-| **Happy** | **84.3%** | Great improvement (resolved Happy/Excited confusion) |
-| **Angry** | 77.8% | Solid performance |
-| **Neutral** | 72.6% | Hardest class, often ambiguous |
-
-## Recent Updates
-
-### Version 5.0 (2025-03) - Conflict-Aware & SOTA
-- ✅ **Conflict-Aware Cross-Attention (Ablation 34)**: Detects modality contradictions and weights by confidence.
-- ✅ **Dirichlet Evidence Learning (Ablation 30)**: Uncertainty modeling with Dirichlet classification head.
-- ✅ **Series 36-39**: Conflict-Aware + Dirichlet/Focal, OpenSMILE residual, ACN+MIC+BCAF.
-- ✅ **Noise-Aware SpeechCue (Ablation 33)**: [UNCERTAIN] token injection for noisy audio.
-- ✅ **Temporal Alignment & Bucketing (Ablations 31-32)**: Adaptive DTW and multimodal bucketing.
-
-### Version 4.0 (2025-11-26) - Fusion Odyssey
-- ✅ **Advanced Fusion Series (Ablation 20-28)**: 8 fusion strategies (Hierarchical, Tensor, GMU, etc.).
-- ✅ **Enhanced Cross-Attention**: Multi-layer stack for deep multimodal interaction.
-- ✅ **Documentation**: ABLATION_SUMMARY.md and ablation_studies/README.md.
-
-### Version 3.0 (2025-11-20)
-- ✅ **Trimodal Architecture**: Added Vision Transformer branch for Mel-Spectrograms.
-- ✅ **4-Class Refinement**: Focused on core emotions to maximize reliability.
-- ✅ **SpeechCue Integration**: Internal prosody-to-text prompting implemented.
-- ✅ **State-of-the-art Results**: Reached ~80% WA on IEMOCAP (4-class).
-
-### Version 2.0 (2025-10-29)
-- ✅ Ablation studies module.
-- ✅ LSTM and Transformer classification heads.
-- ✅ GIA Fusion.
-
-## Citation
-
-If you use this code, please cite:
-
-```bibtex
-@misc{conformer-iemocap-ser,
-  title={Trimodal Conformer-ViT Speech Emotion Recognition on IEMOCAP},
-  author={Your Name},
-  year={2025}
-}
+```powershell
+python scripts\run_ablation.py --study 34 --device cuda
 ```
+
+Los estudios definidos actualmente son `1-50, 52, 53, 54`; no hay estudio 51 en `scripts/run_ablation.py`.
+
+### Evaluación baseline
+
+```powershell
+python src\evaluate.py --checkpoint checkpoints\best_model.pt --config config\config.yaml --split test --device cuda
+```
+
+### Evaluación de una ablación o ensemble
+
+```powershell
+python src\evaluate_ensemble.py `
+  --checkpoints checkpoints\ablation_34\run\best_model.pt `
+  --configs config\ablation\ablation_34_conflict_aware_attention.yaml `
+  --study_numbers 34 `
+  --weights 1.0 `
+  --split test `
+  --output_dir evaluation_results\ablation_34 `
+  --device cuda
+```
+
+### Test-only de un checkpoint ya entrenado
+
+```powershell
+python scripts\run_test_only.py --checkpoint_dir checkpoints\phase1_wavlm_gated\ablation_34_20260203_094355 --study 34 --device cuda
+```
+
+`run_test_only.py` acepta un directorio de run o una ruta directa a `best_model.pt`. Usa `config.json` del run y escribe `final_results.json`, `confusion_matrix_test.png` y `test_eval.log` en el mismo directorio.
+
+## Resultados y análisis
+
+Los resultados dependen de la configuración exacta, split, checkpoint y versión de la ablación. Para consultar los análisis existentes:
+
+- [docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md](docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md): análisis histórico hasta la serie 40.
+- [docs/COMPREHENSIVE_ABLATION_ANALYSIS.md](docs/COMPREHENSIVE_ABLATION_ANALYSIS.md): análisis profundo de decisiones arquitectónicas.
+- [docs/COMANDOS_EVALUACION.md](docs/COMANDOS_EVALUACION.md): comandos de evaluación usados en comparaciones.
+
+## Monitoreo
+
+```powershell
+tensorboard --logdir=logs
+```
+
+O:
+
+```powershell
+.\start_tensorboard.bat
+```
+
+## Cita
+
+Si usas este repositorio en un trabajo académico, cita el proyecto y documenta el commit/configuración exacta usada para reproducibilidad.
