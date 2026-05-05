@@ -1,0 +1,140 @@
+# Post–Ablation 45: acotación de sweep (v1) sobre MultiScaleTemporal + Conflict-Aware.
+# Copia de `ablation_45_multiscale_head.yaml` con un único hiperparámetro explícito de barrido:
+#   conflict_threshold: 0.25 (vs 0.3 en el baseline 45).
+# Mismo split de sesiones que el baseline: train [1,2,3] / val [4] / test [5].
+# Ejemplo (PowerShell): python scripts/run_ablation.py --study 45 --experiment-name sweep_ct025
+# (pasando esta config si run_ablation permite override; si no, sustituir temporalmente
+# el YAML listado en STUDIES para 45 o entrenar con src/train.py --config esta ruta.)
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: true
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.25
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 4
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_45_sweep_v1"
+  checkpoint_dir: "./checkpoints/ablation_45_sweep_v1"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-45-sweep-v1"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42

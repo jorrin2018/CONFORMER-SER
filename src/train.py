@@ -27,7 +27,7 @@ from src.data import IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collat
 from src.models import ConformerMultimodalModel, AudioOnlyModel
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
 from src.utils.logger import setup_logger, TensorBoardLogger, ExperimentTracker, print_model_summary
-from src.utils.losses import create_loss_function
+from src.utils.losses import create_loss_function, log_loss_contract_traceability
 
 
 def parse_args():
@@ -45,6 +45,8 @@ def parse_args():
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Name of the experiment')
+    parser.add_argument('--num_epochs', type=int, default=None,
+                        help='Override training.num_epochs from config (e.g. 1 for smoke tests)')
     return parser.parse_args()
 
 
@@ -185,6 +187,24 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     prefetch_factor = compute_config.get('prefetch_factor', 2)
     persistent_workers = compute_config.get('persistent_workers', True)
     non_blocking = compute_config.get('non_blocking', True)
+
+    # Windows: multiprocessing workers + tensor sharing often raises
+    # RuntimeError: Couldn't open shared file mapping (WinError 1455). Single-process
+    # loading avoids it unless compute.windows_keep_dataloader_workers is true.
+    if (
+        sys.platform == 'win32'
+        and num_workers > 0
+        and not compute_config.get('windows_keep_dataloader_workers', False)
+    ):
+        logger.warning(
+            "Windows: forcing DataLoader num_workers from %s to 0 to avoid shared-memory "
+            "failures between worker processes (e.g. RuntimeError 1455). "
+            "Set compute.num_workers: 0 in YAML to silence this, or "
+            "compute.windows_keep_dataloader_workers: true to keep workers (not recommended).",
+            num_workers,
+        )
+        num_workers = 0
+        persistent_workers = False
     
     # Create dataloaders with optimizations for PCIe x8 (RTX 4060)
     train_loader = DataLoader(
@@ -799,6 +819,8 @@ def main():
     
     # Load configuration
     config = load_config(args.config)
+    if args.num_epochs is not None:
+        config['training']['num_epochs'] = int(args.num_epochs)
     
     # Override device if specified
     if args.device:
@@ -872,6 +894,7 @@ def main():
         label_smoothing=label_smoothing,
         device=device
     )
+    log_loss_contract_traceability(logger, loss_type, gamma, label_smoothing)
     
     # Create optimizer and scheduler (steps = optimizer updates per epoch * epochs)
     accum_steps = max(1, int(config['training'].get('gradient_accumulation_steps', 1)))

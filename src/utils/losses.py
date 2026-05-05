@@ -1,11 +1,76 @@
 """
 Custom loss functions for emotion recognition.
+
+Loss config contract (``training.loss`` in YAML):
+    - ``type: cross_entropy``: uses ``nn.CrossEntropyLoss`` with optional ``class_weights``
+      and ``label_smoothing``. The ``gamma`` field is **not** passed to PyTorch CE and has
+      no effect; it exists for YAML symmetry with focal/composite recipes.
+    - ``type: focal``: ``gamma`` is the focal focusing parameter (see ``FocalLoss``).
+    - ``type: composite_loss``: ``gamma`` applies only to sub-components of type focal;
+      see ``loss_config['components']``.
+
+Training scripts call :func:`log_loss_contract_traceability` so ignored fields are visible
+in logs (post-45 optimization spec).
 """
 
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+
+
+def log_loss_contract_traceability(
+    logger: logging.Logger,
+    loss_type: str,
+    gamma: float,
+    label_smoothing: float,
+) -> None:
+    """Log how ``gamma`` and ``label_smoothing`` interact with ``loss_type`` (startup traceability).
+
+    For ``cross_entropy``, logs that ``gamma`` is unused and warns if ``gamma`` differs from
+    the factory default (2.0), which often indicates a mistaken expectation of focal behavior.
+
+    Args:
+        logger: Training logger.
+        loss_type: ``training.loss.type`` from config.
+        gamma: ``training.loss.gamma`` from config.
+        label_smoothing: ``training.loss.label_smoothing`` from config.
+    """
+    if loss_type == "cross_entropy":
+        logger.info(
+            "Loss contract: type=cross_entropy uses nn.CrossEntropyLoss(weight=class_weights, "
+            "label_smoothing=%s). training.loss.gamma=%s is ignored for cross_entropy "
+            "(gamma applies to focal and to focal_loss components inside composite_loss).",
+            label_smoothing,
+            gamma,
+        )
+        if gamma != 2.0:
+            logger.warning(
+                "training.loss.gamma=%s is set but loss.type is cross_entropy — gamma has no effect. "
+                "Use loss.type: focal (or composite_loss with focal_loss) to apply focal gamma.",
+                gamma,
+            )
+    elif loss_type == "focal":
+        logger.info(
+            "Loss contract: type=focal uses FocalLoss with gamma=%s, label_smoothing=%s.",
+            gamma,
+            label_smoothing,
+        )
+    elif loss_type == "composite_loss":
+        logger.info(
+            "Loss contract: type=composite_loss — focal gamma comes from each "
+            "loss.components.*.gamma in YAML; top-level training.loss.gamma=%s is not passed "
+            "into CompositeLoss (set per-component keys explicitly).",
+            gamma,
+        )
+    else:
+        logger.info(
+            "Loss contract: type=%s — see create_loss_function; gamma=%s label_smoothing=%s.",
+            loss_type,
+            gamma,
+            label_smoothing,
+        )
 
 
 class FocalLoss(nn.Module):
@@ -231,6 +296,10 @@ def create_loss_function(
 
     Args:
         loss_type: Type of loss ('cross_entropy', 'focal', 'label_smoothing', 'composite_loss', ...)
+        gamma: Focal focusing parameter; **only used** when ``loss_type=='focal'`` or inside
+            ``composite_loss`` focal sub-modules. For plain ``cross_entropy``, this argument is
+            ignored (callers should still pass config value and run
+            :func:`log_loss_contract_traceability` for traceability).
         loss_config: Full loss config dict; required for composite_loss (must have 'components').
     """
     if loss_type == 'cross_entropy':

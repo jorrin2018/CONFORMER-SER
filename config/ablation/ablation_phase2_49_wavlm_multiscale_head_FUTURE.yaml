@@ -1,0 +1,37 @@
+# FASE 2 (referencia — NO ejecutar con run_ablation tal cual):
+# Estudio 49 usa Ablation48Model (SupCon 3 vistas + cabeza LSTM por defecto).
+# Estudio 45 usa Ablation34Model + classification_head_type: multi_scale_temporal.
+# Combinar WavLM + SupCon + cabeza MultiScaleTemporal requiere una clase de modelo
+# nueva o extender Ablation48Model para aceptar los mismos bloques que 45.
+# Ver docs/experimentos/post_45_optimization.md y scripts/run_ablation.py (ramas 45 vs 48/49).
+#
+# Este archivo documenta los campos que habría que alinear tras validar compatibilidad:
+#   - Desde ablation_49_supcon_wavlm.yaml: audio_encoder WavLM, training.loss contrastivo.
+#   - Desde ablation_45_multiscale_head.yaml: classification_head_type + classification_head.* + conflict_aware.
+#
+# Cuando exista study_number y modelo unificado, copiar este esqueleto a un YAML ejecutable.
+
+dataset:
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+
+model:
+  audio_encoder: "microsoft/wavlm-base"
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+
+training:
+  loss:
+    use_contrastive_loss: true
+    contrastive_weight: 0.1

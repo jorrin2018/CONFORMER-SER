@@ -131,6 +131,12 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 ## Ablation 54 (Study 54): Igual que 53 con WavLM-Base+
 *   **`ablation_54_wavlm_base_plus_weighted.yaml`**: **Misma configuración que el estudio 53** (weighted hidden states, SupCon 3 vistas, Conflict-Aware, etc.) sustituyendo el encoder de audio por **`microsoft/wavlm-base-plus`**. Sirve para comparar Base vs Base+ bajo el mismo protocolo de entrenamiento.
 
+## Post-45 optimization (OpenSpec `mejoras-post-ablation-45`)
+
+*   **`ablation_45_sweep_v1.yaml`**: sweep acotado (`conflict_threshold: 0.25`) sobre la misma receta que Ablation 45 (MultiScaleTemporal + Conflict-Aware); mismo split de sesiones **1–3 / 4 / 5**. Baseline de resultados: `checkpoints/ablation_45/post_fix_conflict_chain_study_45/`.
+*   **`ablation_phase2_49_wavlm_multiscale_head_FUTURE.yaml`**: esqueleto **no ejecutable** para combinar receta tipo estudio 49 (WavLM + SupCon) con cabeza MultiScale del 45; requiere validar compatibilidad en `scripts/run_ablation.py` (estudios 45 usan `Ablation34Model`; 48/49 usan `Ablation48Model`).
+*   **Contrato `training.loss`**: comentarios en `src/utils/losses.py` y mensajes de `log_loss_contract_traceability` al arrancar `src/train.py` / `run_ablation.py` (``gamma`` no aplica a `cross_entropy` plano).
+
 ---
 
 ## Mapeo Study → Config (run_ablation.py)

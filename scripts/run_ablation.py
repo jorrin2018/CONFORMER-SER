@@ -68,7 +68,7 @@ from src.ablation_studies import (
 from src.ablation_studies.ablation_30_dirichlet import Ablation30Model
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
 from src.utils.logger import setup_logger, TensorBoardLogger, ExperimentTracker, print_model_summary
-from src.utils.losses import create_loss_function
+from src.utils.losses import create_loss_function, log_loss_contract_traceability
 from src.train import (
     create_dataloaders,
     train_epoch,
@@ -402,6 +402,7 @@ def _run_ablation_with_config(
         num_classes=num_classes,
         loss_config=loss_config if loss_type == 'composite_loss' else None,
     )
+    log_loss_contract_traceability(logger, loss_type, gamma, label_smoothing)
     
     # For Dirichlet losses, need to update epoch in loss function
     if loss_type in ['dirichlet', 'dirichlet_neutral'] and hasattr(criterion, 'set_epoch'):
