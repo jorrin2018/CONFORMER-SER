@@ -225,8 +225,23 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     elif study_number == 54:
         # Ablation 54: same as 53 but microsoft/wavlm-base-plus
         model = Ablation48Model(config)
+    elif study_number == 58:
+        # Ablation 58: MultiScaleTemporal head + SupCon (3 views) + Wav2Vec2
+        model = Ablation48Model(config)
+    elif study_number == 59:
+        # Ablation 59: MultiScaleTemporal + WavLM + SpecAugment on ViT (no waveform aug)
+        model = Ablation34Model(config)
+    elif study_number == 60:
+        # Ablation 60: SOTA Combo — WavLM + MultiScaleTemporal + SupCon + SpecAugment
+        model = Ablation48Model(config)
+    elif study_number == 61:
+        # Ablation 61: SOTA Combo + CompositeLoss with neutral focus
+        model = Ablation48Model(config)
+    elif study_number == 62:
+        # Ablation 62: SOTA Combo + attention-based audio pooling
+        model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57, 58-62.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -238,7 +253,8 @@ def _run_ablation_with_config(
     study_number: int,
     config: dict,
     device: str,
-    experiment_name: str
+    experiment_name: str,
+    seed_override: int = None
 ):
     """
     Core training/evaluation loop shared by standard and LOSO ablations.
@@ -251,11 +267,13 @@ def _run_ablation_with_config(
         print("CUDA not available, using CPU")
         device = 'cpu'
     
-    # Set random seed
-    torch.manual_seed(config['seed'])
-    np.random.seed(config['seed'])
+    # Set random seed (allow CLI override)
+    seed = seed_override if seed_override is not None else config['seed']
+    config['seed'] = seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     if device == 'cuda':
-        torch.cuda.manual_seed(config['seed'])
+        torch.cuda.manual_seed(seed)
     
     # Setup logging
     log_dir = config['logging']['log_dir']
@@ -775,7 +793,8 @@ def run_ablation_study(
     study_number: int,
     config_path: str,
     device: str = 'cuda',
-    experiment_name: str = None
+    experiment_name: str = None,
+    seed: int = None
 ):
     """
     Run a single ablation study (standard split).
@@ -795,14 +814,15 @@ def run_ablation_study(
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         experiment_name = f"ablation_{study_number:02d}_{timestamp}"
     
-    _run_ablation_with_config(study_number, config, device, experiment_name)
+    _run_ablation_with_config(study_number, config, device, experiment_name, seed_override=seed)
 
 
 def run_ablation_study_loso(
     study_number: int,
     config_path: str,
     device: str = 'cuda',
-    experiment_name: str = None
+    experiment_name: str = None,
+    seed: int = None
 ):
     """
     Run Ablation Study with 5-fold leave-one-session-out (LOSO) cross-validation.
@@ -872,7 +892,8 @@ def run_ablation_study_loso(
             study_number=study_number,
             config=fold_config,
             device=device,
-            experiment_name=fold_experiment_name
+            experiment_name=fold_experiment_name,
+            seed_override=seed
         )
         fold_metrics['test_session'] = int(test_session)
         fold_metrics['val_session'] = int(val_session)
@@ -907,7 +928,8 @@ def run_ablation_study_kfold(
     study_number: int,
     config_path: str,
     device: str = 'cuda',
-    experiment_name: str = None
+    experiment_name: str = None,
+    seed: int = None
 ):
     """
     Run Ablation Study with K-Fold cross-validation.
@@ -996,7 +1018,8 @@ def run_ablation_study_kfold(
                 study_number=study_number,
                 config=fold_config,
                 device=device,
-                experiment_name=fold_experiment_name
+                experiment_name=fold_experiment_name,
+                seed_override=seed
             )
             fold_metrics['test_session'] = int(test_session)
             fold_metrics['val_session'] = int(val_session)
@@ -1062,11 +1085,13 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-57). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-57, 58-62). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Experiment name prefix')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Random seed (overrides config seed)')
     args = parser.parse_args()
     
     # Define all studies
@@ -1127,13 +1152,18 @@ def main():
         (55, "config/ablation/ablation_55_45_wavlm_multiscale.yaml"),  # Ablation 45 recipe + WavLM-base
         (56, "config/ablation/ablation_56_45_hubert_multiscale.yaml"),  # Ablation 45 recipe + HuBERT-base
         (57, "config/ablation/ablation_57_45_emotion2vec_multiscale.yaml"),  # Ablation 45 recipe + Emotion2Vec
+        (58, "config/ablation/ablation_58_supcon_multiscale.yaml"),  # MultiScaleTemporal + SupCon (3 views)
+        (59, "config/ablation/ablation_59_wavlm_multiscale_specaug.yaml"),  # WavLM + MultiScaleTemporal + SpecAugment
+        (60, "config/ablation/ablation_60_sota_combo.yaml"),  # SOTA Combo: WavLM + MultiScaleTemporal + SupCon + SpecAugment
+        (61, "config/ablation/ablation_61_composite_neutral.yaml"),  # SOTA Combo + CompositeLoss with neutral focus
+        (62, "config/ablation/ablation_62_attention_pooling.yaml"),  # SOTA Combo + attention-based audio pooling
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57, 58-62")
             return
     
     # Run each study
@@ -1146,7 +1176,8 @@ def main():
                     study_number=study_number,
                     config_path=config_path,
                     device=args.device,
-                    experiment_name=experiment_name
+                    experiment_name=experiment_name,
+                    seed=args.seed
                 )
             elif study_number in (20, 29, 41):
                 # Special case: Ablation 20, 29 and 41 run K-Fold cross-validation with cache clearing
@@ -1154,14 +1185,16 @@ def main():
                     study_number=study_number,
                     config_path=config_path,
                     device=args.device,
-                    experiment_name=experiment_name
+                    experiment_name=experiment_name,
+                    seed=args.seed
                 )
             else:
                 run_ablation_study(
                     study_number=study_number,
                     config_path=config_path,
                     device=args.device,
-                    experiment_name=experiment_name
+                    experiment_name=experiment_name,
+                    seed=args.seed
                 )
         except Exception as e:
             print(f"Error running study {study_number}: {e}")

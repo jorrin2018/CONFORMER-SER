@@ -1070,6 +1070,16 @@ def main():
             tb_logger.log_figure('training/curves', fig, epoch)
         fig.savefig(Path(config['logging']['checkpoint_dir']) / 'training_curves.png')
     
+    # Load best checkpoint before final test evaluation (same logic as run_ablation.py)
+    best_checkpoint_path = Path(config['logging']['checkpoint_dir']) / 'best_model.pt'
+    if best_checkpoint_path.exists():
+        logger.info(f"\nLoading best checkpoint from {best_checkpoint_path} for test evaluation...")
+        checkpoint = torch.load(best_checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+        logger.info(f"Best model loaded (epoch {checkpoint.get('epoch', 'unknown')})")
+    else:
+        logger.warning("No best_model.pt found; evaluating with last-epoch weights.")
+    
     # Final evaluation on test set
     logger.info("\nEvaluating on test set...")
     test_loss, test_metrics, test_metrics_tracker = validate(
