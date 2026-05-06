@@ -6,15 +6,21 @@ El objetivo principal del repositorio es investigar arquitecturas multimodales p
 
 ## Documentación
 
-La documentación técnica central está en [docs/README.md](docs/README.md).
+Índice y orden sugerido: [docs/README.md](docs/README.md). **`docs/` se versiona en git.**
 
-Lecturas recomendadas:
+Orden rápido: [quickstart.md](quickstart.md) → [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md) → [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md) → series en `docs/experimentos/`.
 
-- [quickstart.md](quickstart.md): comandos esenciales para instalar, entrenar y evaluar.
-- [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md): mapa real del código y diferencias entre baseline, ablaciones, ensemble y test-only.
-- [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md): catálogo canónico de estudios de ablación.
-- [src/ablation_studies/README.md](src/ablation_studies/README.md): resumen del paquete de modelos de ablación.
-- [docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md): métodos de detección de conflicto para Conflict-Aware Cross-Attention.
+Lecturas adicionales:
+
+- [AGENTS.md](AGENTS.md): convenciones del repo para asistentes (baseline vs ablación, trampas habituales).
+- [quickstart.md](quickstart.md): comandos esenciales en PowerShell.
+- [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md): baseline vs ablación, `evaluate.py` solo para modelo base.
+- [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md): catálogo YAML ↔ estudio ↔ modelo.
+- [src/ablation_studies/README.md](src/ablation_studies/README.md): paquete `ablation_studies`.
+- [docs/diagrams/](docs/diagrams/): diagramas Draw.io (arquitectura, pipelines LNCS).
+- [docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md): detección de conflicto (Conflict-Aware).
+
+Los planes OpenSpec locales viven en `openspec/`; por defecto **no** están en git (sigue ignorado el directorio).
 
 ## Características principales
 
@@ -30,37 +36,29 @@ Lecturas recomendadas:
 
 ```text
 CONFORMER-SER/
-├── config/
-│   ├── config.yaml
-│   └── ablation/
-│       ├── ABLATION_SUMMARY.md
-│       └── ablation_*.yaml
-├── docs/
-│   ├── README.md
-│   ├── ARCHITECTURE_AND_WORKFLOWS.md
-│   └── experimentos/
+├── config/                 # YAML base y ablaciones versionados
+├── docs/                   # documentación versionada (índice: docs/README.md)
+│   ├── diagrams/           # diagramas Draw.io y utilidades
+│   ├── experimentos/       # notas por serie de estudios
+│   └── …
 ├── scripts/
-│   ├── run_ablation.py
-│   ├── run_test_only.py
-│   ├── retrain_post_fix_gpu.ps1
-│   └── cleanup_pre_fix_checkpoints.ps1
 ├── src/
-│   ├── ablation_studies/
-│   ├── models/
-│   ├── utils/
-│   ├── train.py
-│   ├── evaluate.py
-│   ├── evaluate_ensemble.py
-│   └── inference.py
-├── checkpoints/
-├── logs/
+├── requirements.txt
 ├── README.md
-└── quickstart.md
+├── quickstart.md
+├── checkpoints/            # generado al entrenar (gitignored)
+└── logs/                   # TensorBoard etc. (gitignored)
 ```
 
 ## Instalación
 
-En Windows/PowerShell:
+Dependencias alineadas con `setup_check.py`: [requirements.txt](requirements.txt). Para **GPU/CUDA**, suele convenir instalar primero `torch` y `torchaudio` desde [pytorch.org](https://pytorch.org/get-started/locally/) y después el resto:
+
+```powershell
+pip install -r requirements.txt
+```
+
+En Windows/PowerShell (entorno virtual recomendado):
 
 ```powershell
 cd d:\DOCTORADO\PROYECTOS\CONFORMER-SER
@@ -70,7 +68,7 @@ pip install -r requirements.txt
 python setup_check.py
 ```
 
-También puedes usar:
+También puedes usar (instala desde `requirements.txt` y ejecuta `setup_check.py`):
 
 ```powershell
 .\setup.bat
@@ -83,7 +81,7 @@ dataset:
   data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
-El estudio 50 usa Emotion2Vec y requiere instalar `funasr`.
+El estudio **50** (y variantes con Emotion2Vec, p. ej. **57**) requieren **`funasr`** (línea comentada al final de `requirements.txt`).
 
 ## Uso rápido
 
@@ -99,9 +97,11 @@ python src\train.py --config config\config.yaml --experiment_name baseline --dev
 python scripts\run_ablation.py --study 34 --device cuda
 ```
 
-Los estudios definidos actualmente son `1-50, 52, 53, 54`; no hay estudio 51 en `scripts/run_ablation.py`.
+Estudios válidos: `1-50` y `52-57` (`scripts/run_ablation.py`). **No existe el estudio 51.**
 
 ### Evaluación baseline
+
+Solo para checkpoints del flujo `src\train.py` (modelo base). **No** uses este script para checkpoints de ablación.
 
 ```powershell
 python src\evaluate.py --checkpoint checkpoints\best_model.pt --config config\config.yaml --split test --device cuda

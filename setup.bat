@@ -1,5 +1,7 @@
 @echo off
 REM Setup script for Windows
+REM Prerequisites: Python 3.8+, optional venv (recommended).
+REM CUDA: prefer installing matching torch/torchaudio from pytorch.org before pip install -r requirements.txt
 
 echo ================================================
 echo Conformer IEMOCAP SER - Setup

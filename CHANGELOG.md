@@ -17,7 +17,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Updated `README.md` and `quickstart.md` to reflect the current project layout, Windows/PowerShell commands and the difference between baseline, ablation, ensemble and test-only workflows.
-- Updated `src/ablation_studies/README.md` from the previous 40-study description to the current `1-50, 52, 53, 54` study set.
+- Updated `src/ablation_studies/README.md` to reflect the study set enforced by `run_ablation.py` (`1-50`, `52-57`; no study 51).
 - Clarified that study 51 is not defined in the current `scripts/run_ablation.py` study list.
 
 ### Documentation

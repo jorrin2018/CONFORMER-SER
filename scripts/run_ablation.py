@@ -1,8 +1,9 @@
-"""Master script to run ablation studies (studies 1-40).
+"""Master script to run ablation studies (studies 1-50, 52-57).
 
 Loads study-specific YAML config, builds the corresponding ablation model,
 and runs training with the same training loop as src.train. Use --study N
-to select the experiment (e.g. 34 for Conflict-Aware, 40 for WavLM + Conflict-Aware).
+to select the experiment (e.g. 34 for Conflict-Aware, 45 for MultiScale head,
+55-57 for Ablation-45 recipe with alternate audio encoders).
 """
 
 import os
@@ -199,8 +200,9 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation34Model(config)
     elif study_number == 43:
         model = Ablation43Model(config)
-    elif study_number in (44, 45, 46):
-        # Ablations 44-46: Conflict-Aware Cross-Attention (trimodal) with alternative heads
+    elif study_number in (44, 45, 46, 55, 56, 57):
+        # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
+        # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         model = Ablation34Model(config)
     elif study_number == 47:
         # Ablation 47: Conflict-Aware + SupCon pre-fusión (2 views)
@@ -224,7 +226,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 54: same as 53 but microsoft/wavlm-base-plus
         model = Ablation48Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52, 53, or 54.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1060,7 +1062,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52, 53, 54). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-57). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1122,13 +1124,16 @@ def main():
         (52, "config/ablation/ablation_52_supcon_wavlm_specaug_vit.yaml"),  # Like 49: no wf aug, SpecAugment on ViT mel
         (53, "config/ablation/ablation_53_wavlm_weighted_hidden_states.yaml"),  # 52/174035-style + WavLM layer weights
         (54, "config/ablation/ablation_54_wavlm_base_plus_weighted.yaml"),  # Like 53 + wavlm-base-plus
+        (55, "config/ablation/ablation_55_45_wavlm_multiscale.yaml"),  # Ablation 45 recipe + WavLM-base
+        (56, "config/ablation/ablation_56_45_hubert_multiscale.yaml"),  # Ablation 45 recipe + HuBERT-base
+        (57, "config/ablation/ablation_57_45_emotion2vec_multiscale.yaml"),  # Ablation 45 recipe + Emotion2Vec
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52, 53, 54")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57")
             return
     
     # Run each study

@@ -1,0 +1,284 @@
+<!--
+  SpeechCue prosody prompting module (LNCS-style).
+  White background, serif labels, 4:3 page. Open in diagrams.net.
+-->
+<mxfile host="app.diagrams.net" agent="CONFORMER-SER" version="22.1.0">
+  <diagram id="speechcue" name="SpeechCue Prosody">
+    <mxGraphModel dx="1600" dy="1200" grid="0" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ========== LEFT: three parallel extractors ========== -->
+        <mxCell id="L_title" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:13px&quot;&gt;&lt;b&gt;Prosodic Feature Extraction&lt;/b&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="40" y="36" width="360" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="A_box" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#faf8ff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="32" y="76" width="110" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="A_icon" value="" style="endArrow=none;html=1;strokeWidth=1.4;strokeColor=#5b2c83;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="42" y="104" as="sourcePoint" /><mxPoint x="52" y="98" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="A_icon2" value="" style="endArrow=none;html=1;strokeWidth=1.4;strokeColor=#5b2c83;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="52" y="98" as="sourcePoint" /><mxPoint x="66" y="112" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="A_icon3" value="" style="endArrow=none;html=1;strokeWidth=1.4;strokeColor=#5b2c83;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="66" y="112" as="sourcePoint" /><mxPoint x="82" y="96" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="A_txt1" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;pYIN&lt;br&gt;Algorithm&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="48" y="114" width="78" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="A_txt2" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;→ Mean F&lt;sub&gt;0&lt;/sub&gt; (Hz)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="36" y="144" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="A_badge" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;F&lt;sub&gt;0&lt;/sub&gt;=187 Hz&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede7f6;strokeColor=#6a3d9a;strokeWidth=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="40" y="212" width="94" height="26" as="geometry" />
+        </mxCell>
+
+        <mxCell id="B_box" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#faf8ff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="150" y="76" width="110" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="B_b1" value="" style="rounded=0;fillColor=#5b2c83;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="162" y="94" width="8" height="28" as="geometry" /></mxCell>
+        <mxCell id="B_b2" value="" style="rounded=0;fillColor=#7b68bc;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="174" y="88" width="8" height="34" as="geometry" /></mxCell>
+        <mxCell id="B_b3" value="" style="rounded=0;fillColor=#9b8ac4;strokeColor=none;" vertex="1" parent="1"><mxGeometry x="186" y="96" width="8" height="26" as="geometry" /></mxCell>
+        <mxCell id="B_txt1" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;RMS Energy&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="156" y="122" width="98" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="B_txt2" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;→ Mean E (dB)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="154" y="140" width="102" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="B_badge" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;E = 0.42&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede7f6;strokeColor=#6a3d9a;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="158" y="212" width="94" height="26" as="geometry" />
+        </mxCell>
+
+        <mxCell id="C_box" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=6;fillColor=#faf8ff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="268" y="76" width="110" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="C_clk" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=none;strokeColor=#5b2c83;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="303" y="90" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="C_hand" value="" style="endArrow=none;html=1;strokeWidth=2;strokeColor=#5b2c83;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="323" y="110" as="sourcePoint" /><mxPoint x="323" y="98" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="C_hand2" value="" style="endArrow=none;html=1;strokeWidth=1.5;strokeColor=#5b2c83;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="323" y="110" as="sourcePoint" /><mxPoint x="334" y="106" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="C_txt1" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:7px&quot;&gt;Montreal&lt;br&gt;Forced Aligner&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="276" y="128" width="94" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="C_txt2" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;→ Speech rate (syl/s)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="274" y="156" width="98" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="C_badge" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;R = 4.3&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede7f6;strokeColor=#6a3d9a;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="276" y="212" width="94" height="26" as="geometry" />
+        </mxCell>
+        <!-- ========== CENTER: Discretization ========== -->
+        <mxCell id="M_title" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:13px&quot;&gt;&lt;b&gt;Corpus-level Tertile Discretization&lt;/b&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="400" y="36" width="520" height="22" as="geometry" />
+        </mxCell>
+
+        <!-- Tertile legend (one schematic number line) -->
+        <mxCell id="leg_line" value="" style="endArrow=none;html=1;strokeWidth=1.5;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="430" y="118" as="sourcePoint" /><mxPoint x="720" y="118" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg_t1" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="526" y="118" as="sourcePoint" /><mxPoint x="526" y="132" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg_t2" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="624" y="118" as="sourcePoint" /><mxPoint x="624" y="132" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg_z1" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;q&lt;sub&gt;33&lt;/sub&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="508" y="134" width="36" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_z2" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;q&lt;sub&gt;66&lt;/sub&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="606" y="134" width="36" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_low" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;[LOW]&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ede7f6;strokeColor=#888888;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="448" y="98" width="52" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_mid" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;[MID]&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d4c4f0;strokeColor=#888888;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="556" y="98" width="52" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_high" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;[HIGH]&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#b39ddb;strokeColor=#888888;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="98" width="58" height="22" as="geometry" />
+        </mxCell>
+
+        <!-- Row F0 -->
+        <mxCell id="r1_lab" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;F&lt;sub&gt;0&lt;/sub&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="408" y="178" width="32" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="r1_line" value="" style="endArrow=none;html=1;strokeWidth=1.2;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="450" y="188" as="sourcePoint" /><mxPoint x="740" y="188" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r1_v1" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="546" y="188" as="sourcePoint" /><mxPoint x="546" y="200" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r1_v2" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="644" y="188" as="sourcePoint" /><mxPoint x="644" y="200" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r1_x" value="" style="ellipse;fillColor=#5b2c83;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="678" y="182" width="10" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="r1_txt" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;187 Hz — above q&lt;sub&gt;66&lt;/sub&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="520" y="162" width="200" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="r1_tok" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;[P-HIGH]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#5b2c83;strokeColor=#3d2060;fontColor=#FFFFFF;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="760" y="172" width="88" height="32" as="geometry" />
+        </mxCell>
+
+        <!-- Row E -->
+        <mxCell id="r2_lab" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;E&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="410" y="248" width="24" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="r2_line" value="" style="endArrow=none;html=1;strokeWidth=1.2;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="450" y="258" as="sourcePoint" /><mxPoint x="740" y="258" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r2_v1" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="546" y="258" as="sourcePoint" /><mxPoint x="546" y="270" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r2_v2" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="644" y="258" as="sourcePoint" /><mxPoint x="644" y="270" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r2_x" value="" style="ellipse;fillColor=#7b68bc;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="588" y="252" width="10" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="r2_txt" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;0.42 — between q&lt;sub&gt;33&lt;/sub&gt;, q&lt;sub&gt;66&lt;/sub&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="500" y="232" width="220" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="r2_tok" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;[E-MID]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7b68bc;strokeColor=#4a3d7a;fontColor=#FFFFFF;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="760" y="242" width="88" height="32" as="geometry" />
+        </mxCell>
+
+        <!-- Row R -->
+        <mxCell id="r3_lab" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;R&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="410" y="318" width="24" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="r3_line" value="" style="endArrow=none;html=1;strokeWidth=1.2;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="450" y="328" as="sourcePoint" /><mxPoint x="740" y="328" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r3_v1" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="546" y="328" as="sourcePoint" /><mxPoint x="546" y="340" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r3_v2" value="" style="endArrow=classic;html=1;strokeWidth=1;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="644" y="328" as="sourcePoint" /><mxPoint x="644" y="340" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="r3_x" value="" style="ellipse;fillColor=#c4b5e8;strokeColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="478" y="322" width="10" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="r3_txt" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;4.3 — below q&lt;sub&gt;33&lt;/sub&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="498" y="302" width="160" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="r3_tok" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;[R-LOW]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcd0ff;strokeColor=#6a5a8a;fontColor=#1a1030;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="760" y="312" width="88" height="32" as="geometry" />
+        </mxCell>
+
+        <mxCell id="M_note" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;3 discrete tokens appended to vocabulary →&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="480" y="380" width="360" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="M_ar" value="" style="endArrow=classic;html=1;strokeWidth=1.2;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="860" y="390" as="sourcePoint" /><mxPoint x="1042" y="390" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="R_title" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:13px&quot;&gt;&lt;b&gt;Prosody-Prompted Input&lt;/b&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="36" width="500" height="22" as="geometry" />
+        </mxCell>
+
+        <!-- Token sequence row -->
+        <mxCell id="t_cls" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;[CLS]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d8d8d8;strokeColor=#666666;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1048" y="86" width="48" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_ph" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot; color=&quot;#FFFFFF&quot;&gt;[P-HIGH]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#5b2c83;strokeColor=#3d2060;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1106" y="86" width="62" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_em" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot; color=&quot;#FFFFFF&quot;&gt;[E-MID]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#7b68bc;strokeColor=#4a3d7a;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1176" y="86" width="58" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rl" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;[R-LOW]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcd0ff;strokeColor=#6a5a8a;fontColor=#1a1030;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1242" y="86" width="56" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_i" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;I&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe8fc;strokeColor=#5a9fd4;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1308" y="86" width="32" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_feel" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;feel&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe8fc;strokeColor=#5a9fd4;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1348" y="86" width="44" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_q" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;quite&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe8fc;strokeColor=#5a9fd4;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="86" width="48" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_up" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;upset&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cfe8fc;strokeColor=#5a9fd4;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1456" y="86" width="54" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="t_sep" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:9px&quot;&gt;[SEP]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d8d8d8;strokeColor=#666666;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1520" y="86" width="48" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bracket1" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;SpeechCue prefix (3 tokens)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1098" y="124" width="200" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="bracket2" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:8px&quot;&gt;Transcript (from ASR / manual)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="1308" y="124" width="220" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="bkt_line1" value="" style="endArrow=none;html=1;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1092" y="118" as="sourcePoint" /><mxPoint x="1298" y="118" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="bkt_line2" value="" style="endArrow=none;html=1;strokeWidth=1;strokeColor=#666666;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1304" y="118" as="sourcePoint" /><mxPoint x="1568" y="118" as="targetPoint" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="dbox" value="&lt;font face=&quot;Times New Roman&quot; color=&quot;#FFFFFF&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;DistilBERT-base&lt;/b&gt;&lt;/font&gt;&lt;div&gt;&lt;font face=&quot;Times New Roman&quot; color=&quot;#FFFFFF&quot; style=&quot;font-size:8px&quot;&gt;(last 4 Transformer layers fine-tuned)&lt;/font&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6a3d9a;strokeColor=#4a2c6b;strokeWidth=1;fontColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="168" width="260" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="seq_anchor" value="" style="ellipse;fillColor=#ffffff;strokeColor=none;opacity=0;" vertex="1" parent="1">
+          <mxGeometry x="1304" y="132" width="8" height="8" as="geometry" />
+        </mxCell>
+        <mxCell id="e_down1" value="" style="edgeStyle=orthogonalEdgeStyle;endArrow=classic;strokeWidth=1.2;strokeColor=#000000;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="seq_anchor" target="dbox">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h_cls" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;[CLS] embedding &lt;b&gt;h&lt;/b&gt;&lt;sub&gt;t&lt;/sub&gt; ∈ ℝ&lt;sup&gt;768&lt;/sup&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="268" width="220" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e_d_h" style="endArrow=classic;strokeWidth=1.2;strokeColor=#000000;html=1;" edge="1" parent="1" source="dbox" target="h_cls">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lin" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;Linear (768→512)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1;" vertex="1" parent="1">
+          <mxGeometry x="1348" y="268" width="130" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e_h_lin" style="endArrow=classic;strokeWidth=1.2;strokeColor=#000000;html=1;" edge="1" parent="1" source="h_cls" target="lin">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_t" value="&lt;font face=&quot;Times New Roman&quot; style=&quot;font-size:10px&quot;&gt;&lt;b&gt;t&lt;/b&gt; ∈ ℝ&lt;sup&gt;512&lt;/sup&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5C97A;strokeColor=#C17F2A;strokeWidth=1.2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1508" y="268" width="100" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e_lin_t" style="endArrow=classic;strokeWidth=1.2;strokeColor=#000000;html=1;" edge="1" parent="1" source="lin" target="out_t">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Connecting arrows from left extractors to center tertile rows -->
+        <mxCell id="L_to_M1" style="endArrow=classic;strokeWidth=1;strokeColor=#000000;dashed=1;html=1;" edge="1" parent="1" source="A_badge" target="r1_lab">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="380" y="225" /><mxPoint x="400" y="225" /><mxPoint x="400" y="186" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="L_to_M2" style="endArrow=classic;strokeWidth=1;strokeColor=#000000;dashed=1;html=1;" edge="1" parent="1" source="B_badge" target="r2_lab">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="380" y="225" /><mxPoint x="400" y="225" /><mxPoint x="400" y="258" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="L_to_M3" style="endArrow=classic;strokeWidth=1;strokeColor=#000000;dashed=1;html=1;" edge="1" parent="1" source="C_badge" target="r3_lab">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="380" y="225" /><mxPoint x="400" y="225" /><mxPoint x="400" y="328" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- Center to right: tokens already implied; arrow from center tokens to sequence -->
+        <mxCell id="C_to_R" style="endArrow=classic;strokeWidth=1.2;strokeColor=#000000;html=1;" edge="1" parent="1" source="r1_tok" target="t_ph">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="900" y="188" /><mxPoint x="980" y="188" /><mxPoint x="980" y="100" /><mxPoint x="1135" y="100" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="C_to_R2" style="endArrow=classic;strokeWidth=1;strokeColor=#666666;dashed=1;html=1;" edge="1" parent="1" source="r2_tok" target="t_em">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="C_to_R3" style="endArrow=classic;strokeWidth=1;strokeColor=#666666;dashed=1;html=1;" edge="1" parent="1" source="r3_tok" target="t_rl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

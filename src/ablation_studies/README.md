@@ -1,6 +1,6 @@
 # Estudios de Ablación - Conformer Multimodal SER
 
-Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52, 53 y 54**. El estudio 51 no está definido en el listado de ejecución actual.
+Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52-57**. El estudio 51 no está definido en el listado de ejecución actual.
 
 ## 📋 Descripción General
 
@@ -20,7 +20,7 @@ Los estudios de ablación analizan sistemáticamente la contribución de diferen
 - **Estudios 40-42**: Variantes WavLM + Conflict-Aware y K-Fold.
 - **Estudio 43**: `Ablation43Model` con mejoras de entrenamiento.
 - **Estudios 44-46**: Ablation 34 con cabezas Transformer, MultiScaleTemporal y CNN1D.
-- **Estudios 47-50, 52-54**: SupCon, WavLM, Emotion2Vec, SpecAugment y weighted hidden states.
+- **Estudios 47-50, 52-57**: SupCon, WavLM, Emotion2Vec, SpecAugment, weighted hidden states y **55-57** (receta Ablation 45 + encoder audio alternativo).
 
 ## 🗂️ Estructura de Archivos
 
@@ -48,7 +48,7 @@ src/ablation_studies/
 └── __init__.py
 ```
 
-*Study 40-42, 44-46*: reutilizan principalmente `Ablation34Model` con cambios declarados por YAML. *Study 43* usa `Ablation43Model`. *Studies 47-50 y 52-54* usan la familia SupCon (`Ablation47Model` / `Ablation48Model`) según el mapeo de `scripts/run_ablation.py`.
+*Study 40-42, 44-46, 55-57*: reutilizan principalmente `Ablation34Model` con cambios declarados por YAML. *Study 43* usa `Ablation43Model`. *Studies 47-50 y 52-54* usan la familia SupCon (`Ablation47Model` / `Ablation48Model`) según el mapeo de `scripts/run_ablation.py`.
 
 *Mapeo study→config: ver `config/ablation/ABLATION_SUMMARY.md`*
 
@@ -325,7 +325,7 @@ Estudios que combinan Conflict-Aware Cross-Attention (Ablation 34) con Dirichlet
 
 ---
 
-## 🚀 Serie 41-54: WavLM, SupCon y mejoras recientes
+## 🚀 Serie 41-57: WavLM, SupCon y mejoras recientes
 
 Estos estudios extienden la línea Conflict-Aware con validación K-Fold, nuevas cabezas de clasificación, pérdidas contrastivas y encoders de audio más robustos.
 
@@ -340,6 +340,7 @@ Estos estudios extienden la línea Conflict-Aware con validación K-Fold, nuevas
 - **52**: Variante de 49 sin waveform augmentation y con SpecAugment sobre el **log-mel del ViT** (derivado del mismo waveform en el forward).
 - **53**: WavLM con suma ponderada aprendible de hidden states.
 - **54**: Misma receta que 53 con `microsoft/wavlm-base-plus`.
+- **55-57**: Misma arquitectura y entrenamiento que **Ablation 45** (MultiScaleTemporal + Conflict-Aware); solo cambia el encoder de audio: **55** WavLM-base, **56** HuBERT-base-ls960, **57** Emotion2Vec (`funasr`).
 
 El catálogo completo y el mapeo study -> YAML -> modelo se mantiene en `config/ablation/ABLATION_SUMMARY.md`.
 
@@ -377,6 +378,9 @@ python scripts/run_ablation.py --study 40  # WavLM-base + Conflict-Aware
 python scripts/run_ablation.py --study 43  # Training improvements
 python scripts/run_ablation.py --study 48  # SupCon 3 vistas
 python scripts/run_ablation.py --study 54  # WavLM-base-plus + weighted hidden states
+python scripts/run_ablation.py --study 55  # Ablation 45 + WavLM-base
+python scripts/run_ablation.py --study 56  # Ablation 45 + HuBERT
+python scripts/run_ablation.py --study 57  # Ablation 45 + Emotion2Vec (funasr)
 ```
 
 ### Configuración
@@ -396,12 +400,13 @@ Todos los estudios usan archivos YAML en `config/ablation/`:
 - **Fusión**: Enhanced Cross-Attention (3 capas de cross-attention)
 - **Clasificación**: LSTM Head (2 capas bidireccionales)
 
-**Estudios 34, 36-54** (Conflict-Aware y variantes):
+**Estudios 34, 36-57** (Conflict-Aware y variantes):
 - Misma base que Ablation 25, pero con **Conflict-Aware Cross-Attention**.
 - Detecta contradicciones entre modalidades y pondera por confianza.
 - Ablation 38 añade rama OpenSMILE; Ablation 39 añade ACN, MIC y BCAF.
 - Ablation 40-42 evalúan WavLM y K-Fold.
 - Ablation 43-54 exploran mejoras de entrenamiento, SupCon, Emotion2Vec, SpecAugment y weighted hidden states.
+- **Ablation 55-57**: ablación sobre el **mejor blueprint del estudio 45** (MultiScale head) con **WavLM, HuBERT y Emotion2Vec** como única variable de encoder de audio.
 
 ---
 

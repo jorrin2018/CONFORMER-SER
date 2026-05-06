@@ -1,0 +1,17 @@
+# CONFORMER-SER — paquetes comprobados por setup_check.py (check_imports).
+# Para GPU/CUDA en Windows, suele ser preferible instalar torch y torchaudio desde:
+#   https://pytorch.org/get-started/locally/
+# y luego: pip install -r requirements.txt
+torch
+torchaudio
+transformers
+numpy
+pandas
+scikit-learn
+PyYAML
+tqdm
+matplotlib
+seaborn
+tensorboard
+# Opcional: estudio de ablación 50 (Emotion2Vec / encoder Emotion2Vec vía funasr)
+# funasr

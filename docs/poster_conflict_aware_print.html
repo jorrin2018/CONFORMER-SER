@@ -1,0 +1,527 @@
+<!--
+  poster_conflict_aware_print.html
+  Póster vertical 18×24 in (Conflict-Aware SER, ablation 45).
+
+  - Recursos: docs/assets (logos), checkpoints/ablation_45/.../training_curves.png;
+    matriz en HTML: filas normalizadas, diagonal = recall en test.
+  - IPN: logo horizontal recortado con ancho fijo y overflow (evita clip-path
+    en img, que a veces no se pinta en export PNG).
+  - Figuras y tablas: leyendas numeradas en el orden de aparición: Fig. 1–2,
+    Tab. 1–3, Fig. 3.
+  - Conclusiones: columna derecha, bajo Ablación (referencias solo en el pie).
+  - Metodología: tabla (datos, split, entradas, entren., métricas). Cifras de
+    modelo bajo la Fig. 2 (arquitectura).
+
+  Abrir: file:///…/docs/poster_conflict_aware_print.html
+-->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Poster 18x24 - Conflict-Aware SER</title>
+  <style>
+    @page { size: 18in 24in; margin: 0; }
+
+    :root {
+      --bg: #f7f7f2;
+      --ink: #111827;
+      --muted: #4b5563;
+      --line: #c9c9c0;
+      --panel: #ffffff;
+      --soft: #ecece3;
+      --accent: #0f766e;
+      --blue: #1d4ed8;
+      --success: #15803d;
+      --warn-bg: #fff5da;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #d8d8d8; color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; }
+
+    .poster {
+      width: min(900px, 100vw);
+      min-height: calc(min(900px, 100vw) * 24 / 18);
+      background: var(--bg);
+      padding: 14px 18px 12px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 7px;
+      overflow: visible;
+    }
+
+    .header {
+      display: grid;
+      grid-template-columns: 96px 1fr 96px;
+      gap: 10px;
+      align-items: center;
+      border-bottom: 3px solid var(--ink);
+      padding-bottom: 7px;
+    }
+
+    .logo-wrap {
+      height: 86px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Emblema sin wordmark: recorte horizontal con overflow (clip-path en <img> suele fallar al exportar a PNG). */
+    .logo-wrap--ipn {
+      width: 80px;
+      max-width: 80px;
+      padding: 0;
+      flex-shrink: 0;
+      justify-content: center;
+    }
+    .logo-crop--ipn {
+      display: block;
+      /* h=86 → ancho ≈239px; wordmark hacia x158 en SVG: recorte 66px (evita la I negra, conserva el escudo) */
+      width: 66px;
+      max-width: 100%;
+      height: 86px;
+      overflow: hidden;
+      line-height: 0;
+    }
+    .logo-crop--ipn img {
+      display: block;
+      height: 86px;
+      width: auto;
+      max-width: none;
+    }
+
+    .logo-wrap--esime img {
+      display: block;
+      height: 86px;
+      width: auto;
+      max-width: 100%;
+      object-fit: contain;
+    }
+    h1 { margin: 0; font-size: 22px; line-height: 1.04; text-align: center; text-transform: uppercase; letter-spacing: .35px; }
+    .authors { margin-top: 5px; text-align: center; font-size: 12px; font-weight: 700; }
+    .affiliation { margin-top: 3px; text-align: center; font-size: 9.5px; color: var(--muted); }
+
+    .tags { display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+    .tag { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: var(--soft); color: var(--muted); font-size: 8.8px; font-weight: 700; }
+    .tag.primary { background: #d9f4ef; color: var(--accent); border-color: #8ccdc2; }
+
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .metric { background: white; border: 1px solid var(--line); border-radius: 9px; padding: 7px 5px; text-align: center; }
+    .metric strong { display: block; font-size: 20px; line-height: 1; color: var(--accent); margin-bottom: 3px; }
+    .metric span { display: block; color: var(--muted); font-size: 7.5px; font-weight: 800; text-transform: uppercase; }
+
+    .content { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; min-height: 0; align-items: start; }
+    .col { display: grid; gap: 8px; align-content: start; min-height: 0; }
+    .col--right { min-width: 0; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 8px; min-width: 0; }
+    .panel.tight { padding: 7px; }
+
+    h2 { margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1.5px solid var(--soft); color: var(--accent); font-size: 16px; line-height: 1.1; }
+    h3 { margin: 6px 0 4px; font-size: 11.2px; color: var(--ink); }
+    p { margin: 0 0 5px; font-size: 9.4px; line-height: 1.22; }
+    .small { font-size: 8.2px; color: var(--muted); line-height: 1.18; }
+    .note { border-left: 4px solid var(--accent); background: #eef9f6; padding: 6px; color: var(--muted); font-size: 8.5px; line-height: 1.18; margin-top: 5px; }
+
+    .contexto-puntos { margin: 3px 0 0; padding: 0; font-size: 8.4px; line-height: 1.2; color: var(--ink); }
+    .contexto-puntos .contexto-line { display: block; margin: 0; padding: 0; }
+    .contexto-puntos .contexto-line + .contexto-line { margin-top: 1px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 8.4px; line-height: 1.1; }
+    th { text-align: left; background: var(--soft); color: var(--muted); text-transform: uppercase; letter-spacing: .25px; font-size: 7.6px; }
+    th, td { padding: 4px 5px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .num { text-align: right; white-space: nowrap; }
+    tr.best td { background: #e8f6ec; font-weight: 800; }
+    tr.warn td { background: var(--warn-bg); }
+
+    /* Metodología: dos columnas (etiqueta | detalle) para ahorrar altura */
+    .table-method {
+      width: 100%;
+      table-layout: fixed;
+      font-size: 7.4px;
+      line-height: 1.12;
+    }
+    .table-method th[scope="row"] {
+      width: 24%;
+      text-align: left;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 7.1px;
+      font-weight: 800;
+      color: var(--ink);
+      background: #f0f0e8;
+      border: 1px solid var(--line);
+      padding: 2px 4px;
+      vertical-align: top;
+    }
+    .table-method td {
+      border: 1px solid var(--line);
+      padding: 2px 5px;
+      vertical-align: top;
+    }
+
+    ul { margin: 0; padding-left: 14px; font-size: 8.8px; line-height: 1.18; }
+    li { margin-bottom: 3px; }
+
+    .block-svg { width: 100%; height: auto; display: block; background: #fbfbf7; border: 1px solid var(--line); border-radius: 8px; margin-top: 4px; }
+    .figure img { width: 100%; max-height: 200px; object-fit: contain; display: block; background: #fafaf8; border: 1px solid var(--line); border-radius: 8px; }
+    .figure--curves { margin: 0; }
+    .figure--curves img {
+      max-height: 220px;
+      min-height: 160px;
+      width: 100%;
+      object-fit: contain;
+    }
+    .caption {
+      margin-top: 2px;
+      text-align: center;
+      font-size: 7.4px;
+      color: var(--muted);
+      line-height: 1.2;
+    }
+    .caption-label { font-weight: 800; color: var(--ink); }
+
+    /* Cifras clave (ablation 45) bajo el diagrama de arquitectura, sin alargar metodología */
+    .arch-nums {
+      margin: 4px 0 0;
+      padding: 3px 6px 4px;
+      background: #fafaf6;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .arch-nums .arch-nums-line {
+      margin: 0;
+      font-size: 7.1px;
+      line-height: 1.2;
+      color: var(--muted);
+      text-align: left;
+    }
+    .arch-nums .arch-nums-line + .arch-nums-line { margin-top: 1px; }
+    .arch-nums strong { color: var(--ink); font-weight: 800; }
+
+    .cm-table-wrap { width: 100%; max-width: 100%; margin-top: 2px; }
+    .cm { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 8.2px; }
+    .cm th, .cm td { border: 1px solid #94a3b8; text-align: center; padding: 3px 1px; vertical-align: middle; }
+    .cm th { background: #e0f2f1; color: var(--ink); font-size: 7px; font-weight: 800; }
+    .cm th.cm-corner { background: #ecece3; }
+    .cm td strong { font-size: 10.5px; font-weight: 800; color: #0f172a; }
+    .cm .diag { background: #dbeafe; }
+
+    .bars { display: grid; gap: 4px; margin-top: 4px; }
+    .bar-row { display: grid; grid-template-columns: 52px 1fr 32px; gap: 5px; align-items: center; font-size: 8.2px; }
+    .bar-track { height: 11px; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+    .bar { height: 100%; background: var(--accent); }
+    .bar.prev { background: #94a3b8; }
+
+    .footer {
+      border-top: 2px solid var(--ink);
+      padding: 8px 0 0;
+    }
+    .footer-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 12px;
+      align-items: start;
+      color: var(--muted);
+      font-size: 7.6px;
+      line-height: 1.22;
+    }
+    .footer h3 { margin: 0 0 3px; font-size: 8.2px; color: var(--ink); text-transform: uppercase; letter-spacing: .2px; }
+    .footer ul { margin: 0; padding-left: 14px; }
+    .footer li { margin-bottom: 1px; }
+    .footer-aside { text-align: right; min-width: 8em; }
+
+    .export-help { width: min(900px, 100vw); margin: 24px auto; background: white; border: 1px solid #ccc; padding: 16px; font-size: 14px; line-height: 1.45; }
+    .export-help code { background: #f0f0f0; padding: 2px 4px; border-radius: 3px; }
+
+    @media print {
+      html, body { background: white; display: block; }
+      .poster { width: 18in; height: 24in; }
+      .export-help { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <header class="header">
+      <div class="logo-wrap logo-wrap--ipn">
+        <div class="logo-crop--ipn">
+          <img src="assets/logo_ipn_horizontal.svg" alt="Escudo Instituto Politécnico Nacional" width="340" height="100" />
+        </div>
+      </div>
+      <div>
+        <h1>Fusión multimodal consciente de conflictos para reconocimiento de emociones en el habla</h1>
+        <div class="authors">Jorge Luis Jorrín Coz · Dr. Héctor Manuel Pérez Meana</div>
+        <div class="affiliation">Instituto Politécnico Nacional · ESIME Culhuacán · jjorrinc2100@alumno.ipn.mx</div>
+        <div class="tags">
+          <span class="tag primary">IEMOCAP · 4 clases</span>
+          <span class="tag">54 configuraciones evaluadas</span>
+          <span class="tag">Ablation 45 · mejor resultado</span>
+        </div>
+      </div>
+      <div class="logo-wrap logo-wrap--esime">
+        <img src="assets/logo_esime_culhuacan.png" alt="ESIME Culhuacán" width="200" height="120" />
+      </div>
+    </header>
+
+    <section class="metrics">
+      <div class="metric"><strong>79.23 %</strong><span>UA test</span></div>
+      <div class="metric"><strong>79.61 %</strong><span>WA test</span></div>
+      <div class="metric"><strong>78.68 %</strong><span>F1 macro</span></div>
+      <div class="metric"><strong>2.91 %</strong><span>Gap val-test</span></div>
+      <div class="metric"><strong>+4.77 pp</strong><span>Mejora vs año anterior</span></div>
+    </section>
+
+    <section class="content">
+      <div class="col">
+        <section class="panel">
+          <h2>Resumen</h2>
+          <p>
+            Este trabajo extiende la arquitectura multimodal presentada previamente para reconocimiento de emociones en habla. La contribución central es un módulo de <strong>Conflict-Aware Cross-Attention</strong> que detecta desacuerdos entre audio, texto y visión, y ajusta dinámicamente la confianza de cada modalidad antes de la clasificación.
+          </p>
+          <p>
+            El sistema fue evaluado sobre IEMOCAP con cuatro emociones: <strong>angry</strong>, <strong>happy</strong>, <strong>sad</strong> y <strong>neutral</strong>. La serie experimental incluye 54 configuraciones de ablación.
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Problema y motivación</h2>
+          <p>
+            Las emociones no siempre se expresan de forma consistente: una frase textual neutra puede ir acompañada de una prosodia enojada o un patrón visual ambiguo. La fusión multimodal tradicional puede mezclar estas señales sin distinguir cuál modalidad es más confiable.
+          </p>
+          <svg class="block-svg" viewBox="0 0 700 190" role="img" aria-label="Diagrama de motivación con bloques y conexiones">
+            <defs>
+              <marker id="marr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#4b5563"/></marker>
+              <style>
+                .b{fill:#ecece3;stroke:#c9c9c0;stroke-width:2}.bb{fill:#dbeafe;stroke:#93c5fd;stroke-width:2}.bg{fill:#dcfce7;stroke:#86efac;stroke-width:2}.bo{fill:#fff7ed;stroke:#fed7aa;stroke-width:2}.t{font:700 13px Arial;fill:#111827}.s{font:12px Arial;fill:#4b5563}.a{stroke:#4b5563;stroke-width:2;fill:none;marker-end:url(#marr)}.d{stroke-dasharray:7 5}.ttl{font:700 14px Arial;fill:#4b5563}
+              </style>
+            </defs>
+            <text x="165" y="22" class="ttl" text-anchor="middle">Caso alineado</text>
+            <rect x="20" y="42" width="120" height="28" rx="6" class="b"/><text x="80" y="61" class="t" text-anchor="middle">Audio: angry</text>
+            <rect x="20" y="82" width="120" height="28" rx="6" class="b"/><text x="80" y="101" class="t" text-anchor="middle">Texto: angry</text>
+            <rect x="20" y="122" width="120" height="28" rx="6" class="b"/><text x="80" y="141" class="t" text-anchor="middle">Visual: angry</text>
+            <line x1="140" y1="56" x2="190" y2="96" class="a"/><line x1="140" y1="96" x2="190" y2="96" class="a"/><line x1="140" y1="136" x2="190" y2="96" class="a"/>
+            <rect x="194" y="74" width="110" height="44" rx="6" class="bb"/><text x="249" y="93" class="t" text-anchor="middle">Fusión</text><text x="249" y="110" class="s" text-anchor="middle">simple</text>
+            <line x1="304" y1="96" x2="340" y2="96" class="a"/><rect x="344" y="74" width="110" height="44" rx="6" class="bg"/><text x="399" y="93" class="t" text-anchor="middle">Predicción</text><text x="399" y="110" class="s" text-anchor="middle">correcta</text>
+            <text x="535" y="22" class="ttl" text-anchor="middle">Caso con conflicto</text>
+            <rect x="500" y="42" width="130" height="28" rx="6" class="b"/><text x="565" y="61" class="t" text-anchor="middle">Audio: angry</text>
+            <rect x="500" y="82" width="130" height="28" rx="6" class="bo"/><text x="565" y="101" class="t" text-anchor="middle">Texto: neutral</text>
+            <rect x="500" y="122" width="130" height="28" rx="6" class="bo"/><text x="565" y="141" class="t" text-anchor="middle">Visual: neutral</text>
+            <line x1="500" y1="56" x2="455" y2="96" class="a"/><line x1="500" y1="96" x2="455" y2="96" class="a d"/><line x1="500" y1="136" x2="455" y2="96" class="a d"/>
+            <rect x="344" y="132" width="110" height="44" rx="6" class="bb"/><text x="399" y="151" class="t" text-anchor="middle">Conflict</text><text x="399" y="168" class="s" text-anchor="middle">aware</text>
+          </svg>
+          <p class="caption" role="doc-caption">
+            <span class="caption-label">Figura 1.</span> Motivación: alineación modal frente a conflicto (prosodia, texto, visual).
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Arquitectura propuesta</h2>
+          <svg class="block-svg" viewBox="0 0 720 330" role="img" aria-label="Arquitectura multimodal a bloques con conexiones">
+            <defs>
+              <marker id="aarr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#4b5563"/></marker>
+              <style>
+                .ab{fill:#ecece3;stroke:#c9c9c0;stroke-width:2}.ablue{fill:#dbeafe;stroke:#93c5fd;stroke-width:2}.ag{fill:#d9f4ef;stroke:#8ccdc2;stroke-width:2}.at{font:700 13px Arial;fill:#111827}.as{font:12px Arial;fill:#4b5563}.aa{stroke:#4b5563;stroke-width:2;fill:none;marker-end:url(#aarr)}.ad{stroke-dasharray:7 5}.al{font:700 11px Arial;fill:#4b5563}
+              </style>
+            </defs>
+            <text x="70" y="22" class="al" text-anchor="middle">ENTRADA</text><text x="220" y="22" class="al" text-anchor="middle">TRANSFORMACIÓN</text><text x="370" y="22" class="al" text-anchor="middle">ENCODER</text><text x="510" y="22" class="al" text-anchor="middle">EMBED</text><text x="630" y="22" class="al" text-anchor="middle">FUSIÓN</text>
+            <rect x="20" y="45" width="110" height="38" rx="6" class="ab"/><text x="75" y="61" class="at" text-anchor="middle">Waveform</text><text x="75" y="76" class="as" text-anchor="middle">16 kHz</text>
+            <rect x="165" y="45" width="130" height="38" rx="6" class="ablue"/><text x="230" y="69" class="at" text-anchor="middle">WavLM / W2V2</text>
+            <rect x="455" y="45" width="85" height="38" rx="6" class="ab"/><text x="497" y="69" class="at" text-anchor="middle">E audio</text>
+            <rect x="165" y="138" width="130" height="46" rx="6" class="ab"/><text x="230" y="157" class="at" text-anchor="middle">log-mel</text><text x="230" y="174" class="as" text-anchor="middle">on-the-fly</text>
+            <rect x="320" y="138" width="105" height="46" rx="6" class="ablue"/><text x="372" y="157" class="at" text-anchor="middle">ViT</text><text x="372" y="174" class="as" text-anchor="middle">congelado</text>
+            <rect x="455" y="138" width="85" height="46" rx="6" class="ab"/><text x="497" y="166" class="at" text-anchor="middle">E visual</text>
+            <rect x="20" y="240" width="110" height="38" rx="6" class="ab"/><text x="75" y="256" class="at" text-anchor="middle">Texto</text><text x="75" y="271" class="as" text-anchor="middle">transcript</text>
+            <rect x="165" y="240" width="130" height="38" rx="6" class="ablue"/><text x="230" y="264" class="at" text-anchor="middle">DistilBERT</text>
+            <rect x="455" y="240" width="85" height="38" rx="6" class="ab"/><text x="497" y="264" class="at" text-anchor="middle">E texto</text>
+            <rect x="585" y="105" width="115" height="64" rx="8" class="ag"/><text x="642" y="127" class="at" text-anchor="middle">Conflict-Aware</text><text x="642" y="144" class="as" text-anchor="middle">Cross-Attention</text><text x="642" y="160" class="as" text-anchor="middle">ponderación</text>
+            <rect x="585" y="205" width="115" height="44" rx="6" class="ab"/><text x="642" y="224" class="at" text-anchor="middle">MultiScale</text><text x="642" y="240" class="as" text-anchor="middle">Head</text>
+            <rect x="585" y="280" width="115" height="36" rx="6" class="ag"/><text x="642" y="302" class="at" text-anchor="middle">4 emociones</text>
+            <line x1="130" y1="64" x2="165" y2="64" class="aa"/><line x1="295" y1="64" x2="455" y2="64" class="aa"/>
+            <line x1="75" y1="83" x2="75" y2="161" class="aa ad"/><line x1="75" y1="161" x2="165" y2="161" class="aa ad"/><line x1="295" y1="161" x2="320" y2="161" class="aa"/><line x1="425" y1="161" x2="455" y2="161" class="aa"/>
+            <line x1="130" y1="259" x2="165" y2="259" class="aa"/><line x1="295" y1="259" x2="455" y2="259" class="aa"/>
+            <line x1="540" y1="64" x2="585" y2="122" class="aa"/><line x1="540" y1="161" x2="585" y2="137" class="aa"/><line x1="540" y1="259" x2="585" y2="154" class="aa"/><line x1="642" y1="169" x2="642" y2="205" class="aa"/><line x1="642" y1="249" x2="642" y2="280" class="aa"/>
+          </svg>
+          <p class="caption" role="doc-caption">
+            <span class="caption-label">Figura 2.</span> Arquitectura: encoders, Conflict-Aware Cross-Attention, cabeza y salida 4 clases.
+          </p>
+          <div class="arch-nums" aria-label="Especificación numérica ablation 45">
+            <p class="arch-nums-line"><strong>45</strong>: proyección / emb. <strong>512</strong>‑D, <strong>dropout 0,5</strong> · <strong>W2V2</strong> 6 cap. · <strong>DistilBERT</strong> 4 · <strong>ViT</strong> cong. (224px).</p>
+            <p class="arch-nums-line">Cross‑att. <strong>8</strong> cab. · <strong>3</strong> capas, <strong>τ=0,3</strong> · cabeza: LSTM <strong>×2</strong> bid. <strong>512</strong>, self‑att. <strong>4</strong>, <em>dropout</em> <strong>0,4</strong> · 4 clases.</p>
+          </div>
+          <div class="note">El log-mel para ViT se calcula dentro del modelo desde el waveform: no es una característica preextraída del dataset.</div>
+        </section>
+
+        <section class="panel tight">
+          <h2>Metodología (ablation 45)</h2>
+          <table class="table-method" role="table" aria-label="Metodología y entrenamiento">
+            <tbody>
+              <tr>
+                <th scope="row">Corpus</th>
+                <td>IEMOCAP, 4 clases; evaluación balanceada SER.</td>
+              </tr>
+              <tr>
+                <th scope="row">Split</th>
+                <td>Ses. 1–3 entrenamiento, 4 validación, 5 prueba.</td>
+              </tr>
+              <tr>
+                <th scope="row">Entradas</th>
+                <td>Waveform 16 kHz, transcripción; visión: log-mel 224px (on-the-fly desde waveform).</td>
+              </tr>
+              <tr>
+                <th scope="row">Entren.</th>
+                <td>Lote 4, acum. 8 (ef. 32); η 3e-5, 2e-5, 5e-6 (audio, texto, fusión); <em>wd</em> 0,05; CE + <em>label smoothing</em> 0,1; ≤100 épocas, early stop 8; <em>scheduler plateau</em> (0,5, paciencia 3).</td>
+              </tr>
+              <tr>
+                <th scope="row">Métricas</th>
+                <td>WA, UA, F1 macro, F1 pond., matriz, gap val–test.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="panel tight">
+          <h2>Contexto e impacto</h2>
+          <p>Respecto al poster anterior, este trabajo no solo mejora el rendimiento final, sino que cambia la hipótesis de fusión: de combinar modalidades de forma uniforme a <strong>modelar explícitamente la confiabilidad relativa</strong> cuando las señales se contradicen.</p>
+          <div class="contexto-puntos" role="group" aria-label="Impacto cuantitativo">
+            <p class="contexto-line">Mejora <strong>+4.77 pp</strong> UA (base trimodal) · Gap val–test <strong>7.59 % → 2.91 %</strong></p>
+            <p class="contexto-line">Reto principal: clase <strong>Neutral</strong></p>
+          </div>
+        </section>
+
+      </div>
+
+      <div class="col col--right">
+        <section class="panel tight">
+          <h2>Resultados principales</h2>
+          <table>
+            <thead><tr><th>Clase</th><th class="num">Accuracy</th><th class="num">F1</th></tr></thead>
+            <tbody>
+              <tr><td>Angry</td><td class="num">88.49 %</td><td class="num">87.54 %</td></tr>
+              <tr><td>Happy</td><td class="num">75.31 %</td><td class="num">81.88 %</td></tr>
+              <tr><td>Sad</td><td class="num">83.04 %</td><td class="num">80.52 %</td></tr>
+              <tr class="warn"><td>Neutral</td><td class="num">70.10 %</td><td class="num">64.76 %</td></tr>
+            </tbody>
+          </table>
+          <p class="caption" role="doc-caption" style="margin-top:4px">
+            <span class="caption-label">Tabla 1.</span> Resultados por clase (accuracy y F1 en prueba, ablation 45).
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Matriz de confusión (test, normalizada por fila)</h2>
+          <p class="small" style="margin:0 0 4px">Cada fila suma 1,000. La diagonal corresponde al <strong>recall</strong> por clase en prueba.</p>
+          <div class="cm-table-wrap" role="img" aria-label="Matriz de confusión 4 por 4, proporciones">
+            <table class="cm">
+              <thead>
+                <tr>
+                  <th class="cm-corner">Verd. \ Pred.</th>
+                  <th>Angry</th>
+                  <th>Happy</th>
+                  <th>Sad</th>
+                  <th>Neutr.</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th>Angry</th>
+                  <td class="diag"><strong>0,885</strong></td>
+                  <td><strong>0,035</strong></td>
+                  <td><strong>0,040</strong></td>
+                  <td><strong>0,040</strong></td>
+                </tr>
+                <tr>
+                  <th>Happy</th>
+                  <td><strong>0,100</strong></td>
+                  <td class="diag"><strong>0,753</strong></td>
+                  <td><strong>0,100</strong></td>
+                  <td><strong>0,047</strong></td>
+                </tr>
+                <tr>
+                  <th>Sad</th>
+                  <td><strong>0,020</strong></td>
+                  <td><strong>0,050</strong></td>
+                  <td class="diag"><strong>0,830</strong></td>
+                  <td><strong>0,100</strong></td>
+                </tr>
+                <tr>
+                  <th>Neutr.</th>
+                  <td><strong>0,100</strong></td>
+                  <td><strong>0,099</strong></td>
+                  <td><strong>0,100</strong></td>
+                  <td class="diag"><strong>0,701</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="caption" role="doc-caption" style="margin-top:3px">
+            <span class="caption-label">Tabla 2.</span> Matriz de confusión (normalización por fila, conjunto de prueba, ablation 45).
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Curvas de entrenamiento</h2>
+          <figure class="figure figure--curves">
+            <img src="../checkpoints/ablation_45/post_fix_conflict_chain_study_45/training_curves.png" alt="Curvas de entrenamiento ablation 45" />
+            <figcaption class="caption" role="doc-caption">
+              <span class="caption-label">Figura 3.</span> Curvas de entrenamiento: 41 épocas; mejor UA validación 82,14 % (véase <code>best_metrics.json</code> / <code>training_curves.png</code> del run).
+            </figcaption>
+          </figure>
+        </section>
+
+        <section class="panel tight">
+          <h2>Ablación y comparación</h2>
+          <table>
+            <thead><tr><th>ID</th><th>Innovación</th><th class="num">UA</th><th class="num">Gap</th></tr></thead>
+            <tbody>
+              <tr><td>13</td><td>Trimodal base año anterior</td><td class="num">74.46 %</td><td class="num">7.59 %</td></tr>
+              <tr><td>25</td><td>Enhanced Cross-Attention</td><td class="num">77.44 %</td><td class="num">4.86 %</td></tr>
+              <tr><td>34</td><td>Conflict-Aware Fusion</td><td class="num">77.98 %</td><td class="num">2.68 %</td></tr>
+              <tr><td>48</td><td>SupCon 3 vistas</td><td class="num">77.28 %</td><td class="num">4.97 %</td></tr>
+              <tr class="best"><td>45</td><td>MultiScaleTemporal Head</td><td class="num">79.23 %</td><td class="num">2.91 %</td></tr>
+            </tbody>
+          </table>
+          <p class="caption" role="doc-caption" style="margin-top:4px">
+            <span class="caption-label">Tabla 3.</span> Ablación y comparación: evolución de innovaciones hacia ablation 45.
+          </p>
+        </section>
+
+        <section class="panel tight">
+          <h2>Conclusiones y trabajo futuro</h2>
+          <ul>
+            <li>Conflict-Aware Cross-Attention mejora la robustez ante contradicciones entre modalidades.</li>
+            <li>La cabeza MultiScaleTemporal aporta el mejor equilibrio entre UA y generalización (ablation 45 frente a variantes anteriores).</li>
+            <li>Trabajo futuro: ensemble 45/48/52, focal o ponderación para <strong>Neutral</strong> y validación en corpus externo.</li>
+          </ul>
+        </section>
+
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="footer-row">
+        <div>
+          <h3>Referencias y contexto</h3>
+          <ul>
+            <li><strong>Proyecto:</strong> CONFORMER-SER (rama ablation 45, run <code>post_fix_conflict_chain_study_45</code>).</li>
+            <li><strong>Base de datos:</strong> IEMOCAP, partición en config (ses. 1–3 entrenamiento, 4 val., 5 test).</li>
+            <li><strong>Resultados clave (test):</strong> UA 79,23 % · WA 79,61 % · F1 macro 78,68 % · desviación val–test 2,91 pp.</li>
+            <li><strong>Logos IPN/ESIME:</strong> recursos gráficos institucionales; en cabecera el IPN se recorta a glifo (sin wordmark adyacente).</li>
+          </ul>
+        </div>
+        <div class="footer-aside">
+          <div><strong>Formato de impresión</strong></div>
+          <div>18 × 24 in vertical</div>
+          <div>Abril 2026</div>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <aside class="export-help">
+    <h2>Exportación a alta resolución</h2>
+    <p>Este bloque no se imprime. Salida HR por defecto: <code>poster_18x24_alta_resolucion.png</code> (script prueba 300/200/150 DPI). Comando: <code>.\scripts\export_poster_18x24.ps1 -Format png</code></p>
+    <p>PDF: <code>.\scripts\export_poster_18x24.ps1 -Format pdf</code></p>
+  </aside>
+</body>
+</html>

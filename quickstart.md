@@ -44,7 +44,7 @@ En estudios **trimodales**, el log-mel del ViT se calcula en el modelo a partir 
 - Python 3.8 o superior.
 - GPU CUDA recomendada para entrenamiento.
 - Dataset IEMOCAP descargado y extraído.
-- Dependencias de `requirements.txt`.
+- Paquetes de [requirements.txt](requirements.txt) (alineados con `setup_check.py`). Para CUDA, instala `torch`/`torchaudio` desde [pytorch.org](https://pytorch.org/get-started/locally/) si lo necesitas y luego `pip install -r requirements.txt`.
 
 ## Instalación
 
@@ -56,7 +56,7 @@ pip install -r requirements.txt
 python setup_check.py
 ```
 
-También puedes ejecutar:
+También puedes ejecutar (instala dependencias con `requirements.txt` y ejecuta verificación):
 
 ```powershell
 .\setup.bat
@@ -93,7 +93,7 @@ Usa este flujo para experimentos de investigación:
 python scripts\run_ablation.py --study 34 --device cuda
 ```
 
-Estudios disponibles en el listado actual: `1-50, 52, 53, 54`. El estudio 51 no está definido.
+Estudios válidos: `1-50` y `52-57` en `scripts\run_ablation.py`. **No existe el estudio 51.**
 
 Consulta el catálogo:
 
@@ -117,7 +117,7 @@ O:
 
 ### Checkpoint baseline
 
-`src\evaluate.py` está orientado al modelo base (`ConformerMultimodalModel`):
+`src\evaluate.py` solo reconstruye el **modelo base** (`ConformerMultimodalModel`). No lo uses para checkpoints de ablación.
 
 ```powershell
 python src\evaluate.py --checkpoint checkpoints\best_model.pt --config config\config.yaml --split test --device cuda

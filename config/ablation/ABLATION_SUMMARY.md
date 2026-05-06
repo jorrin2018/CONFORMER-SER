@@ -2,11 +2,11 @@
 
 Este documento resume las diferencias clave y el objetivo de cada configuración de experimentación ("ablation") en el proyecto.
 
-**Total**: estudios 1-50, 52, 53 y 54 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34
+**Total**: estudios 1-50, 52-57 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34 | **Serie 55-57**: misma receta que **Ablation 45** (Conflict-Aware + MultiScaleTemporal), distinto encoder de audio (WavLM, HuBERT, Emotion2Vec)
 
 ### Ejecución
 ```powershell
-python scripts/run_ablation.py --study N   # N = 1 a 50, o 52, 53, 54
+python scripts/run_ablation.py --study N   # N = 1 a 50, o 52 a 57
 ```
 
 ### Datos de audio y rama visual (ViT)
@@ -131,6 +131,13 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 ## Ablation 54 (Study 54): Igual que 53 con WavLM-Base+
 *   **`ablation_54_wavlm_base_plus_weighted.yaml`**: **Misma configuración que el estudio 53** (weighted hidden states, SupCon 3 vistas, Conflict-Aware, etc.) sustituyendo el encoder de audio por **`microsoft/wavlm-base-plus`**. Sirve para comparar Base vs Base+ bajo el mismo protocolo de entrenamiento.
 
+## Ablation 55-57 (Studies 55-57): Misma receta que Ablation 45, distinto encoder de audio
+Ablación controlada respecto al **estudio 45** (*Conflict-Aware Cross-Attention + MultiScaleTemporal head + ViT + SpeechCue*; split 1–3 / 4 / 5). Solo cambia `model.audio_encoder` para aislar el efecto del front-end acústico frente al Wav2Vec2-base del 45.
+
+*   **`ablation_55_45_wavlm_multiscale.yaml` (55)**: **WavLM-base** (`microsoft/wavlm-base`).
+*   **`ablation_56_45_hubert_multiscale.yaml` (56)**: **HuBERT** (`facebook/hubert-base-ls960`) vía `AutoModel`.
+*   **`ablation_57_45_emotion2vec_multiscale.yaml` (57)**: **Emotion2Vec** (`emotion2vec/emotion2vec_base`); requiere `pip install funasr`. `audio_unfreeze_last_n_layers: 0` como en el estudio 50.
+
 ## Post-45 optimization (OpenSpec `mejoras-post-ablation-45`)
 
 *   **`ablation_45_sweep_v1.yaml`**: sweep acotado (`conflict_threshold: 0.25`) sobre la misma receta que Ablation 45 (MultiScaleTemporal + Conflict-Aware); mismo split de sesiones **1–3 / 4 / 5**. Baseline de resultados: `checkpoints/ablation_45/post_fix_conflict_chain_study_45/`.
@@ -168,5 +175,8 @@ Nuevas técnicas para mejorar el procesamiento multimodal, alineación temporal,
 | 52 | ablation_52_supcon_wavlm_specaug_vit | Ablation48Model |
 | 53 | ablation_53_wavlm_weighted_hidden_states | Ablation48Model |
 | 54 | ablation_54_wavlm_base_plus_weighted | Ablation48Model |
+| 55 | ablation_55_45_wavlm_multiscale | Ablation34Model |
+| 56 | ablation_56_45_hubert_multiscale | Ablation34Model |
+| 57 | ablation_57_45_emotion2vec_multiscale | Ablation34Model |
 
-*Última actualización: Marzo 2026*
+*Última actualización: Abril 2026*

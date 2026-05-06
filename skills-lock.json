@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "deep-learning": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning/SKILL.md",
+      "computedHash": "4590e73ca06533a8927553263a368d12a8e68d8d47da5078fb4073c5191c5bfb"
+    },
+    "deep-learning-python": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning-python/SKILL.md",
+      "computedHash": "09ccd79c7ba3ce9d2030223d479310b3f02cb5205d721f532b6f7721e04d775e"
+    },
+    "deep-learning-pytorch": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "deep-learning-pytorch/SKILL.md",
+      "computedHash": "651c310b5e90e28938f5a953b6fce4fa0c0fffa350a2f0b92028aaa66adf04d1"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "9e1c8b3103f92fa8092568a44fe64858de7c5c9dc65ce4bea8f168080e889cfd"
+    },
+    "pytorch-patterns": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "skillPath": "skills/pytorch-patterns/SKILL.md",
+      "computedHash": "ad5141095e87144129934656b80501e42b166cf5694640088450919bac2b9500"
+    },
+    "transformers-huggingface": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "skillPath": "transformers-huggingface/SKILL.md",
+      "computedHash": "d7d62f6fa8897ad2267cdb0a6933e208b3af8aed131087d5ee360cc96ecfc066"
+    }
+  }
+}
