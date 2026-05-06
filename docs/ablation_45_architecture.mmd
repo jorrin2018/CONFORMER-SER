@@ -1,0 +1,126 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#e3f2fd', 'primaryTextColor': '#1a1a1a', 'primaryBorderColor': '#1976d2', 'lineColor': '#424242', 'secondaryColor': '#fff3e0', 'tertiaryColor': '#f3e5f5'}}}%%
+
+graph TB
+    subgraph INPUT["📥 Entradas"]
+        A["🎵 Audio<br/>waveform (B, 128000)<br/>16 kHz, mono, ~8s"]
+        T["📝 Texto<br/>tokens (B, 128)<br/>DistilBERT + SpeechCue"]
+    end
+
+    subgraph ENC["🔧 Encoders Pre-entrenados"]
+        W["🎙️ Wav2Vec2-base<br/>facebook/wav2vec2-base<br/>768-dim | 12 capas TF<br/><b>6 últimas capas trainables</b>"]
+        D["📚 DistilBERT<br/>distilbert-base-uncased<br/>768-dim | 6 capas TF<br/><b>4 últimas capas trainables</b>"]
+        V["🖼️ ViT-base-patch16<br/>google/vit-base-patch16-224<br/>768-dim | 12 capas TF<br/><b>🧊 CONGELADO</b>"]
+    end
+
+    subgraph VISUAL["🌈 Rama Visual (derivada del mismo audio)"]
+        M["📊 MelSpectrogram<br/>n_fft=400, hop_length=160<br/>n_mels=80 → (B, 80, 801)"]
+        L["📐 Log + z-score<br/>norm por muestra"]
+        R["🔍 Resize 224×224<br/>Bilinear + Replicar 3 canales"]
+    end
+
+    subgraph POOL["🎯 Pooling Modal"]
+        PA["🎵 audio_pooled<br/>(B, 768)<br/>Mean/Max/Attn pooling"]
+        PT["📝 text_features<br/>(B, 768)<br/>Token CLS"]
+        PV["🖼️ vision_features<br/>(B, 768)<br/>Token CLS / Pooler"]
+    end
+
+    subgraph FUSION["⚡ ConflictAwareCrossAttentionFusion"]
+        direction TB
+        PROJ["📐 Proyección<br/>Linear(768 → 512) ×3<br/>(B, 768) → (B, 512)"]
+        
+        subgraph CONFLICT["🔥 Detección de Conflicto"]
+            AUX["🎲 Clasificadores Auxiliares<br/>Linear(512 → 4) ×3<br/>audio / text / vision"]
+            DET["⚠️ prediction_divergence<br/>Conflicto si ≥2 pares discrepan<br/>→ máscara binaria (B,)"]
+        end
+        
+        CROSS["🔄 3× Cross-Attention<br/>8 heads | dropout=0.5<br/>(B, 3, 512) → (B, 3, 512)"]
+        CONF["💡 Confidence Net<br/>Linear(1536 → 512 → 3)<br/>Sigmoid → scores (B, 3)"]
+        WGT["⚖️ Ponderación Conflict-Aware<br/>Sin conflicto: uniforme [1/3, 1/3, 1/3]<br/>Con conflicto: ∝ confidence_scores"]
+        FMLP["🧠 Fusion MLP<br/>1536 → 512 → 512 → 256<br/>GELU + LayerNorm + Dropout [0.5→0.4→0.3]"]
+    end
+
+    subgraph HEAD["🧬 MultiScaleTemporalClassificationHead"]
+        direction TB
+        
+        subgraph POOLS["🌊 Temporal Pooling (3 vistas)"]
+            PM["➗ Mean Pooling<br/>(B, 256)"]
+            PX["⬆️ Max Pooling<br/>(B, 256)"]
+            PA2["👁️ Attention Pooling<br/>Query aprendido<br/>(B, 256)"]
+        end
+        
+        PCAT["🔗 Concat Pooling<br/>768-dim"]
+        SEQ["📚 Secuencia de 3 tokens<br/>stack([mean, max, attn])<br/>(B, 3, 256)"]
+        LS["🔄 BiLSTM 2 capas<br/>hidden=512, dropout=0.3<br/>→ (B, 1024)"]
+        SA["👥 Self-Attention<br/>4 heads sobre (B, 3, 256)<br/>→ (B, 256)"]
+        CAT2["🧩 Concatenación Final<br/>768 + 1024 + 256<br/>→ (B, 2048)"]
+        DR["🛡️ Dropout 0.4"]
+        CLS["🎯 Clasificador<br/>Linear(2048 → 4)<br/>→ Logits (B, 4)"]
+    end
+
+    OUT_LOSS["📉 Loss<br/>CrossEntropy<br/>label_smoothing=0.1"]
+    OUT_PRED["🏷️ Predicción<br/>argmax(logits)<br/>→ {angry, happy, sad, neutral}"]
+
+    %% Flujos principales
+    A --> W
+    A --> M
+    T --> D
+    M --> L --> R --> V
+
+    W --> PA
+    D --> PT
+    V --> PV
+
+    PA --> PROJ
+    PT --> PROJ
+    PV --> PROJ
+
+    PROJ --> AUX
+    AUX --> DET
+    DET --> WGT
+
+    PROJ --> CROSS
+    CROSS --> CONF
+    CONF --> WGT
+    WGT --> FMLP
+    CROSS --> FMLP
+
+    FMLP --> PM
+    FMLP --> PX
+    FMLP --> PA2
+
+    PM --> PCAT
+    PX --> PCAT
+    PA2 --> PCAT
+
+    PM --> SEQ
+    PX --> SEQ
+    PA2 --> SEQ
+
+    SEQ --> LS
+    SEQ --> SA
+
+    PCAT --> CAT2
+    LS --> CAT2
+    SA --> CAT2
+
+    CAT2 --> DR --> CLS
+    CLS --> OUT_LOSS
+    CLS --> OUT_PRED
+
+    %% Estilos
+    classDef input fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+    classDef encoder fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef visual fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef fusion fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+    classDef conflict fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#000
+    classDef head fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
+    classDef output fill:#ffebee,stroke:#b71c1c,stroke-width:2px,color:#000
+
+    class A,T input
+    class W,D,V encoder
+    class M,L,R visual
+    class PROJ,CROSS,CONF,WGT,FMLP fusion
+    class AUX,DET conflict
+    class PM,PX,PA2,PCAT,SEQ,LS,SA,CAT2,DR,CLS head
+    class OUT_LOSS,OUT_PRED output
+    class PA,PT,PV visual

@@ -1,0 +1,164 @@
+@startuml Ablation_45_Architecture
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+skinparam linetype ortho
+
+title Ablation 45: Conflict-Aware Trimodal + MultiScaleTemporal Head\nArquitectura Detallada
+
+rectangle "Entradas" as INPUTS #E3F2FD {
+    component "Audio\nwaveform (B, 128k)\n16 kHz, mono" as AUDIO_IN #BBDEFB
+    component "Texto\ntokens (B, 128)\n+ SpeechCue" as TEXT_IN #BBDEFB
+}
+
+rectangle "Encoders Pre-entrenados" as ENCODERS #FFF3E0 {
+    component "Wav2Vec2-base\nfacebook/wav2vec2-base\n768-dim, 12 capas\n[6 últimas trainables]" as WAV2VEC #FFE0B2
+    component "DistilBERT\ndistilbert-base-uncased\n768-dim, 6 capas\n[4 últimas trainables]" as DISTIL #FFE0B2
+    component "ViT-base-patch16\ngoogle/vit-base-patch16-224\n768-dim, 12 capas\n[CONGELADO]" as VIT #FFE0B2
+}
+
+rectangle "Rama Visual (derivada del Audio)" as VISUAL_BRANCH #E8F5E9 {
+    component "MelSpectrogram\nn_fft=400, hop=160\nn_mels=80" as MEL #C8E6C9
+    component "Log + z-score\nnorm por muestra" as NORM #C8E6C9
+    component "Resize 224×224\nBilinear + 3 canales" as RESIZE #C8E6C9
+}
+
+rectangle "Fusion: ConflictAwareCrossAttention" as FUSION #FCE4EC {
+    component "Proyección\nLinear(768→512)\n×3 modalidades" as PROJ #F8BBD9
+    
+    package "Detección de Conflicto" as CONFLICT_DET #FFCCBC {
+        component "Clasificadores Auxiliares\nLinear(512→4) ×3" as AUX #FFAB91
+        component "prediction_divergence\nargmax disagree ≥2 pares\n→ conflicto binario (B,)" as DETECTOR #FFAB91
+    }
+    
+    component "3× Cross-Attention\n8 heads, dropout=0.5\n(B, 3, 512) → (B, 3, 512)" as CROSS_ATTN #F8BBD9
+    component "Confidence Net\nLinear(1536→512→3)\nSigmoid → scores (B, 3)" as CONF_NET #F8BBD9
+    component "Ponderación Conflict-Aware\n(1-conflict)×uniforme\n+ conflict×confianza" as WEIGHTING #F8BBD9
+    component "Fusion MLP\n1536→512→512→256\nGELU + LayerNorm + Dropout" as FUSION_MLP #F8BBD9
+}
+
+rectangle "Cabeza: MultiScaleTemporal" as HEAD #F3E5F5 {
+    package "Temporal Pooling" as POOLING #E1BEE7 {
+        component "Mean Pooling\n(B, 256)" as POOL_MEAN #CE93D8
+        component "Max Pooling\n(B, 256)" as POOL_MAX #CE93D8
+        component "Attention Pooling\nQuery aprendido\n(B, 256)" as POOL_ATTN #CE93D8
+    }
+    
+    component "Concat Pooling\n(B, 768)" as POOL_CAT #CE93D8
+    
+    component "Secuencia de 3 tokens\nstack([mean, max, attn])\n(B, 3, 256)" as SEQ #CE93D8
+    
+    component "BiLSTM 2 capas\nhidden=512\n→ (B, 1024)" as LSTM #CE93D8
+    component "Self-Attention\n4 heads sobre (B,3,256)\n→ (B, 256)" as SELF_ATTN #CE93D8
+    component "Concatenación Final\n768 + 1024 + 256\n→ (B, 2048)" as CONCAT #CE93D8
+    component "Dropout 0.4" as DROPOUT #CE93D8
+    component "Clasificador\nLinear(2048→4)\n→ Logits (B, 4)" as CLASSIFIER #CE93D8
+}
+
+component "Loss\nCrossEntropy\n+ label_smoothing=0.1" as LOSS #FFEBEE
+component "Predicción\nargmax(logits)\n→ Clase emocional" as PRED #FFEBEE
+
+' Flujo de datos
+AUDIO_IN --> WAV2VEC
+AUDIO_IN --> MEL
+TEXT_IN --> DISTIL
+
+MEL --> NORM
+NORM --> RESIZE
+RESIZE --> VIT
+
+WAV2VEC --> PROJ : "audio_pooled\n(B, 768)"
+DISTIL --> PROJ : "text_features\n(B, 768) [CLS]"
+VIT --> PROJ : "vision_features\n(B, 768) [CLS]"
+
+PROJ --> AUX
+AUX --> DETECTOR
+DETECTOR --> WEIGHTING
+
+PROJ --> CROSS_ATTN
+CROSS_ATTN --> CONF_NET
+CONF_NET --> WEIGHTING
+WEIGHTING --> FUSION_MLP
+CROSS_ATTN --> FUSION_MLP : "tokens\n(B, 3, 512)"
+
+FUSION_MLP --> POOL_MEAN : "fused\n(B, 256)"
+FUSION_MLP --> POOL_MAX
+FUSION_MLP --> POOL_ATTN
+
+POOL_MEAN --> POOL_CAT
+POOL_MAX --> POOL_CAT
+POOL_ATTN --> POOL_CAT
+
+POOL_MEAN --> SEQ
+POOL_MAX --> SEQ
+POOL_ATTN --> SEQ
+
+SEQ --> LSTM
+SEQ --> SELF_ATTN
+
+POOL_CAT --> CONCAT
+LSTM --> CONCAT
+SELF_ATTN --> CONCAT
+
+CONCAT --> DROPOUT
+DROPOUT --> CLASSIFIER
+CLASSIFIER --> LOSS
+CLASSIFIER --> PRED
+
+note right of WAV2VEC
+  Feature extractor CNN (7 capas)
+  + 12 capas Transformer
+  Últimas 6 descongeladas
+end note
+
+note right of DISTIL
+  6 capas Transformer
+  Últimas 4 descongeladas
+  SpeechCue inyectado en texto
+end note
+
+note right of VIT
+  Totalmente congelado
+  Log-mel como imagen 224×224
+  Transfer learning de ImageNet
+end note
+
+note right of DETECTOR
+  Método: prediction_divergence
+  Umbral: 0.3 (no aplica a este método)
+  Conflicto = ≥2 pares de modalidades
+  predicen clases distintas
+end note
+
+note right of WEIGHTING
+  Sin conflicto: pesos = [1/3, 1/3, 1/3]
+  Con conflicto: pesos ∝ confidence_scores
+  Interpolación lineal
+end note
+
+note right of LSTM
+  input_size=256, hidden=512
+  num_layers=2, bidirectional=True
+  dropout=0.3 entre capas
+  Output: cat([h[-2], h[-1]]) = (B, 1024)
+end note
+
+note right of CLASSIFIER
+  Dimensionalidad de entrada: 2048
+  = 768 (pooling concat)
+  + 1024 (BiLSTM)
+  + 256 (self-attention)
+end note
+
+legend right
+  |= Color |= Componente |
+  | <#BBDEFB>   | Entradas |
+  | <#FFE0B2>   | Encoders pre-entrenados |
+  | <#C8E6C9>   | Preprocesamiento visual |
+  | <#F8BBD9>   | Módulo de fusión |
+  | <#FFAB91>   | Detección de conflicto |
+  | <#CE93D8>   | Cabeza MultiScaleTemporal |
+  | <#FFEBEE>   | Salida |
+endlegend
+
+@enduml
