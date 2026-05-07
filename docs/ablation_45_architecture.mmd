@@ -18,12 +18,6 @@ graph TB
         R["🔍 Resize 224×224<br/>Bilinear + Replicar 3 canales"]
     end
 
-    subgraph POOL["🎯 Pooling Modal"]
-        PA["🎵 audio_pooled<br/>(B, 768)<br/>Mean/Max/Attn pooling"]
-        PT["📝 text_features<br/>(B, 768)<br/>Token CLS"]
-        PV["🖼️ vision_features<br/>(B, 768)<br/>Token CLS / Pooler"]
-    end
-
     subgraph FUSION["⚡ ConflictAwareCrossAttentionFusion"]
         direction TB
         PROJ["📐 Proyección<br/>Linear(768 → 512) ×3<br/>(B, 768) → (B, 512)"]

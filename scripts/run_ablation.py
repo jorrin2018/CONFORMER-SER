@@ -240,8 +240,11 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     elif study_number == 62:
         # Ablation 62: SOTA Combo + attention-based audio pooling
         model = Ablation34Model(config)
+    elif study_number == 63:
+        # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
+        model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57, 58-62.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57, 58-63.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1085,7 +1088,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-57, 58-62). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-57, 58-63). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1157,13 +1160,14 @@ def main():
         (60, "config/ablation/ablation_60_sota_combo.yaml"),  # SOTA Combo: WavLM + MultiScaleTemporal + SupCon + SpecAugment
         (61, "config/ablation/ablation_61_composite_neutral.yaml"),  # SOTA Combo + CompositeLoss with neutral focus
         (62, "config/ablation/ablation_62_attention_pooling.yaml"),  # SOTA Combo + attention-based audio pooling
+        (63, "config/ablation/ablation_63_finetuned_45.yaml"),  # Fine-tuned Study 45
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57, 58-62")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57, 58-63")
             return
     
     # Run each study
