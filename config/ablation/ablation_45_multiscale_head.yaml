@@ -80,7 +80,7 @@ model:
     confidence_weighting: true
     conflict_resolution: "confidence_weighted"
   vision_encoder: "google/vit-base-patch16-224"
-  freeze_vision_encoder: true
+  freeze_vision_encoder: false
   vision_unfreeze_last_n_layers: 4
   vision_image_size: 224
   mel_n_mels: 80

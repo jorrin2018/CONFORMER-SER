@@ -205,6 +205,19 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         )
         num_workers = 0
         persistent_workers = False
+
+    # On Windows, pinned host memory can contribute to virtual-memory pressure
+    # and trigger NumPy allocation failures in audio decoding paths.
+    if (
+        sys.platform == 'win32'
+        and pin_memory
+        and not compute_config.get('windows_keep_pin_memory', False)
+    ):
+        logger.warning(
+            "Windows: forcing DataLoader pin_memory from True to False to reduce "
+            "host-memory pressure. Set compute.windows_keep_pin_memory: true to keep it."
+        )
+        pin_memory = False
     
     # Create dataloaders with optimizations for PCIe x8 (RTX 4060)
     train_loader = DataLoader(

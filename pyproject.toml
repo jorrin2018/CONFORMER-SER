@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conformer-ser"
+version = "0.1.0"
+description = "Multimodal Speech Emotion Recognition on IEMOCAP"
+requires-python = ">=3.8"
+dependencies = [
+    "torch",
+    "torchaudio",
+    "transformers",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "PyYAML",
+    "tqdm",
+    "matplotlib",
+    "seaborn",
+    "tensorboard",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
