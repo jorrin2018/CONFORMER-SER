@@ -2,7 +2,7 @@
 
 Este documento resume las diferencias clave y el objetivo de cada configuración de experimentación ("ablation") en el proyecto.
 
-**Total**: estudios 1-50, 52-57 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34 | **Serie 55-57**: misma receta que **Ablation 45** (Conflict-Aware + MultiScaleTemporal), distinto encoder de audio (WavLM, HuBERT, Emotion2Vec)
+**Total**: estudios 1-50, 52-63 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34 | **Serie 55-57**: misma receta que **Ablation 45** (Conflict-Aware + MultiScaleTemporal), distinto encoder de audio (WavLM, HuBERT, Emotion2Vec)
 
 ### Ejecución
 ```powershell
@@ -178,5 +178,33 @@ Ablación controlada respecto al **estudio 45** (*Conflict-Aware Cross-Attention
 | 55 | ablation_55_45_wavlm_multiscale | Ablation34Model |
 | 56 | ablation_56_45_hubert_multiscale | Ablation34Model |
 | 57 | ablation_57_45_emotion2vec_multiscale | Ablation34Model |
+| 58 | ablation_58_supcon_multiscale | Ablation48Model |
+| 59 | ablation_59_wavlm_multiscale_specaug | Ablation34Model |
+| 60 | ablation_60_sota_combo | Ablation48Model |
+| 61 | ablation_61_composite_neutral | Ablation48Model |
+| 62 | ablation_62_attention_pooling | Ablation34Model |
+| 63 | ablation_63_finetuned_45 | Ablation34Model |
 
-*Última actualización: Abril 2026*
+> **Rango válido: `1-50` y `52-63`.** No existe el estudio 51. La fuente de verdad es
+> `create_ablation_model()` en `scripts/run_ablation.py`.
+
+### Configs sin ruta de código (no ejecutables)
+
+Estos YAML existen en `config/ablation/` pero **no** están mapeados en `run_ablation.py`; lanzarlos
+falla con `Invalid study number`:
+
+| Config | Estado |
+|--------|--------|
+| `ablation_65_unfrozen_vit.yaml` | Propuesta: ViT descongelado. Requiere añadir el estudio 65 a `create_ablation_model()`. |
+| `ablation_phase2_49_wavlm_multiscale_head_FUTURE.yaml` | Esqueleto: receta del 49 (WavLM + SupCon) con cabeza MultiScale del 45. Requiere validar compatibilidad de clases (`Ablation34Model` vs `Ablation48Model`). |
+
+### Series 58-63 — descripción
+
+*   **58** (`ablation_58_supcon_multiscale`): cabeza **MultiScaleTemporal** + SupCon (3 vistas) sobre Wav2Vec2.
+*   **59** (`ablation_59_wavlm_multiscale_specaug`): MultiScaleTemporal + WavLM + SpecAugment sobre el mel del ViT (sin augmentation de waveform).
+*   **60** (`ablation_60_sota_combo`): combo SOTA — WavLM + MultiScaleTemporal + SupCon + SpecAugment.
+*   **61** (`ablation_61_composite_neutral`): combo SOTA + `CompositeLoss` con foco en la clase *neutral*.
+*   **62** (`ablation_62_attention_pooling`): combo SOTA + pooling de audio basado en atención.
+*   **63** (`ablation_63_finetuned_45`): ajuste fino del estudio 45 (menor dropout, menor label smoothing).
+
+*Última actualización: septiembre 2026*

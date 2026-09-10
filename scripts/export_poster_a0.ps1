@@ -34,7 +34,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$HtmlPath = Join-Path $RepoRoot "docs\poster_conflict_aware_print.html"
+$HtmlPath = Join-Path $RepoRoot "paper\posters\poster_conflict_aware_print.html"
 
 if (-not (Test-Path $HtmlPath)) {
     throw "No se encontro el poster HTML: $HtmlPath"
@@ -56,7 +56,7 @@ if (-not $Browser) {
 $HtmlUri = (New-Object System.Uri($HtmlPath)).AbsoluteUri
 
 if ($Format -eq "pdf") {
-    $OutputPath = Join-Path $RepoRoot "poster_A0.pdf"
+    $OutputPath = Join-Path $RepoRoot "paper\posters\poster_A0.pdf"
     & $Browser `
         --headless `
         --disable-gpu `
@@ -74,7 +74,7 @@ if ($Format -eq "pdf") {
 # A0 landscape: 1189 mm x 841 mm. px = mm / 25.4 * dpi.
 $WidthPx = [math]::Round(1189 / 25.4 * $Dpi)
 $HeightPx = [math]::Round(841 / 25.4 * $Dpi)
-$OutputPath = Join-Path $RepoRoot ("poster_A0_{0}dpi.png" -f $Dpi)
+$OutputPath = Join-Path $RepoRoot ("paper\posters\poster_A0_{0}dpi.png" -f $Dpi)
 
 # El HTML esta maquetado en un viewport base de 1600 x 1132 px.
 # Para alta resolucion se mantiene el layout y se aumenta deviceScaleFactor.

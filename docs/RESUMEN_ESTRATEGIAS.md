@@ -105,7 +105,7 @@ training:
 ## 🚀 Plan de Acción Inmediato
 
 ### Día 1: Ensemble (Quick Win)
-1. ✅ Ejecutar `evaluate_ensemble.bat`
+1. ✅ Ejecutar `scripts\windows\evaluate_ensemble.bat`
 2. ✅ Comparar resultados con modelos individuales
 3. ✅ Documentar mejora
 
@@ -134,7 +134,7 @@ training:
 
 1. **`ESTRATEGIAS_MEJORA_ACCURACY.md`**: Documento completo con todas las estrategias
 2. **`src/evaluate_ensemble.py`**: Script para evaluar ensemble
-3. **`evaluate_ensemble.bat`**: Script batch para Windows
+3. **`scripts\windows\evaluate_ensemble.bat`**: Script batch para Windows
 4. **`RESUMEN_ESTRATEGIAS.md`**: Este resumen ejecutivo
 
 ---

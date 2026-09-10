@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.1.0] - 2026-09-09
+
+### Repository hygiene
+- **Removed `node_modules/` (9,250 files) from version control.** It was tracked by mistake; it is
+  a local build artifact of `@mermaid-js/mermaid-cli`. Restore with `npm install`.
+- **Removed the HuggingFace model cache (`.cache/hf/`) from version control.** Model weights and
+  blobs are re-downloaded on demand.
+- **Removed `.obsidian/` from version control** — personal editor state, not project configuration.
+- Rewrote `.gitignore`: grouped and commented by category, added `.venv/`, `.cache/`, `.obsidian/`,
+  `*.safetensors`, `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/`; dropped stale entries.
+- Deleted the duplicate `poster_18x24_300dpi - copia.png`.
+
+### Changed — project layout
+- **New `paper/` directory** for publication artifacts, moved out of the repository root and
+  `docs/`:
+  - `paper/manuscripts/` — the five CIARP 2025/2026 `.docx` drafts.
+  - `paper/figures/` — `fig1`–`fig6` SVG and `graphical_abstract.pdf` (renamed from
+    `docs/grafical abstract.pdf`, typo fixed).
+  - `paper/posters/` — poster PDF/PNG outputs, the `poster_conflict_aware_print.html` source and
+    its `assets/`.
+  - `paper/presentations/` — the study-45 deep-dive `.pptx`.
+- **New `scripts/windows/`** holding every `.bat` / `.ps1` convenience wrapper previously loose in
+  the root. Each `.bat` now starts with `pushd "%~dp0..\.."`, so it works from the repository root
+  *and* by double-click.
+- Moved `screening_summary.py` and `view_results.py` to `scripts/`; moved
+  `test_bf16_stability.py` to a new `tests/` directory. `setup_check.py` stays at the root as the
+  documented entry point.
+- Moved `docs/ablation_45_architecture.{mmd,puml,png}` into `docs/diagrams/`.
+- Updated `scripts/export_poster_18x24.ps1` and `scripts/export_poster_a0.ps1` to read the poster
+  HTML from `paper/posters/` and write their output there instead of the repository root.
+
+### Fixed — documentation drift
+- **Corrected the valid ablation study range from `1-50, 52-57` to `1-50, 52-63`** in `README.md`,
+  `quickstart.md`, `AGENTS.md`, `docs/README.md`, `docs/ARCHITECTURE_AND_WORKFLOWS.md`,
+  `docs/COMANDOS_EVALUACION.md`, `src/ablation_studies/README.md` and
+  `config/ablation/ABLATION_SUMMARY.md`. Studies 58-63 had code paths in `run_ablation.py` but were
+  documented nowhere.
+- Added studies **58-63** to the `Study → Config → Model` table and a descriptive section in
+  `config/ablation/ABLATION_SUMMARY.md`.
+- **Documented orphan configs**: `ablation_65_unfrozen_vit.yaml` and
+  `ablation_phase2_49_wavlm_multiscale_head_FUTURE.yaml` exist as YAML but have no code path in
+  `run_ablation.py`. A config file is not a runnable study.
+- Updated all references to the `.bat` scripts that moved to `scripts/windows/`.
+
+### Added
+- **`CLAUDE.md`** — Claude Code entry point that defers to `AGENTS.md`.
+- Rewrote **`AGENTS.md`** as a structured operating manual: repository layout, baseline-vs-ablation
+  table, study ranges and orphan configs, architecture notes, run-directory layout, the `paper/`
+  and `scripts/windows/` conventions, and house rules.
+- Rewrote **`README.md`** with badges, a table of contents, an ablation-series overview table and a
+  BibTeX citation block.
+- Rewrote **`quickstart.md`** with a troubleshooting table covering the most common failures.
+- Rewrote **`docs/README.md`** as a proper documentation index with a git-policy table, a diagram
+  inventory and a pointer to `paper/`.
+- Aligned `pyproject.toml` version with the changelog and filled in project metadata.
+
 ## [5.0.0] - 2026-04-27
 
 ### Added

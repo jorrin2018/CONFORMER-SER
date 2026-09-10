@@ -1,25 +1,28 @@
 # Quickstart
 
-Guía corta para ejecutar CONFORMER-SER en Windows/PowerShell.
+Guía corta para poner en marcha **CONFORMER-SER** en Windows/PowerShell.
+Visión general del proyecto: [README.md](README.md).
 
-## Flujo del proyecto (diagrama)
+---
+
+## 1. Flujo del proyecto
 
 ```mermaid
 graph TB
-    IEM[IEMOCAP]
-    CFG[Config YAML y ablation]
+    IEM[IEMOCAP raw audio]
+    CFG[config.yaml / ablation YAML]
     LOAD[Dataset y collate]
-    VENV[Venv y requirements]
+    VENV[venv + requirements]
     SETUP[setup_check.py]
-    TRB[src/train.py baseline]
-    ABL[scripts/run_ablation.py]
+    TRB[src/train.py - baseline]
+    ABL[scripts/run_ablation.py - ablacion]
     CK1[Checkpoint baseline]
-    CK2[Checkpoint ablation config.json]
+    CK2[Run de ablacion + config.json]
     EV1[src/evaluate.py]
     EV2[src/evaluate_ensemble.py]
     TST[scripts/run_test_only.py]
     INF[src/inference.py]
-    TB[TensorBoard logs]
+    TB[TensorBoard - logs/]
 
     IEM --> CFG
     CFG --> LOAD
@@ -37,16 +40,23 @@ graph TB
     ABL --> TB
 ```
 
-En estudios **trimodales**, el log-mel del ViT se calcula en el modelo a partir del **mismo** waveform del batch; no hay mel precalculado en el dataset. Detalle: [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md) (sección *Datos de audio y rama visual*).
+En los estudios **trimodales**, el log-mel que consume el ViT se calcula dentro del modelo a partir
+del **mismo** waveform del batch; no hay mel precalculado en disco. Detalle en
+[config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md), sección
+*Datos de audio y rama visual*.
 
-## Requisitos
+---
 
-- Python 3.8 o superior.
-- GPU CUDA recomendada para entrenamiento.
-- Dataset IEMOCAP descargado y extraído.
-- Paquetes de [requirements.txt](requirements.txt) (alineados con `setup_check.py`). Para CUDA, instala `torch`/`torchaudio` desde [pytorch.org](https://pytorch.org/get-started/locally/) si lo necesitas y luego `pip install -r requirements.txt`.
+## 2. Requisitos
 
-## Instalación
+- **Python 3.8+**.
+- **GPU CUDA** recomendada para entrenar (una ablación completa tarda horas).
+- Dataset **IEMOCAP** descargado y extraído (`IEMOCAP_full_release`).
+- Paquetes de [requirements.txt](requirements.txt), alineados con `setup_check.py`.
+
+---
+
+## 3. Instalación
 
 ```powershell
 cd d:\DOCTORADO\PROYECTOS\CONFORMER-SER
@@ -56,15 +66,20 @@ pip install -r requirements.txt
 python setup_check.py
 ```
 
-También puedes ejecutar (instala dependencias con `requirements.txt` y ejecuta verificación):
+Para CUDA, instala `torch` y `torchaudio` desde
+[pytorch.org](https://pytorch.org/get-started/locally/) **antes** de `pip install -r requirements.txt`.
+
+Atajo equivalente (instala y verifica en un solo paso):
 
 ```powershell
-.\setup.bat
+.\scripts\windows\setup.bat
 ```
 
 `setup_check.py` valida Python, paquetes, CUDA, estructura del proyecto y ruta del dataset.
 
-## Configuración del dataset
+---
+
+## 4. Configuración del dataset
 
 Edita `config\config.yaml`:
 
@@ -73,13 +88,14 @@ dataset:
   data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
-Los YAML de `config\ablation\` pueden sobrescribir esta ruta si defines un estudio específico.
+Los YAML de `config\ablation\` pueden sobrescribir esta ruta; si cambias de máquina, revisa también
+el YAML del estudio que vayas a lanzar.
 
-## Entrenar
+---
 
-### Baseline
+## 5. Entrenar
 
-Usa este flujo para el modelo principal definido por `config\config.yaml`:
+### Línea base
 
 ```powershell
 python src\train.py --config config\config.yaml --experiment_name baseline --device cuda
@@ -87,45 +103,45 @@ python src\train.py --config config\config.yaml --experiment_name baseline --dev
 
 ### Ablación
 
-Usa este flujo para experimentos de investigación:
-
 ```powershell
-python scripts\run_ablation.py --study 34 --device cuda
+python scripts\run_ablation.py --study 45 --device cuda
 ```
 
-Estudios válidos: `1-50` y `52-57` en `scripts\run_ablation.py`. **No existe el estudio 51.**
+Estudios válidos: **`1-50`** y **`52-63`**. **No existe el estudio 51.**
+Catálogo completo: [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md).
 
-Consulta el catálogo:
+Los estudios **20, 29 y 41** ejecutan validación cruzada (K-Fold / LOSO) en lugar del split estándar.
 
-```powershell
-notepad config\ablation\ABLATION_SUMMARY.md
-```
+---
 
-## Monitorear entrenamiento
+## 6. Monitorear el entrenamiento
 
 ```powershell
 tensorboard --logdir=logs
+# o bien
+.\scripts\windows\start_tensorboard.bat
 ```
 
-O:
+Abre <http://localhost:6006>.
+
+---
+
+## 7. Evaluar
+
+> [!IMPORTANT]
+> `src\evaluate.py` **solo** reconstruye el modelo base (`ConformerMultimodalModel`). Con un
+> checkpoint de ablación fallará: usa `src\evaluate_ensemble.py` o `scripts\run_test_only.py`.
+
+### Checkpoint de la línea base
 
 ```powershell
-.\start_tensorboard.bat
+python src\evaluate.py `
+  --checkpoint checkpoints\best_model.pt `
+  --config config\config.yaml `
+  --split test --device cuda
 ```
 
-## Evaluar
-
-### Checkpoint baseline
-
-`src\evaluate.py` solo reconstruye el **modelo base** (`ConformerMultimodalModel`). No lo uses para checkpoints de ablación.
-
-```powershell
-python src\evaluate.py --checkpoint checkpoints\best_model.pt --config config\config.yaml --split test --device cuda
-```
-
-### Checkpoint de ablación
-
-Para una ablación concreta con YAML explícito:
+### Checkpoint de ablación (YAML explícito)
 
 ```powershell
 python src\evaluate_ensemble.py `
@@ -138,62 +154,65 @@ python src\evaluate_ensemble.py `
   --device cuda
 ```
 
-### Solo test sin reentrenar
+### Solo test, sin reentrenar
 
 Si ya tienes un run con `best_model.pt` y `config.json`:
 
 ```powershell
-python scripts\run_test_only.py --checkpoint_dir checkpoints\phase1_wavlm_gated\ablation_34_20260203_094355 --study 34 --device cuda
+python scripts\run_test_only.py `
+  --checkpoint_dir checkpoints\ablation_45\ablation_45_20260203_094355 `
+  --study 45 --device cuda
 ```
 
 También acepta la ruta directa al archivo:
 
 ```powershell
-python scripts\run_test_only.py --checkpoint_dir checkpoints\ablation_34\run\best_model.pt --study 34 --device cuda
+python scripts\run_test_only.py --checkpoint_dir checkpoints\ablation_45\run\best_model.pt --study 45 --device cuda
 ```
 
-El script guarda `final_results.json`, `confusion_matrix_test.png` y `test_eval.log` en el directorio del run.
+Escribe `final_results.json`, `confusion_matrix_test.png` y `test_eval.log` en el directorio del run.
 
-## Inferencia
+### Agregar resultados de todos los runs
+
+```powershell
+python scripts\aggregate_ablation_results.py --write-docs
+```
+
+Regenera [docs/RANKING_Y_RESULTADOS.md](docs/RANKING_Y_RESULTADOS.md) a partir de los
+`final_results.json` encontrados bajo `checkpoints/`.
+
+---
+
+## 8. Inferencia
 
 `src\inference.py` está pensado para el modelo base:
 
 ```powershell
-python src\inference.py --checkpoint checkpoints\best_model.pt --audio path\to\audio.wav --text "Transcripción opcional"
+python src\inference.py `
+  --checkpoint checkpoints\best_model.pt `
+  --audio ruta\al\audio.wav `
+  --text "Transcripción opcional"
 ```
 
-## Problemas frecuentes
+---
 
-### Out of memory
+## 9. Problemas frecuentes
 
-Reduce el batch size:
+| Síntoma | Causa habitual | Solución |
+|---|---|---|
+| `CUDA out of memory` | Batch demasiado grande para la GPU | Baja `training.batch_size` en el YAML (p. ej. a `4`) |
+| Dataset no encontrado | `dataset.data_path` mal configurado | Revísalo en `config\config.yaml` **y** en el YAML de ablación |
+| CUDA no disponible | `torch` instalado sin soporte CUDA | `python setup_check.py` y `nvidia-smi`; reinstala torch desde pytorch.org |
+| Un checkpoint de ablación falla con `evaluate.py` | `evaluate.py` es solo para la línea base | Usa `evaluate_ensemble.py` o `run_test_only.py` |
+| `Invalid study number` | Estudio fuera de rango o inexistente (51) | Rangos válidos: `1-50`, `52-63` |
+| El YAML existe pero el estudio falla | Config huérfana sin ruta de código (p. ej. `ablation_65_*`) | Verifica en `scripts\run_ablation.py` |
+| Falla el estudio 50 o 57 | Falta `funasr` (encoder Emotion2Vec) | `pip install funasr` |
 
-```yaml
-training:
-  batch_size: 4
-```
+---
 
-### Dataset no encontrado
-
-Revisa `dataset.data_path` en `config\config.yaml` y en el YAML de ablación que estés usando.
-
-### CUDA no disponible
-
-Verifica:
-
-```powershell
-python setup_check.py
-nvidia-smi
-```
-
-### Checkpoint de ablación falla con `evaluate.py`
-
-Usa `src\evaluate_ensemble.py` o `scripts\run_test_only.py`. `src\evaluate.py` reconstruye el modelo base y no todas las clases de `src\ablation_studies`.
-
-## Siguientes pasos
+## 10. Siguientes pasos
 
 1. Leer [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md).
 2. Revisar [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md).
 3. Ejecutar una ablación corta o evaluar un checkpoint existente.
-4. Comparar resultados con las matrices de confusión y `final_results.json`.
-
+4. Comparar resultados con las matrices de confusión y los `final_results.json`.

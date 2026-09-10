@@ -244,7 +244,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57, 58-63.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-63 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1088,7 +1088,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-57, 58-63). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-63; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1167,7 +1167,7 @@ def main():
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57, 58-63")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-63 (there is no study 51)")
             return
     
     # Run each study

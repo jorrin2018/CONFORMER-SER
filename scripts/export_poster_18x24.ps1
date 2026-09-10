@@ -4,7 +4,7 @@ Exporta el poster vertical 18x24 pulgadas a PDF o PNG.
 
 .DESCRIPTION
 Script PowerShell compatible con Windows. Usa Chrome o Microsoft Edge en modo
-headless para abrir docs/poster_conflict_aware_print.html y generar archivos
+headless para abrir paper/posters/poster_conflict_aware_print.html y generar archivos
 listos para revisión o impresión.
 
 Tamaño físico: 18 in x 24 in, orientación vertical.
@@ -20,7 +20,7 @@ Formato de salida: pdf o png.
 DPI objetivo para PNG. Si -Format es png y se usa -AutoHr, se ignora (se prueba 300, 200, 150).
 
 .PARAMETER AutoHr
-Solo con -Format png: genera <repo>\poster_18x24_alta_resolucion.png probando DPI hasta que Chrome escriba el archivo.
+Solo con -Format png: genera <repo>\paper\posters\poster_18x24_alta_resolucion.png probando DPI hasta que Chrome escriba el archivo.
 
 .EXAMPLE
 .\scripts\export_poster_18x24.ps1 -Format png -Dpi 300
@@ -45,7 +45,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$HtmlPath = Join-Path $RepoRoot "docs\poster_conflict_aware_print.html"
+$HtmlPath = Join-Path $RepoRoot "paper\posters\poster_conflict_aware_print.html"
 
 if (-not (Test-Path $HtmlPath)) {
     throw "No se encontro el poster HTML: $HtmlPath"
@@ -67,7 +67,7 @@ if (-not $Browser) {
 $HtmlUri = (New-Object System.Uri($HtmlPath)).AbsoluteUri
 
 if ($Format -eq "pdf") {
-    $OutputPath = Join-Path $RepoRoot "poster_18x24.pdf"
+    $OutputPath = Join-Path $RepoRoot "paper\posters\poster_18x24.pdf"
     & $Browser `
         --headless `
         --disable-gpu `
@@ -133,11 +133,11 @@ if ($AutoHr) {
     $DpiList = @(300, 200, 150)
     $Last = $null
     foreach ($d in $DpiList) {
-        $Out = Join-Path $RepoRoot ("poster_18x24_{0}dpi.png" -f $d)
+        $Out = Join-Path $RepoRoot ("paper\posters\poster_18x24_{0}dpi.png" -f $d)
         Write-Host "Intentando export PNG a $d DPI -> $Out"
         $Last = Export-PosterPng -DpiIn $d -OutPath $Out
         if ($Last.Ok) {
-            $Hr = Join-Path $RepoRoot "poster_18x24_alta_resolucion.png"
+            $Hr = Join-Path $RepoRoot "paper\posters\poster_18x24_alta_resolucion.png"
             Copy-Item -Path $Out -Destination $Hr -Force
             Write-Host "Listo. Archivo principal (copia): $Hr"
             Write-Host "Tambien: $Out  ($($Last.WidthPx) x $($Last.HeightPx) px, escala $($Last.ScaleFactor))"
@@ -150,13 +150,13 @@ if ($AutoHr) {
 
 $WidthPx = [math]::Round(18 * $Dpi)
 $HeightPx = [math]::Round(24 * $Dpi)
-$OutputPath = Join-Path $RepoRoot ("poster_18x24_{0}dpi.png" -f $Dpi)
+$OutputPath = Join-Path $RepoRoot ("paper\posters\poster_18x24_{0}dpi.png" -f $Dpi)
 
 $Last = Export-PosterPng -DpiIn $Dpi -OutPath $OutputPath
 if (-not $Last.Ok) {
     throw "Chrome no escribio el PNG. Prueba: .\scripts\export_poster_18x24.ps1 -Format png -AutoHr"
 }
-$Hr = Join-Path $RepoRoot "poster_18x24_alta_resolucion.png"
+$Hr = Join-Path $RepoRoot "paper\posters\poster_18x24_alta_resolucion.png"
 Copy-Item -Path $OutputPath -Destination $Hr -Force
 Write-Host "PNG generado: $OutputPath"
 Write-Host "Copia entrega HR: $Hr"

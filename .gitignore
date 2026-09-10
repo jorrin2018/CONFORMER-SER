@@ -1,21 +1,21 @@
-# Python
+# ---------------------------------------------------------------------------
+# CONFORMER-SER — .gitignore
+# Versionado: código (src/, scripts/, config/), documentación (docs/, paper/)
+# Ignorado: entornos, cachés, datos, checkpoints y salidas de experimentos.
+# ---------------------------------------------------------------------------
+
+# --- Python ----------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
 build/
 develop-eggs/
 dist/
 downloads/
-openspec/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
 var/
@@ -24,60 +24,72 @@ wheels/
 .installed.cfg
 *.egg
 
-# PyTorch
+# --- Entornos virtuales ----------------------------------------------------
+env/
+ENV/
+venv/
+.venv/
+
+# --- Node (solo herramienta de diagramas: mermaid-cli) ---------------------
+node_modules/
+
+# --- Cachés ----------------------------------------------------------------
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+transformers_cache/
+
+# --- Pesos de modelos ------------------------------------------------------
 *.pt
 *.pth
 *.ckpt
+*.safetensors
 
-# Logs and checkpoints
+# --- Entrenamiento: logs, checkpoints y trazas -----------------------------
 logs/
 checkpoints/
 runs/
 wandb/
 *.log
+events.out.tfevents.*
 
-# Large checkpoint files (> 100MB)
-*.pt
-*.pth
-!requirements.txt
+# --- Resultados de evaluación ----------------------------------------------
+evaluation_results/
+results/
+outputs/
 
-# Jupyter
-.ipynb_checkpoints
-*.ipynb_checkpoints
-
-# Data
+# --- Datos -----------------------------------------------------------------
 data/
 datasets/
 *.wav
 *.mp3
 *.flac
 
-# IDE
+# --- Notebooks -------------------------------------------------------------
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# --- Herramientas de edición (config local, no del proyecto) ---------------
 .vscode/
 .idea/
+.cursor/
+.obsidian/
 *.swp
 *.swo
 *~
 
-# OS
+# --- Sistema operativo -----------------------------------------------------
 .DS_Store
 Thumbs.db
 
-# Evaluation results
-evaluation_results/
-results/
-outputs/
+# --- Planes de cambio locales (OpenSpec) -----------------------------------
+openspec/
 
-# TensorBoard
-events.out.tfevents.*
-
-# Temporary files
+# --- Temporales y scratch --------------------------------------------------
 tmp/
 temp/
 *.tmp
 script.py
 debug_*.py
 check_*.py
-
-#cursor
-.cursor/

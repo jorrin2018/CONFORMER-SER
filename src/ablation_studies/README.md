@@ -1,6 +1,6 @@
 # Estudios de Ablación - Conformer Multimodal SER
 
-Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52-57**. El estudio 51 no está definido en el listado de ejecución actual.
+Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52-63**. El estudio 51 no está definido en el listado de ejecución actual.
 
 ## 📋 Descripción General
 
@@ -21,6 +21,7 @@ Los estudios de ablación analizan sistemáticamente la contribución de diferen
 - **Estudio 43**: `Ablation43Model` con mejoras de entrenamiento.
 - **Estudios 44-46**: Ablation 34 con cabezas Transformer, MultiScaleTemporal y CNN1D.
 - **Estudios 47-50, 52-57**: SupCon, WavLM, Emotion2Vec, SpecAugment, weighted hidden states y **55-57** (receta Ablation 45 + encoder audio alternativo).
+- **Estudios 58-63**: combos SOTA (MultiScaleTemporal + SupCon + SpecAugment), pooling atencional de audio y ajuste fino del estudio 45. Usan `Ablation48Model` (58, 60, 61) o `Ablation34Model` (59, 62, 63).
 
 ## 🗂️ Estructura de Archivos
 

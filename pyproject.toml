@@ -4,9 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "conformer-ser"
-version = "0.1.0"
-description = "Multimodal Speech Emotion Recognition on IEMOCAP"
+version = "5.1.0"
+description = "CAMF: Conflict-Aware Multimodal Fusion for Speech Emotion Recognition on IEMOCAP"
+readme = "README.md"
 requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [{ name = "Jorge Luis Jorrin" }]
+keywords = [
+    "speech-emotion-recognition",
+    "multimodal",
+    "iemocap",
+    "pytorch",
+    "transformers",
+    "cross-attention",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "torch",
     "torchaudio",
@@ -20,6 +36,14 @@ dependencies = [
     "seaborn",
     "tensorboard",
 ]
+
+[project.optional-dependencies]
+# Encoder Emotion2Vec (estudios de ablación 50 y 57)
+emotion2vec = ["funasr"]
+dev = ["black", "flake8", "mypy", "pytest"]
+
+[project.urls]
+Repository = "https://github.com/jorrin2018/CONFORMER-SER"
 
 [tool.setuptools.packages.find]
 where = ["src"]

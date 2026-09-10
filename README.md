@@ -1,153 +1,337 @@
-# CONFORMER-SER: Multimodal Speech Emotion Recognition
+<div align="center">
 
-CONFORMER-SER es un proyecto de reconocimiento de emociones en habla sobre IEMOCAP. El código combina encoders de audio, texto y visión con múltiples mecanismos de fusión y una línea extensa de estudios de ablación.
+# CONFORMER-SER
 
-El objetivo principal del repositorio es investigar arquitecturas multimodales para 4 clases: `angry`, `happy`, `sad` y `neutral`.
+**Reconocimiento multimodal de emociones en habla sobre IEMOCAP**
 
-## Documentación
+Framework **CAMF** (*Conflict-Aware Multimodal Fusion*): audio + texto + visión con
+fusión sensible al conflicto entre modalidades.
 
-Índice y orden sugerido: [docs/README.md](docs/README.md). **`docs/` se versiona en git.**
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![HuggingFace](https://img.shields.io/badge/%F0%9F%A4%97-Transformers-FFD21E)](https://huggingface.co/docs/transformers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Orden rápido: [quickstart.md](quickstart.md) → [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md) → [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md) → series en `docs/experimentos/`.
+</div>
 
-Lecturas adicionales:
+---
 
-- [AGENTS.md](AGENTS.md): convenciones del repo para asistentes (baseline vs ablación, trampas habituales).
-- [quickstart.md](quickstart.md): comandos esenciales en PowerShell.
-- [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md): baseline vs ablación, `evaluate.py` solo para modelo base.
-- [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md): catálogo YAML ↔ estudio ↔ modelo.
-- [src/ablation_studies/README.md](src/ablation_studies/README.md): paquete `ablation_studies`.
-- [docs/diagrams/](docs/diagrams/): diagramas Draw.io (arquitectura, pipelines LNCS).
-- [docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md): detección de conflicto (Conflict-Aware).
+## Descripción
 
-Los planes OpenSpec locales viven en `openspec/`; por defecto **no** están en git (sigue ignorado el directorio).
+CONFORMER-SER investiga arquitecturas multimodales para clasificar emociones en habla sobre el
+corpus **IEMOCAP**, con 4 clases: `angry`, `happy`, `sad` y `neutral`.
 
-## Características principales
+El repositorio contiene dos vías de trabajo independientes:
 
-- Arquitecturas **bimodales y trimodales** con audio, texto y visión.
-- Encoders de audio basados en Wav2Vec2, WavLM y variantes recientes.
-- Texto con modelos tipo BERT/RoBERTa/DistilBERT y SpeechCue en estudios específicos.
-- Rama visual: el ViT opera sobre **log-mel calculado en el forward** a partir del **mismo** waveform del batch (torchaudio `MelSpectrogram` + conversión a imagen); **no** hay mel precalculado almacenado en el dataset IEMOCAP.
-- Fusiones avanzadas: Enhanced Cross-Attention, Conflict-Aware Cross-Attention, Gated Interactive Attention, Tensor Fusion, GLU, Late Fusion, Hierarchical Fusion y más.
-- Pérdidas y entrenamiento robusto: Cross Entropy ponderada, Focal Loss, Dirichlet Evidence Learning, SupCon y pérdidas compuestas.
-- Evaluación con WA, UA, F1, métricas por clase y matriz de confusión.
+- una **línea base** entrenable desde `config/config.yaml`, y
+- una **batería extensa de estudios de ablación** (`1–50`, `52–63`) que explora encoders de audio,
+  mecanismos de fusión, cabezas de clasificación y funciones de pérdida.
 
-## Estructura del proyecto
+| Aspecto | Valor |
+|---|---|
+| Dataset | IEMOCAP (`IEMOCAP_full_release`) |
+| Clases | `angry`, `happy`, `sad`, `neutral` |
+| Split | Hablante-independiente: sesiones **1–3** train · **4** val · **5** test |
+| Métricas | WA, UA, F1 macro, F1 por clase, matriz de confusión |
+| Entorno principal | Windows / PowerShell + CUDA |
 
-```text
-CONFORMER-SER/
-├── config/                 # YAML base y ablaciones versionados
-├── docs/                   # documentación versionada (índice: docs/README.md)
-│   ├── diagrams/           # diagramas Draw.io y utilidades
-│   ├── experimentos/       # notas por serie de estudios
-│   └── …
-├── scripts/
-├── src/
-├── requirements.txt
-├── README.md
-├── quickstart.md
-├── checkpoints/            # generado al entrenar (gitignored)
-└── logs/                   # TensorBoard etc. (gitignored)
-```
+---
+
+## Tabla de contenidos
+
+- [Instalación](#instalación)
+- [Uso rápido](#uso-rápido)
+- [Estudios de ablación](#estudios-de-ablación)
+- [Arquitectura](#arquitectura)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Documentación](#documentación)
+- [Resultados y análisis](#resultados-y-análisis)
+- [Contribuir](#contribuir)
+- [Cita](#cita)
+
+---
 
 ## Instalación
 
-Dependencias alineadas con `setup_check.py`: [requirements.txt](requirements.txt). Para **GPU/CUDA**, suele convenir instalar primero `torch` y `torchaudio` desde [pytorch.org](https://pytorch.org/get-started/locally/) y después el resto:
-
-```powershell
-pip install -r requirements.txt
-```
-
-En Windows/PowerShell (entorno virtual recomendado):
+### 1. Entorno virtual
 
 ```powershell
 cd d:\DOCTORADO\PROYECTOS\CONFORMER-SER
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python setup_check.py
 ```
 
-También puedes usar (instala desde `requirements.txt` y ejecuta `setup_check.py`):
+### 2. Dependencias
+
+Para **GPU/CUDA** conviene instalar primero `torch` y `torchaudio` desde
+[pytorch.org](https://pytorch.org/get-started/locally/) y después el resto:
 
 ```powershell
-.\setup.bat
+pip install -r requirements.txt
 ```
 
-Configura la ruta del dataset IEMOCAP en `config/config.yaml`:
+Atajo equivalente (instala dependencias y ejecuta la verificación):
+
+```powershell
+.\scripts\windows\setup.bat
+```
+
+### 3. Ruta del dataset
+
+Edita `config\config.yaml`:
 
 ```yaml
 dataset:
   data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
-El estudio **50** (y variantes con Emotion2Vec, p. ej. **57**) requieren **`funasr`** (línea comentada al final de `requirements.txt`).
+### 4. Verificación
+
+```powershell
+python setup_check.py
+```
+
+Comprueba versión de Python, paquetes, disponibilidad de CUDA, estructura del proyecto y ruta del
+dataset.
+
+> **Dependencia opcional:** los estudios **50** y **57** (encoder Emotion2Vec) requieren `funasr`
+> (línea comentada al final de [requirements.txt](requirements.txt)).
+
+---
 
 ## Uso rápido
 
-### Entrenamiento baseline
+### Entrenamiento
 
 ```powershell
+# Línea base
 python src\train.py --config config\config.yaml --experiment_name baseline --device cuda
+
+# Estudio de ablación
+python scripts\run_ablation.py --study 45 --device cuda
 ```
 
-### Entrenamiento de ablaciones
+### Evaluación
+
+> [!IMPORTANT]
+> `src\evaluate.py` **solo** reconstruye el modelo base. Para checkpoints de ablación usa
+> `src\evaluate_ensemble.py` o `scripts\run_test_only.py`.
 
 ```powershell
-python scripts\run_ablation.py --study 34 --device cuda
-```
+# Checkpoint de la línea base
+python src\evaluate.py `
+  --checkpoint checkpoints\best_model.pt `
+  --config config\config.yaml `
+  --split test --device cuda
 
-Estudios válidos: `1-50` y `52-57` (`scripts/run_ablation.py`). **No existe el estudio 51.**
-
-### Evaluación baseline
-
-Solo para checkpoints del flujo `src\train.py` (modelo base). **No** uses este script para checkpoints de ablación.
-
-```powershell
-python src\evaluate.py --checkpoint checkpoints\best_model.pt --config config\config.yaml --split test --device cuda
-```
-
-### Evaluación de una ablación o ensemble
-
-```powershell
+# Checkpoint de ablación (o ensemble de varios)
 python src\evaluate_ensemble.py `
   --checkpoints checkpoints\ablation_34\run\best_model.pt `
   --configs config\ablation\ablation_34_conflict_aware_attention.yaml `
-  --study_numbers 34 `
-  --weights 1.0 `
-  --split test `
-  --output_dir evaluation_results\ablation_34 `
-  --device cuda
+  --study_numbers 34 --weights 1.0 `
+  --split test --output_dir evaluation_results\ablation_34 --device cuda
+
+# Solo test sobre un run ya entrenado (lee su config.json)
+python scripts\run_test_only.py `
+  --checkpoint_dir checkpoints\ablation_45\ablation_45_20260203_094355 `
+  --study 45 --device cuda
 ```
 
-### Test-only de un checkpoint ya entrenado
+`run_test_only.py` acepta el directorio de un run o la ruta directa a `best_model.pt`, y escribe
+`final_results.json`, `confusion_matrix_test.png` y `test_eval.log` en ese mismo directorio.
+
+### Inferencia sobre un audio
 
 ```powershell
-python scripts\run_test_only.py --checkpoint_dir checkpoints\phase1_wavlm_gated\ablation_34_20260203_094355 --study 34 --device cuda
+python src\inference.py `
+  --checkpoint checkpoints\best_model.pt `
+  --audio ruta\al\audio.wav `
+  --text "Transcripción opcional"
 ```
 
-`run_test_only.py` acepta un directorio de run o una ruta directa a `best_model.pt`. Usa `config.json` del run y escribe `final_results.json`, `confusion_matrix_test.png` y `test_eval.log` en el mismo directorio.
-
-## Resultados y análisis
-
-Los resultados dependen de la configuración exacta, split, checkpoint y versión de la ablación. Para consultar los análisis existentes:
-
-- [docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md](docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md): análisis histórico hasta la serie 40.
-- [docs/COMPREHENSIVE_ABLATION_ANALYSIS.md](docs/COMPREHENSIVE_ABLATION_ANALYSIS.md): análisis profundo de decisiones arquitectónicas.
-- [docs/COMANDOS_EVALUACION.md](docs/COMANDOS_EVALUACION.md): comandos de evaluación usados en comparaciones.
-
-## Monitoreo
+### Monitoreo
 
 ```powershell
 tensorboard --logdir=logs
+# o bien
+.\scripts\windows\start_tensorboard.bat
 ```
 
-O:
+---
+
+## Estudios de ablación
+
+Estudios válidos: **`1–50`** y **`52–63`**. **No existe el estudio 51.**
+
+El mapeo canónico *número de estudio → clase de modelo → YAML* está en
+[`scripts/run_ablation.py`](scripts/run_ablation.py) (función `create_ablation_model`). El catálogo
+legible está en [`config/ablation/ABLATION_SUMMARY.md`](config/ablation/ABLATION_SUMMARY.md).
+
+| Serie | Tema |
+|-------|------|
+| 1–4 | Cabezas de clasificación (MLP, LSTM, Transformer, CNN1D) |
+| 5–7 | Estrategias de descongelado de encoders |
+| 8–9 | Profundidad de la fusión |
+| 10–12 | SpeechCue (prompts prosódicos) y multimodalidad |
+| 13–20 | Línea base trimodal + K-Fold |
+| 21–28 | Mecanismos de fusión (jerárquica, tensorial, bilineal, GLU, gated, late…) |
+| 29–30 | Cross-attention mejorada y fusión Dirichlet |
+| 31–35 | Alineamiento temporal, bucketing, SpeechCue robusto, **Conflict-Aware** |
+| 36–39 | Conflict-Aware + Dirichlet, OpenSMILE residual |
+| 40–43 | WavLM + Conflict-Aware, ViT, mejoras de entrenamiento |
+| 44–46 | Cabezas alternativas (Transformer, **MultiScaleTemporal**, CNN1D) |
+| 47–50 | SupCon pre-fusión y encoders de audio alternativos |
+| 52–54 | WavLM + SpecAugment + hidden states ponderados |
+| 55–57 | Receta del estudio 45 con WavLM / HuBERT / Emotion2Vec |
+| 58–63 | Combos SOTA: MultiScale + SupCon + SpecAugment, pooling atencional, fine-tuning |
+
+> [!WARNING]
+> Existen YAML sin ruta de código (p. ej. `ablation_65_unfrozen_vit.yaml` y
+> `ablation_phase2_49_..._FUTURE.yaml`). **Un archivo de configuración no implica un estudio
+> ejecutable**: verifica siempre contra `run_ablation.py`.
+
+Los estudios **20, 29 y 41** ejecutan validación cruzada (K-Fold / LOSO) en lugar del split estándar.
+
+Para agregar resultados de todos los runs:
 
 ```powershell
-.\start_tensorboard.bat
+python scripts\aggregate_ablation_results.py --write-docs
 ```
+
+---
+
+## Arquitectura
+
+- **Encoders de audio:** Wav2Vec2, WavLM (base / base-plus, con *weighted hidden states*
+  opcional), HuBERT, Emotion2Vec.
+- **Encoders de texto:** BERT / RoBERTa / DistilBERT, con inyección **SpeechCue** de prompts
+  prosódicos en estudios concretos.
+- **Rama visual:** un ViT opera sobre un **log-mel calculado en el `forward`** a partir del
+  **mismo** waveform del batch (torchaudio `MelSpectrogram` → imagen).
+
+> [!NOTE]
+> IEMOCAP se consume como **audio crudo**. **No** hay espectrogramas mel precalculados en disco:
+> se generan dentro del modelo en cada paso.
+
+- **Fusiones** (`src/models/fusion.py`): Enhanced Cross-Attention, **Conflict-Aware
+  Cross-Attention**, Gated Interactive Attention, Tensor Fusion, Bilinear, GLU, Late, Hierarchical,
+  Adaptive Weighted.
+- **Cabezas** (`src/ablation_studies/classification_heads.py`): MLP, LSTM, Transformer, CNN1D,
+  MultiScaleTemporal.
+- **Pérdidas** (`src/utils/losses.py`): Cross Entropy ponderada, Focal, Dirichlet Evidence
+  Learning, SupCon y combinaciones compuestas.
+- **Grupos de LR** (`src/ablation_studies/utils.py`): tasas de aprendizaje separadas para
+  encoders, fusión y clasificador.
+
+Detalle completo: [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md) y
+[docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md).
+
+---
+
+## Estructura del proyecto
+
+```text
+CONFORMER-SER/
+├── config/
+│   ├── config.yaml              # configuración de la línea base
+│   └── ablation/                # YAML por estudio + ABLATION_SUMMARY.md
+├── src/
+│   ├── train.py                 # entrenamiento línea base
+│   ├── evaluate.py              # evaluación línea base (solo)
+│   ├── evaluate_ensemble.py     # evaluación de ablaciones y ensembles
+│   ├── inference.py
+│   ├── data/                    # dataset, preprocesado, augmentation, prosodia
+│   ├── models/                  # modelo base, fusiones, encoders
+│   ├── ablation_studies/        # clases de modelo por estudio + cabezas
+│   ├── experiments/             # línea de encoders ligeros
+│   └── utils/                   # pérdidas, métricas, logging
+├── scripts/
+│   ├── run_ablation.py          # entrenamiento de ablaciones
+│   ├── run_test_only.py         # evaluación en test de un run existente
+│   ├── aggregate_ablation_results.py
+│   └── windows/                 # atajos .bat / .ps1
+├── docs/                        # documentación versionada (índice: docs/README.md)
+│   ├── experimentos/            # bitácoras por serie de estudios
+│   └── diagrams/                # fuentes Draw.io / PlantUML / Mermaid
+├── paper/                       # artefactos de publicación
+│   ├── manuscripts/             # borradores .docx
+│   ├── figures/                 # figuras SVG + graphical abstract
+│   ├── posters/                 # pósters y su fuente HTML
+│   └── presentations/           # presentaciones .pptx
+├── tests/
+├── notebooks/
+├── setup_check.py
+└── requirements.txt
+```
+
+Se generan al ejecutar y están **fuera de git**: `checkpoints/`, `logs/`, `evaluation_results/`,
+`data/`, `node_modules/`, `.cache/`, `venv/`, `openspec/`.
+
+---
+
+## Documentación
+
+Índice central: **[docs/README.md](docs/README.md)**.
+
+Orden de lectura sugerido:
+
+1. [quickstart.md](quickstart.md) — instalación y comandos esenciales.
+2. [docs/ARCHITECTURE_AND_WORKFLOWS.md](docs/ARCHITECTURE_AND_WORKFLOWS.md) — mapa del código y
+   flujos de datos.
+3. [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md) — catálogo de
+   estudios.
+4. [docs/experimentos/](docs/experimentos/) — bitácoras por serie.
+
+Otros documentos útiles:
+
+| Documento | Contenido |
+|---|---|
+| [AGENTS.md](AGENTS.md) | Manual para asistentes de IA: convenciones y trampas del repo |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Guía de contribución y estilo de código |
+| [CHANGELOG.md](CHANGELOG.md) | Historial de versiones |
+| [docs/CONFLICT_DETECTION.md](docs/CONFLICT_DETECTION.md) | Modos de detección de conflicto |
+| [docs/COMANDOS_EVALUACION.md](docs/COMANDOS_EVALUACION.md) | Recetario de comandos de evaluación |
+| [src/ablation_studies/README.md](src/ablation_studies/README.md) | Paquete de modelos de ablación |
+
+---
+
+## Resultados y análisis
+
+Los resultados dependen de la configuración exacta, el split, el checkpoint y la versión de la
+ablación. Al reproducir un run, usa siempre el `config.json` guardado **dentro del directorio del
+run**, no el YAML de `config/ablation/` (puede haber cambiado desde entonces).
+
+| Documento | Alcance |
+|---|---|
+| [docs/RANKING_Y_RESULTADOS.md](docs/RANKING_Y_RESULTADOS.md) | Ranking regenerable desde los `final_results.json` |
+| [docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md](docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md) | Análisis histórico hasta la serie 40 |
+| [docs/COMPREHENSIVE_ABLATION_ANALYSIS.md](docs/COMPREHENSIVE_ABLATION_ANALYSIS.md) | Análisis profundo de decisiones arquitectónicas |
+| [docs/COLLAPSE_ANALYSIS.md](docs/COLLAPSE_ANALYSIS.md) | Diagnóstico de *class collapse* |
+| [docs/ESTRATEGIAS_MEJORA_ACCURACY.md](docs/ESTRATEGIAS_MEJORA_ACCURACY.md) | Estrategias para superar el estancamiento de métricas |
+
+---
+
+## Contribuir
+
+Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para el flujo de trabajo, el estilo de código y las
+convenciones de commits.
+
+---
 
 ## Cita
 
-Si usas este repositorio en un trabajo académico, cita el proyecto y documenta el commit/configuración exacta usada para reproducibilidad.
+Si usas este repositorio en un trabajo académico, cita el proyecto e indica el **commit exacto** y
+la **configuración** empleada, para garantizar la reproducibilidad:
+
+```bibtex
+@software{conformer_ser,
+  author  = {Jorrin, Jorge Luis},
+  title   = {CONFORMER-SER: Conflict-Aware Multimodal Fusion for Speech Emotion Recognition},
+  url     = {https://github.com/jorrin2018/CONFORMER-SER},
+  note    = {Commit: <hash>, Config: <ruta al config.json del run>}
+}
+```
+
+## Licencia
+
+Distribuido bajo licencia MIT. Ver [LICENSE](LICENSE).

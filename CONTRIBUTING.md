@@ -92,24 +92,37 @@ def compute_metrics(
 
 ### Testing
 
-- Add tests for new features
-- Ensure existing tests pass
-- Test on multiple environments if possible
+- Add tests under `tests/` for new features.
+- Run the environment check before opening a PR: `python setup_check.py`.
+- Numerical-stability checks live in `tests/` (e.g. `python tests	est_bf16_stability.py --study 45 --epochs 5 --device cuda`).
+- Do **not** launch full training runs to validate a PR — they take hours of GPU time.
 
 ## Project Structure
 
 ```
 CONFORMER-SER/
-├── config/          # Configuration files
+├── config/                 # Baseline config + config/ablation/ YAMLs
 ├── src/
-│   ├── data/       # Dataset and preprocessing
-│   ├── models/     # Model architectures
-│   ├── utils/      # Utilities
-│   ├── train.py    # Training script
-│   └── evaluate.py # Evaluation script
-├── notebooks/      # Jupyter notebooks
-└── tests/          # Test files (to be added)
+│   ├── data/               # Dataset, preprocessing, augmentation, prosody cues
+│   ├── models/             # Baseline model, fusion mechanisms, encoders
+│   ├── ablation_studies/   # Per-study model classes + classification heads
+│   ├── experiments/        # Lightweight-encoder experiment track
+│   ├── utils/              # Losses, metrics, logging
+│   ├── train.py            # Baseline training
+│   ├── evaluate.py         # Baseline evaluation ONLY
+│   └── evaluate_ensemble.py# Ablation + ensemble evaluation
+├── scripts/
+│   ├── run_ablation.py     # Ablation training (study → model source of truth)
+│   ├── run_test_only.py    # Test-set evaluation of an existing run
+│   └── windows/            # .bat / .ps1 convenience wrappers
+├── docs/                   # Versioned documentation (index: docs/README.md)
+├── paper/                  # Manuscripts, figures, posters, presentations
+├── notebooks/              # Jupyter notebooks
+└── tests/                  # Test files
 ```
+
+See [AGENTS.md](AGENTS.md) for the full layout, the baseline-vs-ablation split and the
+repository's house rules.
 
 ## Development Setup
 
@@ -176,6 +189,19 @@ We especially welcome contributions in:
 ## Questions?
 
 Feel free to open an issue for any questions about contributing!
+
+## What not to commit
+
+The following are gitignored and must never be added to a commit:
+
+- Model weights: `*.pt`, `*.pth`, `*.ckpt`, `*.safetensors`
+- Run outputs: `checkpoints/`, `logs/`, `evaluation_results/`
+- Datasets and audio: `data/`, `datasets/`, `*.wav`, `*.mp3`, `*.flac`
+- Caches and environments: `.cache/`, `node_modules/`, `venv/`, `.venv/`
+- Local editor state: `.vscode/`, `.idea/`, `.cursor/`, `.obsidian/`
+- Local change proposals: `openspec/`
+
+If `git status` shows any of these, stop and check `.gitignore` before committing.
 
 ## License
 

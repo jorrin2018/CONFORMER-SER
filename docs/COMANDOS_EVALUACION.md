@@ -4,7 +4,7 @@
 
 ### Opción Más Fácil: Script Interactivo
 ```powershell
-.\EVALUAR_RAPIDO.bat
+.\scripts\windows\EVALUAR_RAPIDO.bat
 ```
 Este script te permite elegir qué modelo evaluar desde un menú.
 
@@ -83,10 +83,10 @@ python src\evaluate_ensemble.py `
 
 ### Evaluar Ensemble
 ```powershell
-.\evaluate_ensemble.bat
+.\scripts\windows\evaluate_ensemble.bat
 ```
 
-**Nota**: Necesitas editar `evaluate_ensemble.bat` y actualizar las rutas de los checkpoints según tus archivos.
+**Nota**: Necesitas editar `scripts\windows\evaluate_ensemble.bat` y actualizar las rutas de los checkpoints según tus archivos.
 
 ---
 
@@ -127,7 +127,7 @@ El ensemble puede mejorar o estabilizar las métricas frente a un modelo individ
    - `evaluate_ensemble.py` necesita los archivos YAML de `config/ablation/`
    - O `config.json` del checkpoint (según implementación)
 
-2. **Modelos de Ablación (1-50, 52-57)**: 
+2. **Modelos de Ablación (1-50, 52-63)**: 
    - Usar `evaluate_ensemble.py` con `--study_numbers` para cargar arquitectura correcta
    - Usar `run_test_only.py` si tienes el directorio del run con `config.json`
    - El estudio 51 no está definido en el listado actual de `scripts/run_ablation.py`

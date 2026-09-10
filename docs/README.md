@@ -1,138 +1,170 @@
-# Documentación CONFORMER-SER
+# Documentación de CONFORMER-SER
 
-Índice central de la documentación del proyecto **CONFORMER-SER**: reconocimiento de emociones en habla multimodal sobre IEMOCAP con 4 clases principales (`angry`, `happy`, `sad`, `neutral`).
+Índice central de la documentación del proyecto: reconocimiento multimodal de emociones en habla
+sobre IEMOCAP, 4 clases (`angry`, `happy`, `sad`, `neutral`).
 
-## Política de git
+- Visión general del proyecto → [../README.md](../README.md)
+- Puesta en marcha → [../quickstart.md](../quickstart.md)
+- Manual para asistentes de IA → [../AGENTS.md](../AGENTS.md)
 
-- **`docs/`** se versiona en el repositorio.
-- **`openspec/`** (planes de cambio OpenSpec) sigue en `.gitignore` por defecto: no esperes esos directorios en el remoto salvo que el equipo quite la regla.
+---
 
-## Orden de lectura (canónico)
+## Política de versionado
+
+| Ruta | En git | Nota |
+|------|:------:|------|
+| `docs/` | ✅ | Toda la documentación técnica y las bitácoras de experimentos |
+| `paper/` | ✅ | Artefactos de publicación (manuscritos, figuras, pósters, presentaciones) |
+| `config/` · `src/` · `scripts/` | ✅ | Código y configuraciones |
+| `openspec/` | ❌ | Planes de cambio OpenSpec: quedan **locales** |
+| `checkpoints/` · `logs/` · `evaluation_results/` · `data/` | ❌ | Salidas de ejecución |
+| `node_modules/` · `.cache/` · `venv/` | ❌ | Entornos y cachés de herramientas |
+
+---
+
+## Orden de lectura canónico
 
 1. [../quickstart.md](../quickstart.md) — instalación y comandos en PowerShell.
-2. [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md) — baseline vs ablación; `evaluate.py` solo para modelo base.
-3. [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md) — catálogo YAML ↔ estudio.
-4. [experimentos/](experimentos/) — notas por bloque de estudios (tabla abajo).
-5. Análisis global y operativa (tablas *Flujos operativos* y *Análisis y estrategias*).
+2. [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md) — línea base vs. ablación; mapa
+   del código y flujo de datos.
+3. [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md) — catálogo
+   estudio ↔ YAML ↔ modelo.
+4. [experimentos/](experimentos/) — bitácoras por serie de estudios.
+5. Análisis globales y estrategias (tablas más abajo).
 
-Tres niveles temáticos:
+---
 
-1. **Entrada rápida**: instalación, comandos y rutas principales.
-2. **Arquitectura y flujos**: entrenamiento, ablaciones, evaluación, ensemble y test-only.
-3. **Análisis de experimentos**: resultados, estrategias e histórico por serie.
+## Estructura de `docs/`
 
-## Estructura de carpetas bajo `docs/`
+| Ruta | Contenido |
+|------|-----------|
+| Raíz de `docs/` | Índice, arquitectura, comandos y análisis globales |
+| [experimentos/](experimentos/) | Bitácoras agrupadas por rango de números de estudio |
+| [diagrams/](diagrams/) | Fuentes de diagramas: Draw.io, PlantUML, Mermaid |
 
-| Ruta | Uso |
-|------|-----|
-| [diagrams/](diagrams/) | Diagramas Draw.io (arquitectura, pipelines, resúmenes gráficos) y scripts auxiliares. |
-| [experimentos/](experimentos/) | Bitácoras agrupadas por rango de números de estudio. |
-| Raíz de `docs/` | Índices, arquitectura, comandos de evaluación y análisis globales (ver siguiente sección). |
+> Los pósters, figuras del artículo, manuscritos y presentaciones **ya no viven en `docs/`**:
+> están en [`../paper/`](../paper/). Ver la sección [Artefactos de publicación](#artefactos-de-publicación).
 
-## Documentos en la raíz de `docs/` (informes y guías globales)
+---
+
+## Guías y referencia técnica
 
 | Documento | Rol |
 |-----------|-----|
-| [README.md](README.md) | Este índice. |
-| [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md) | Mapa técnico del código y flujos. |
-| [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) | Comandos de evaluación y comparación. |
-| [CONFLICT_DETECTION.md](CONFLICT_DETECTION.md) | Modos de detección de conflicto (Conflict-Aware). |
-| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Resumen ejecutivo del proyecto. |
-| [POST_FIX_RETRAIN.md](POST_FIX_RETRAIN.md) | Reentrenamientos tras fixes. |
-| [TRAINING_IMPROVEMENTS.md](TRAINING_IMPROVEMENTS.md) | Estabilidad y buenas prácticas de entrenamiento. |
-| [ANALISIS_RESULTADOS_EXPERIMENTOS.md](ANALISIS_RESULTADOS_EXPERIMENTOS.md) | Análisis maestro hasta ~serie 40. |
-| [COMPREHENSIVE_ABLATION_ANALYSIS.md](COMPREHENSIVE_ABLATION_ANALYSIS.md) | Análisis profundo de decisiones arquitectónicas. |
-| [COLLAPSE_ANALYSIS.md](COLLAPSE_ANALYSIS.md) | Collapse de clases y señales de alerta. |
-| [ESTRATEGIAS_MEJORA_ACCURACY.md](ESTRATEGIAS_MEJORA_ACCURACY.md) | Ideas para mejorar métricas. |
-| [RESUMEN_ESTRATEGIAS.md](RESUMEN_ESTRATEGIAS.md) | Resumen ejecutivo de estrategias. |
-| [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md) | Ranking desde `final_results.json` agregados. |
-| [PROMPT_ACTUALIZACION_DOCUMENTACION.md](PROMPT_ACTUALIZACION_DOCUMENTACION.md) | Plantilla para mantener doc experimental. |
-
-**Renombres:** en esta iteración no se han movido rutas públicas dentro de `docs/`; enlaces externos antiguos no requieren tabla de migración.
-
----
-
-## Lectura recomendada
-
-| Documento | Propósito |
-|-----------|-----------|
-| [../README.md](../README.md) | Visión general del proyecto, estructura, instalación y comandos principales. |
-| [../AGENTS.md](../AGENTS.md) | Convenciones del repo para colaboradores/agents: baseline vs ablación, comandos y trampas. |
-| [../quickstart.md](../quickstart.md) | Guía operativa corta para instalar, entrenar, evaluar y ejecutar test-only en Windows/PowerShell. |
-| [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md) | Mapa técnico actual: módulos de código, flujo de datos, entrenamiento baseline, ablaciones, evaluación y checkpoints. |
-| [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md) | Catálogo canónico study -> YAML -> modelo para las ablaciones disponibles. |
-| [../src/ablation_studies/README.md](../src/ablation_studies/README.md) | Resumen del paquete `src/ablation_studies` y de las clases de modelo por serie. |
-| [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md) | Ranking de estudios a partir de `checkpoints/**/final_results.json`: top por WA, por UA, gap val-test, tabla completa. Se regenera con `python scripts/aggregate_ablation_results.py --write-docs`. |
-
----
-
-## Flujos operativos
-
-| Documento | Contenido |
-|-----------|-----------|
-| [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) | Comandos de evaluación, rutas de checkpoints y ejemplos de comparación. |
-| [POST_FIX_RETRAIN.md](POST_FIX_RETRAIN.md) | Reentrenamiento tras correcciones en entrenamiento/fusión y listado de estudios a repetir. |
-| [TRAINING_IMPROVEMENTS.md](TRAINING_IMPROVEMENTS.md) | Mejoras prácticas para estabilizar entrenamiento y evitar problemas frecuentes. |
-| [CONFLICT_DETECTION.md](CONFLICT_DETECTION.md) | Métodos `prediction_divergence`, `feature_distance` y `learned` para fusión Conflict-Aware. |
-| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Resumen ejecutivo del proyecto y de sus componentes principales. |
+| [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md) | Mapa técnico: módulos, flujo de datos, entrenamiento, evaluación y checkpoints |
+| [CONFLICT_DETECTION.md](CONFLICT_DETECTION.md) | Modos `prediction_divergence`, `feature_distance` y `learned` de la fusión Conflict-Aware |
+| [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) | Recetario de comandos de evaluación y comparación |
+| [TRAINING_IMPROVEMENTS.md](TRAINING_IMPROVEMENTS.md) | Buenas prácticas para estabilizar el entrenamiento |
+| [POST_FIX_RETRAIN.md](POST_FIX_RETRAIN.md) | Reentrenamientos tras correcciones en entrenamiento/fusión |
+| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Resumen ejecutivo del proyecto |
+| [experiment_lightweight.md](experiment_lightweight.md) | Línea de experimentos con encoders ligeros (`src/experiments/`) |
+| [../src/ablation_studies/README.md](../src/ablation_studies/README.md) | Paquete `ablation_studies`: clases de modelo por serie |
 
 Comandos base:
 
 ```powershell
 python src\train.py --config config\config.yaml --device cuda
-python scripts\run_ablation.py --study 34 --device cuda
-python src\evaluate_ensemble.py --checkpoints <ckpt> --configs <yaml> --study_numbers 34 --weights 1.0 --split test --device cuda
-python scripts\run_test_only.py --checkpoint_dir <run_dir_o_best_model.pt> --study 34 --device cuda
+python scripts\run_ablation.py --study 45 --device cuda
+python src\evaluate_ensemble.py --checkpoints <ckpt> --configs <yaml> --study_numbers 45 --weights 1.0 --split test --device cuda
+python scripts\run_test_only.py --checkpoint_dir <run_dir> --study 45 --device cuda
 ```
 
 ---
 
-## Análisis y estrategias
+## Análisis de resultados y estrategias
 
 | Documento | Alcance |
 |-----------|---------|
-| [ANALISIS_RESULTADOS_EXPERIMENTOS.md](ANALISIS_RESULTADOS_EXPERIMENTOS.md) | Análisis maestro de resultados hasta la serie 40. Mantener como histórico si no se re-tabula 41-54. |
-| [COMPREHENSIVE_ABLATION_ANALYSIS.md](COMPREHENSIVE_ABLATION_ANALYSIS.md) | Análisis profundo de ablaciones y decisiones de arquitectura. |
-| [COLLAPSE_ANALYSIS.md](COLLAPSE_ANALYSIS.md) | Diagnóstico de class collapse, señales de alerta y valores seguros de entrenamiento. |
-| [ESTRATEGIAS_MEJORA_ACCURACY.md](ESTRATEGIAS_MEJORA_ACCURACY.md) | Ideas para superar el estancamiento de accuracy/UA. |
-| [RESUMEN_ESTRATEGIAS.md](RESUMEN_ESTRATEGIAS.md) | Resumen ejecutivo de estrategias de mejora. |
-| [PROMPT_ACTUALIZACION_DOCUMENTACION.md](PROMPT_ACTUALIZACION_DOCUMENTACION.md) | Prompt de mantenimiento para regenerar o actualizar documentación experimental. |
+| [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md) | Ranking por WA/UA y gap val-test. **Se regenera** con `python scripts\aggregate_ablation_results.py --write-docs` |
+| [COMPREHENSIVE_ABLATION_ANALYSIS.md](COMPREHENSIVE_ABLATION_ANALYSIS.md) | Análisis profundo de las decisiones arquitectónicas |
+| [COLLAPSE_ANALYSIS.md](COLLAPSE_ANALYSIS.md) | Diagnóstico de *class collapse*, señales de alerta y valores seguros |
+| [ESTRATEGIAS_MEJORA_ACCURACY.md](ESTRATEGIAS_MEJORA_ACCURACY.md) | Ideas para superar el estancamiento de accuracy/UA |
+| [RESUMEN_ESTRATEGIAS.md](RESUMEN_ESTRATEGIAS.md) | Resumen ejecutivo de las estrategias anteriores |
+| [ANALISIS_RESULTADOS_EXPERIMENTOS.md](ANALISIS_RESULTADOS_EXPERIMENTOS.md) | 🕰️ **Histórico**: análisis maestro hasta ~la serie 40 |
+| [ablation_45_deep_dive.md](ablation_45_deep_dive.md) | Análisis exhaustivo del estudio 45 (MultiScaleTemporal + Conflict-Aware) |
+| [PROMPT_ACTUALIZACION_DOCUMENTACION.md](PROMPT_ACTUALIZACION_DOCUMENTACION.md) | 🔧 Plantilla interna para regenerar documentación experimental |
 
 ---
 
 ## Experimentos por serie
 
-Los documentos de `docs/experimentos/` explican grupos de estudios con diagramas, diferencias arquitectónicas y resultados cuando están disponibles.
+Los documentos de [experimentos/](experimentos/) explican grupos de estudios con diagramas,
+diferencias arquitectónicas y resultados cuando están disponibles.
 
-| Serie | Archivo | Estudios cubiertos |
-|-------|---------|-------------------|
-| 01-04 | [experimentos/01-04_classification_heads.md](experimentos/01-04_classification_heads.md) | 1-4 |
-| 05-07 | [experimentos/05-07_unfreezing.md](experimentos/05-07_unfreezing.md) | 5-7 |
-| 08-09 | [experimentos/08-09_depth_fusion.md](experimentos/08-09_depth_fusion.md) | 8-9 |
-| 10-12 | [experimentos/10-12_speechcue_multimodal.md](experimentos/10-12_speechcue_multimodal.md) | 10-12 |
-| 13 | [experimentos/13_baseline_trimodal.md](experimentos/13_baseline_trimodal.md) | 13-20 |
-| 21-28 | [experimentos/21-28_fusion_mechanisms.md](experimentos/21-28_fusion_mechanisms.md) | 21-28 |
-| 25/29 | [experimentos/25_enhanced_cross_attention.md](experimentos/25_enhanced_cross_attention.md) | 25, 29 |
-| 30 | [experimentos/30_dirichlet.md](experimentos/30_dirichlet.md) | 30 |
-| 31-35 | [experimentos/31-35_innovations.md](experimentos/31-35_innovations.md) | 31-35 |
-| 34 | [experimentos/34_conflict_aware.md](experimentos/34_conflict_aware.md) | 34 |
-| 36-39 | [experimentos/36-39_conflict_dirichlet_sota.md](experimentos/36-39_conflict_dirichlet_sota.md) | 36-39 |
-| 40 | [experimentos/40_wavlm_conflict_aware.md](experimentos/40_wavlm_conflict_aware.md) | 40 |
-| 41-42 | [experimentos/41-42_wavlm_vit_conflict_aware.md](experimentos/41-42_wavlm_vit_conflict_aware.md) | 41-42 |
-| 43 | [experimentos/43_training_improvements.md](experimentos/43_training_improvements.md) | 43 |
-| 44-46 | [experimentos/44-46_conflict_aware_heads.md](experimentos/44-46_conflict_aware_heads.md) | 44-46 |
-| 47-50 | [experimentos/47-50_supcon_audio_encoders.md](experimentos/47-50_supcon_audio_encoders.md) | 47-50 |
-| 52-54 | [experimentos/52-54_wavlm_specaugment_weighted_layers.md](experimentos/52-54_wavlm_specaugment_weighted_layers.md) | 52-54 |
-| 55-57 | *Sin nota agrupada aún*: misma “receta” que 45 con distinto encoder de audio (`ablation_55_*`, `ablation_56_*`, `ablation_57_*` en `config/ablation/`). Detalle en [ABLATION_SUMMARY](../config/ablation/ABLATION_SUMMARY.md). | 55-57 |
+| Serie | Archivo | Estudios |
+|-------|---------|----------|
+| 01–04 | [01-04_classification_heads.md](experimentos/01-04_classification_heads.md) | 1–4 |
+| 05–07 | [05-07_unfreezing.md](experimentos/05-07_unfreezing.md) | 5–7 |
+| 08–09 | [08-09_depth_fusion.md](experimentos/08-09_depth_fusion.md) | 8–9 |
+| 10–12 | [10-12_speechcue_multimodal.md](experimentos/10-12_speechcue_multimodal.md) | 10–12 |
+| 13–20 | [13_baseline_trimodal.md](experimentos/13_baseline_trimodal.md) | 13–20 |
+| 21–28 | [21-28_fusion_mechanisms.md](experimentos/21-28_fusion_mechanisms.md) | 21–28 |
+| 25/29 | [25_enhanced_cross_attention.md](experimentos/25_enhanced_cross_attention.md) | 25, 29 |
+| 30 | [30_dirichlet.md](experimentos/30_dirichlet.md) | 30 |
+| 31–35 | [31-35_innovations.md](experimentos/31-35_innovations.md) | 31–35 |
+| 34 | [34_conflict_aware.md](experimentos/34_conflict_aware.md) | 34 |
+| 36–39 | [36-39_conflict_dirichlet_sota.md](experimentos/36-39_conflict_dirichlet_sota.md) | 36–39 |
+| 40 | [40_wavlm_conflict_aware.md](experimentos/40_wavlm_conflict_aware.md) | 40 |
+| 41–42 | [41-42_wavlm_vit_conflict_aware.md](experimentos/41-42_wavlm_vit_conflict_aware.md) | 41–42 |
+| 43 | [43_training_improvements.md](experimentos/43_training_improvements.md) | 43 |
+| 44–46 | [44-46_conflict_aware_heads.md](experimentos/44-46_conflict_aware_heads.md) | 44–46 |
+| 45 | [ablation_45_arquitectura.md](experimentos/ablation_45_arquitectura.md) · [post_45_optimization.md](experimentos/post_45_optimization.md) | 45 y optimizaciones posteriores |
+| 47–50 | [47-50_supcon_audio_encoders.md](experimentos/47-50_supcon_audio_encoders.md) | 47–50 |
+| 52–54 | [52-54_wavlm_specaugment_weighted_layers.md](experimentos/52-54_wavlm_specaugment_weighted_layers.md) | 52–54 |
+| 55–57 | *Sin bitácora agrupada*: misma receta que el 45 con distinto encoder de audio (WavLM / HuBERT / Emotion2Vec). Ver [ABLATION_SUMMARY](../config/ablation/ABLATION_SUMMARY.md). | 55–57 |
+| 58–63 | *Sin bitácora agrupada*: combos SOTA (MultiScale + SupCon + SpecAugment), pooling atencional y fine-tuning del 45. Ver [ABLATION_SUMMARY](../config/ablation/ABLATION_SUMMARY.md). | 58–63 |
 
-`scripts/run_ablation.py` acepta estudios `1-50` y `52-57`. **No hay estudio 51.**
+> `scripts/run_ablation.py` acepta estudios **`1-50`** y **`52-63`**. **No existe el estudio 51.**
+> Algunos YAML de `config/ablation/` (p. ej. `ablation_65_unfrozen_vit.yaml`) **no tienen ruta de
+> código** y no son ejecutables.
 
 ---
 
-## Estado de documentación
+## Diagramas
 
-- **Canónico para ejecutar ablaciones**: [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md) y `scripts/run_ablation.py`.
-- **Histórico de resultados**: documentos de análisis global como `ANALISIS_RESULTADOS_EXPERIMENTOS.md`; algunos cubren principalmente estudios 1-40.
-- **Operativo diario**: [../quickstart.md](../quickstart.md), [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) y [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md).
+Fuentes editables en [diagrams/](diagrams/):
 
-*Última actualización: mayo 2026*
+| Archivo | Contenido |
+|---------|-----------|
+| `CAMF_architecture_LNCS.drawio` | Arquitectura CAMF para el artículo |
+| `graphical_abstract_LNCS.drawio` | Graphical abstract |
+| `mel_vit_pipeline_LNCS.drawio` · `pipeline_waveform_to_m_ViT.drawio` | Pipeline waveform → log-mel → ViT |
+| `speechcue_prosody_LNCS.drawio` | Inyección de prompts prosódicos (SpeechCue) |
+| `multimodal_ser_architecture.drawio` | Arquitectura multimodal general |
+| `ablation_45_architecture.{mmd,puml,png}` | Arquitectura del estudio 45 (Mermaid / PlantUML / render) |
+| `_gen_mel_pipeline_drawio.py` | Generador del diagrama de pipeline mel |
+
+---
+
+## Artefactos de publicación
+
+Viven fuera de `docs/`, en [`../paper/`](../paper/):
+
+| Ruta | Contenido |
+|------|-----------|
+| [../paper/manuscripts/](../paper/manuscripts/) | Borradores `.docx` (CIARP 2025 y 2026) |
+| [../paper/figures/](../paper/figures/) | `fig1`–`fig6` en SVG y `graphical_abstract.pdf` |
+| [../paper/posters/](../paper/posters/) | Pósters PDF/PNG, su fuente `poster_conflict_aware_print.html` y `assets/` |
+| [../paper/presentations/](../paper/presentations/) | Presentación `.pptx` del deep dive del estudio 45 |
+
+Los pósters son **generados**. Edita el HTML y reexporta:
+
+```powershell
+.\scripts\export_poster_18x24.ps1 -Format pdf
+.\scripts\export_poster_18x24.ps1 -Format png -Dpi 300
+.\scripts\export_poster_a0.ps1 -Format pdf
+```
+
+La salida se escribe en `paper\posters\`. No edites a mano los PDF/PNG generados.
+
+---
+
+## Estado de la documentación
+
+- **Canónico para ejecutar ablaciones:** `scripts/run_ablation.py` y
+  [ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md).
+- **Operativa diaria:** [../quickstart.md](../quickstart.md),
+  [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) y
+  [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md).
+- **Histórico:** los documentos marcados con 🕰️ cubren principalmente los estudios 1–40 y se
+  conservan como referencia; no se re-tabulan.
