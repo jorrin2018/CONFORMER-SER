@@ -9,6 +9,17 @@ sobre IEMOCAP, 4 clases (`angry`, `happy`, `sad`, `neutral`).
 
 ---
 
+---
+
+> [!CAUTION]
+> **Auditoria post-CIARP-2026: las cifras de resultados anteriores estan invalidadas.**
+> Un bug de carga de datos descartaba las 2 943 utterances improvisadas. Esta corregido,
+> pero ningun numero previo al arreglo (77.98 % UA, etc.) debe reutilizarse. Antes de
+> tocar resultados o el articulo, lee [REWRITE_NOTES.md](REWRITE_NOTES.md) y
+> [dataset_integrity_patch.md](dataset_integrity_patch.md), y ejecuta
+> `python scriptserify_iemocap.py`. Las cifras publicables requieren **LOSO 5-fold**
+> (`--loso`) con media ± sigma.
+
 ## Política de versionado
 
 | Ruta | En git | Nota |
@@ -56,7 +67,7 @@ sobre IEMOCAP, 4 clases (`angry`, `happy`, `sad`, `neutral`).
 | [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) | Recetario de comandos de evaluación y comparación |
 | [TRAINING_IMPROVEMENTS.md](TRAINING_IMPROVEMENTS.md) | Buenas prácticas para estabilizar el entrenamiento |
 | [POST_FIX_RETRAIN.md](POST_FIX_RETRAIN.md) | Reentrenamientos tras correcciones en entrenamiento/fusión |
-| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Resumen ejecutivo del proyecto |
+| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Resumen ejecutivo: arquitectura, estado, cifras y series de ablación |
 | [experiment_lightweight.md](experiment_lightweight.md) | Línea de experimentos con encoders ligeros (`src/experiments/`) |
 | [../src/ablation_studies/README.md](../src/ablation_studies/README.md) | Paquete `ablation_studies`: clases de modelo por serie |
 
@@ -76,10 +87,10 @@ python scripts\run_test_only.py --checkpoint_dir <run_dir> --study 45 --device c
 | Documento | Alcance |
 |-----------|---------|
 | [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md) | Ranking por WA/UA y gap val-test. **Se regenera** con `python scripts\aggregate_ablation_results.py --write-docs` |
-| [COMPREHENSIVE_ABLATION_ANALYSIS.md](COMPREHENSIVE_ABLATION_ANALYSIS.md) | Análisis profundo de las decisiones arquitectónicas |
+| [COMPREHENSIVE_ABLATION_ANALYSIS.md](COMPREHENSIVE_ABLATION_ANALYSIS.md) | 🕰️ **Histórico**: análisis profundo de decisiones arquitectónicas (estudios 1–39) |
 | [COLLAPSE_ANALYSIS.md](COLLAPSE_ANALYSIS.md) | Diagnóstico de *class collapse*, señales de alerta y valores seguros |
-| [ESTRATEGIAS_MEJORA_ACCURACY.md](ESTRATEGIAS_MEJORA_ACCURACY.md) | Ideas para superar el estancamiento de accuracy/UA |
-| [RESUMEN_ESTRATEGIAS.md](RESUMEN_ESTRATEGIAS.md) | Resumen ejecutivo de las estrategias anteriores |
+| [ESTRATEGIAS_MEJORA_ACCURACY.md](ESTRATEGIAS_MEJORA_ACCURACY.md) | 🕰️ **Histórico**: ideas para superar el estancamiento de accuracy/UA (base: 39 experimentos) |
+| [RESUMEN_ESTRATEGIAS.md](RESUMEN_ESTRATEGIAS.md) | 🕰️ **Histórico**: resumen ejecutivo de las estrategias anteriores |
 | [ANALISIS_RESULTADOS_EXPERIMENTOS.md](ANALISIS_RESULTADOS_EXPERIMENTOS.md) | 🕰️ **Histórico**: análisis maestro hasta ~la serie 40 |
 | [ablation_45_deep_dive.md](ablation_45_deep_dive.md) | Análisis exhaustivo del estudio 45 (MultiScaleTemporal + Conflict-Aware) |
 | [PROMPT_ACTUALIZACION_DOCUMENTACION.md](PROMPT_ACTUALIZACION_DOCUMENTACION.md) | 🔧 Plantilla interna para regenerar documentación experimental |
@@ -114,7 +125,7 @@ diferencias arquitectónicas y resultados cuando están disponibles.
 | 55–57 | *Sin bitácora agrupada*: misma receta que el 45 con distinto encoder de audio (WavLM / HuBERT / Emotion2Vec). Ver [ABLATION_SUMMARY](../config/ablation/ABLATION_SUMMARY.md). | 55–57 |
 | 58–63 | *Sin bitácora agrupada*: combos SOTA (MultiScale + SupCon + SpecAugment), pooling atencional y fine-tuning del 45. Ver [ABLATION_SUMMARY](../config/ablation/ABLATION_SUMMARY.md). | 58–63 |
 
-> `scripts/run_ablation.py` acepta estudios **`1-50`** y **`52-63`**. **No existe el estudio 51.**
+> `scripts/run_ablation.py` acepta estudios **`1-50`** y **`52-65`**. **No existe el estudio 51.**
 > Algunos YAML de `config/ablation/` (p. ej. `ablation_65_unfrozen_vit.yaml`) **no tienen ruta de
 > código** y no son ejecutables.
 

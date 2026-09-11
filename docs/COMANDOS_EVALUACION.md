@@ -127,7 +127,7 @@ El ensemble puede mejorar o estabilizar las métricas frente a un modelo individ
    - `evaluate_ensemble.py` necesita los archivos YAML de `config/ablation/`
    - O `config.json` del checkpoint (según implementación)
 
-2. **Modelos de Ablación (1-50, 52-63)**: 
+2. **Modelos de Ablación (1-50, 52-65)**: 
    - Usar `evaluate_ensemble.py` con `--study_numbers` para cargar arquitectura correcta
    - Usar `run_test_only.py` si tienes el directorio del run con `config.json`
    - El estudio 51 no está definido en el listado actual de `scripts/run_ablation.py`

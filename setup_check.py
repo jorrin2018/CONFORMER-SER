@@ -1,10 +1,22 @@
 """
-Script to verify installation and environment setup.
+Verifica la instalacion y el entorno de CONFORMER-SER.
+
+Comprueba version de Python, paquetes requeridos, disponibilidad de CUDA,
+estructura del proyecto y ruta del dataset IEMOCAP.
+
+Uso:
+    python setup_check.py
+
+Funciona desde cualquier directorio: todas las rutas se resuelven contra la
+raiz del repositorio (el directorio que contiene este archivo).
 """
 
 import sys
 import os
 import multiprocessing
+
+# Raiz del repositorio: este archivo vive en la raiz.
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def check_python_version():
@@ -49,7 +61,25 @@ def check_imports():
         except ImportError:
             print(f"[X]  {name:20s} NOT installed")
             all_ok = False
-    
+
+    # Extras opcionales: imports protegidos en el codigo. Su ausencia no es un
+    # error, pero condiciona que estudios se pueden ejecutar.
+    optional = {
+        'funasr': 'funasr (Emotion2Vec: estudios 50 y 57)',
+        'opensmile': 'opensmile (eGeMAPS: estudio 38)',
+        'bitsandbytes': 'bitsandbytes (optimizadores 8-bit)',
+        'xformers': 'xformers (memory-efficient attention)',
+        'triton': 'triton (kernels compilados)',
+    }
+    print("")
+    print("Extras opcionales:")
+    for package, name in optional.items():
+        try:
+            __import__(package)
+            print(f"[OK] {name}")
+        except Exception:
+            print(f"[--] {name} - no instalado")
+
     return all_ok
 
 
@@ -103,7 +133,7 @@ def check_dataset_path():
     print("\n" + "="*60)
     print("Checking dataset path...")
     
-    config_path = "config/config.yaml"
+    config_path = os.path.join(REPO_ROOT, "config", "config.yaml")
     
     if not os.path.exists(config_path):
         print(f"[!] Config file not found: {config_path}")
@@ -168,15 +198,23 @@ def check_project_structure():
     
     required_dirs = [
         'config',
+        'config/ablation',
         'src',
         'src/data',
         'src/models',
+        'src/ablation_studies',
         'src/utils',
-        'notebooks'
+        'scripts',
+        'scripts/windows',
+        'docs',
+        'notebooks',
     ]
-    
+
     required_files = [
+        # Configuracion
         'config/config.yaml',
+        'config/ablation/ABLATION_SUMMARY.md',
+        # Paquete src
         'src/__init__.py',
         'src/data/__init__.py',
         'src/data/dataset.py',
@@ -184,31 +222,40 @@ def check_project_structure():
         'src/models/__init__.py',
         'src/models/conformer.py',
         'src/models/fusion.py',
+        'src/ablation_studies/__init__.py',
+        'src/ablation_studies/classification_heads.py',
         'src/utils/__init__.py',
+        'src/utils/losses.py',
         'src/utils/metrics.py',
         'src/utils/logger.py',
+        # Puntos de entrada
         'src/train.py',
         'src/evaluate.py',
+        'src/evaluate_ensemble.py',
+        'scripts/run_ablation.py',
+        'scripts/run_test_only.py',
+        # Raiz
         'requirements.txt',
-        'README.md'
+        'README.md',
+        'AGENTS.md',
     ]
-    
+
     all_ok = True
-    
+
     for dir_path in required_dirs:
-        if os.path.isdir(dir_path):
+        if os.path.isdir(os.path.join(REPO_ROOT, dir_path)):
             print(f"[OK] Directory exists: {dir_path}")
         else:
             print(f"[X]  Directory missing: {dir_path}")
             all_ok = False
-    
+
     for file_path in required_files:
-        if os.path.isfile(file_path):
+        if os.path.isfile(os.path.join(REPO_ROOT, file_path)):
             print(f"[OK] File exists: {file_path}")
         else:
             print(f"[X]  File missing: {file_path}")
             all_ok = False
-    
+
     return all_ok
 
 
@@ -250,10 +297,14 @@ def main():
     print("\n" + "="*60)
     if all_passed:
         print("[OK] All checks passed! You're ready to train.")
-        print("\nNext steps:")
-        print("  1. Review config/config.yaml")
-        print("  2. Run: python src/train.py")
-        print("  3. Monitor with: tensorboard --logdir=logs")
+        print("")
+        print("Siguientes pasos:")
+        print("  1. Revisa config\\config.yaml (dataset.data_path)")
+        print("  2. Linea base : python src\\train.py --config config\\config.yaml --device cuda")
+        print("  3. Ablacion   : python scripts\\run_ablation.py --study 45 --device cuda")
+        print("                  (estudios validos: 1-50 y 52-63; no existe el 51)")
+        print("  4. Monitoreo  : tensorboard --logdir=logs")
+        print("  5. Guia corta : quickstart.md")
     else:
         print("[X] Some checks failed. Please fix the issues above.")
         print("\nCommon fixes:")

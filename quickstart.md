@@ -107,7 +107,7 @@ python src\train.py --config config\config.yaml --experiment_name baseline --dev
 python scripts\run_ablation.py --study 45 --device cuda
 ```
 
-Estudios válidos: **`1-50`** y **`52-63`**. **No existe el estudio 51.**
+Estudios válidos: **`1-50`** y **`52-65`**. **No existe el estudio 51.**
 Catálogo completo: [config/ablation/ABLATION_SUMMARY.md](config/ablation/ABLATION_SUMMARY.md).
 
 Los estudios **20, 29 y 41** ejecutan validación cruzada (K-Fold / LOSO) en lugar del split estándar.
@@ -204,7 +204,7 @@ python src\inference.py `
 | Dataset no encontrado | `dataset.data_path` mal configurado | Revísalo en `config\config.yaml` **y** en el YAML de ablación |
 | CUDA no disponible | `torch` instalado sin soporte CUDA | `python setup_check.py` y `nvidia-smi`; reinstala torch desde pytorch.org |
 | Un checkpoint de ablación falla con `evaluate.py` | `evaluate.py` es solo para la línea base | Usa `evaluate_ensemble.py` o `run_test_only.py` |
-| `Invalid study number` | Estudio fuera de rango o inexistente (51) | Rangos válidos: `1-50`, `52-63` |
+| `Invalid study number` | Estudio fuera de rango o inexistente (51) | Rangos válidos: `1-50`, `52-65` |
 | El YAML existe pero el estudio falla | Config huérfana sin ruta de código (p. ej. `ablation_65_*`) | Verifica en `scripts\run_ablation.py` |
 | Falla el estudio 50 o 57 | Falta `funasr` (encoder Emotion2Vec) | `pip install funasr` |
 

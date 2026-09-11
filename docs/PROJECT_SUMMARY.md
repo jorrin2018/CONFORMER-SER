@@ -1,114 +1,210 @@
-# Conformer-IEMOCAP-SER Project Summary
+# Resumen ejecutivo — CONFORMER-SER
 
-## Overview
-
-This project implements a state-of-the-art **Trimodal (Audio + Text + Visual)** Speech Emotion Recognition (SER) system using Wav2Vec2, DistilBERT with SpeechCue, and Vision Transformer (ViT), trained on the IEMOCAP dataset. The system achieves **~78% Unweighted Accuracy** on the 4-class task (Angry, Happy, Sad, Neutral).
-
-## Project Status: ✅ Complete and Actively Developed
-
-All core components are implemented. **39 ablation studies** explore fusion mechanisms, uncertainty modeling, conflict-aware attention, and SOTA improvements.
-
-## Architecture Overview
-
-### Trimodal Design
-- **Audio**: Wav2Vec2-Conformer (raw waveform, last 6 layers unfrozen)
-- **Text**: DistilBERT + **SpeechCue** (prosody-aware prompts)
-- **Visual**: ViT processing Mel-Spectrograms as 224×224 images
-- **Fusion**: Enhanced Cross-Attention (Abl 25) or Conflict-Aware Cross-Attention (Abl 34)
-- **Classification**: Bi-LSTM head or Dirichlet head (uncertainty-aware)
-
-### Best Models (as of Dec 2024)
-| Model | Test UA | Val UA | Gap | Notes |
-|-------|---------|--------|-----|-------|
-| **Ablation 34** (Conflict-Aware) | **77.98%** | 80.66% | 2.68% | Best generalization |
-| Ablation 25 (Enhanced CA) | 77.44% | 82.30% | 4.86% | Stable baseline |
-| Ablation 30 (Dirichlet) | 75.24% | 85.02% | 9.78% | Best validation, overfitting |
-
-## Ablation Studies (1-39)
-
-- **01-10**: Bimodal baseline, classification heads, unfreezing, GIA fusion
-- **11-13**: Trimodal (ViT), SpeechCue, base model
-- **20-28**: Fusion mechanisms (Hierarchical, Tensor, GMU, Enhanced CA, Late, GLU)
-- **30**: Dirichlet Evidence Learning
-- **31-35**: Temporal alignment, bucketing, Noise-Aware SpeechCue, Conflict-Aware, Active Learning
-- **36-39**: Conflict-Aware + Dirichlet/Focal, OpenSMILE residual, ACN+MIC+BCAF
-
-See `src/ablation_studies/README.md` and `config/ablation/ABLATION_SUMMARY.md` for details.
-
-## Project Structure
-
-```
-CONFORMER-SER/
-├── config/
-│   ├── config.yaml                    # Main configuration
-│   └── ablation/                      # 39 ablation configs
-├── src/
-│   ├── data/                          # IEMOCAP, preprocessing, ProsodyCue
-│   ├── models/                        # conformer.py, fusion.py
-│   ├── ablation_studies/              # 39 ablation model implementations
-│   ├── utils/                         # metrics, logger, losses
-│   ├── train.py, evaluate.py, inference.py
-│   └── evaluate_ensemble.py           # Ensemble evaluation
-├── scripts/
-│   └── run_ablation.py                # Run any ablation 1-39
-├── docs/                              # Project documentation
-├── checkpoints/                       # Model checkpoints per ablation
-└── logs/                              # TensorBoard logs
-```
-
-## Usage
-
-### Training (Ablation Studies)
-```powershell
-python scripts/run_ablation.py --study 34   # Conflict-Aware (best)
-python scripts/run_ablation.py --study 25   # Enhanced Cross-Attention
-python scripts/run_ablation.py --study 30   # Dirichlet
-```
-
-### Evaluation
-```powershell
-python src/evaluate_ensemble.py --checkpoints checkpoints/ablation_34/.../best_model.pt --configs config/ablation/ablation_34_conflict_aware_attention.yaml --study_numbers 34 --weights 1.0 --split test
-```
-
-### Inference
-```powershell
-python src/inference.py --checkpoint checkpoints/ablation_34/.../best_model.pt --audio audio.wav
-```
-
-## Key Features
-
-- **Trimodal**: Audio + Text + Visual (ViT on Mel-Spectrograms)
-- **4-Class**: Angry, Happy, Sad, Neutral (reduced from 7 for reliability)
-- **SpeechCue**: Prosody-to-text prompting for semantic enrichment
-- **Conflict-Aware Fusion**: Handles irony/sarcasm via confidence weighting
-- **Dirichlet**: Uncertainty-aware classification
-- **OpenSMILE**: eGeMAPSv02 features (Ablation 38)
-- **Speaker-Independent**: Sessions 1-3 train, 4 val, 5 test
-
-## Documentation
-
-- `README.md` - Main project documentation
-- `src/ablation_studies/README.md` - Ablation studies guide
-- `config/ablation/ABLATION_SUMMARY.md` - Config reference
-- `docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md` - Results analysis
-- `docs/COMANDOS_EVALUACION.md` - Evaluation commands
-
-## Technical Specifications
-
-- **Python**: 3.8+
-- **PyTorch**: 2.0+
-- **CUDA**: 11.7+ (recommended)
-- **Dataset**: IEMOCAP (~5K utterances, 4 classes)
-
-## System Requirements
-
-- **Recommended**: 32GB RAM, NVIDIA GPU 12GB+ VRAM
-- **Training**: ~4-8 hours per ablation (depending on GPU)
+Visión de conjunto del proyecto. Para instalar y ejecutar, ve a
+[../quickstart.md](../quickstart.md); para el detalle técnico,
+[ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md).
 
 ---
 
-**Date**: March 2025  
-**Version**: 5.0  
-**Status**: Production Ready  
-**License**: MIT
+## Qué es
 
+Sistema **trimodal** (audio + texto + visión) de reconocimiento de emociones en habla sobre
+**IEMOCAP**, con 4 clases: `angry`, `happy`, `sad`, `neutral`.
+
+La contribución de investigación es **CAMF** (*Conflict-Aware Multimodal Fusion*): una fusión que
+detecta y pondera el desacuerdo entre modalidades, pensada para casos donde el contenido semántico
+y la prosodia apuntan a emociones distintas (ironía, sarcasmo).
+
+---
+
+## Arquitectura
+
+| Componente | Implementación |
+|---|---|
+| **Audio** | Wav2Vec2 / WavLM / HuBERT / Emotion2Vec (últimas capas descongeladas) |
+| **Texto** | DistilBERT / BERT / RoBERTa + **SpeechCue** (prompts prosódicos) |
+| **Visión** | ViT sobre log-mel **calculado en el `forward`** desde el waveform del batch |
+| **Fusión** | Conflict-Aware Cross-Attention (est. 34) · Enhanced Cross-Attention (est. 25) · y 7 más |
+| **Cabeza** | MLP · Bi-LSTM · Transformer · CNN1D · MultiScaleTemporal (est. 45) · Dirichlet |
+| **Pérdidas** | CE ponderada · Focal · Dirichlet Evidence · SupCon · compuestas |
+
+> **Nota sobre la rama visual:** IEMOCAP se consume como audio crudo. **No hay espectrogramas mel
+> precalculados en disco**; se generan dentro del modelo en cada paso a partir del mismo waveform
+> que consume la rama de audio.
+
+---
+
+## Estado
+
+Componentes principales implementados y en desarrollo activo.
+
+| Métrica | Valor |
+|---|---|
+| Estudios de ablación ejecutables | **64** (rangos `1-50` y `52-65`) |
+| Configuraciones YAML en `config/ablation/` | 70 |
+| Clases de modelo en `src/ablation_studies/` | 34 |
+| Documentos en `docs/` | 18 |
+
+Hay más YAML que estudios ejecutables: varias configs son variantes de un mismo estudio y **dos
+son huérfanas** (`ablation_65_unfrozen_vit.yaml` y
+`ablation_phase2_49_wavlm_multiscale_head_FUTURE.yaml`), sin ruta de código en `run_ablation.py`.
+Hay menos clases de modelo que estudios porque muchos estudios **reutilizan la misma clase** con
+distinto YAML.
+
+---
+
+## Resultados
+
+> [!CAUTION]
+> **No hay cifras de resultados validas en este momento.**
+>
+> La auditoria posterior al rechazo de CIARP 2026 (septiembre de 2026) encontro un bug de
+> carga de datos (`_find_audio_file`) que descartaba las **2 943 utterances improvisadas**.
+> El bug esta corregido, pero **todas las cifras anteriores al arreglo quedan invalidadas**,
+> incluidas las que circulaban como canonicas (Ablation 34 con 77.98 % UA, Ablation 25 con
+> 77.44 %, Ablation 30 con 75.24 %). No las reutilices en texto, tablas ni presentaciones.
+>
+> El corpus verificado es de **5 531 utterances** en 4 clases
+> (train 3 259 / val 1 031 / test 1 241). Verificalo con `python scriptserify_iemocap.py`.
+>
+> Requisitos para cualquier cifra publicable, segun la auditoria:
+> **LOSO 5-fold** (`--loso`) con media ± sigma — la sigma entre folds de este codigo es de
+> 4–5 pp, asi que un unico split no sostiene una afirmacion de menos de 1 pp; **un solo
+> factor por fila de ablacion**; y reportar N de test y soporte por clase.
+>
+> Detalle y procedencia de cada numero medido:
+> [REWRITE_NOTES.md](REWRITE_NOTES.md) y
+> [dataset_integrity_patch.md](dataset_integrity_patch.md).
+
+Cuando existan corridas LOSO posteriores al arreglo, el ranking se regenera con:
+
+```powershell
+python scriptsggregate_ablation_results.py --write-docs
+```
+
+y queda en [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md).
+
+---
+
+## Series de ablación
+
+| Serie | Tema |
+|-------|------|
+| 01–04 | Cabezas de clasificación (MLP, LSTM, Transformer, CNN1D) |
+| 05–07 | Estrategias de descongelado de encoders |
+| 08–09 | Profundidad de la fusión |
+| 10–12 | SpeechCue y multimodalidad |
+| 13–20 | Línea base trimodal (ViT) y K-Fold |
+| 21–28 | Mecanismos de fusión (jerárquica, tensorial, bilineal, GMU, GLU, late) |
+| 29–30 | Enhanced Cross-Attention y Dirichlet Evidence Learning |
+| 31–35 | Alineamiento temporal, bucketing, SpeechCue robusto, **Conflict-Aware** |
+| 36–39 | Conflict-Aware + Dirichlet/Focal, residual OpenSMILE, ACN+MIC+BCAF |
+| 40–43 | WavLM + Conflict-Aware, ViT, mejoras de entrenamiento |
+| 44–46 | Cabezas alternativas (Transformer, **MultiScaleTemporal**, CNN1D) |
+| 47–50 | SupCon pre-fusión y encoders de audio alternativos |
+| 52–54 | WavLM + SpecAugment + hidden states ponderados |
+| 55–57 | Receta del estudio 45 con WavLM / HuBERT / Emotion2Vec |
+| 58–63 | Combos SOTA, pooling atencional y ajuste fino del 45 |
+
+Detalle por estudio: [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md)
+y [../src/ablation_studies/README.md](../src/ablation_studies/README.md).
+Los estudios **20, 29 y 41** usan validación cruzada (K-Fold / LOSO) en lugar del split estándar.
+
+---
+
+## Estructura del proyecto
+
+```text
+CONFORMER-SER/
+├── config/
+│   ├── config.yaml              # configuración de la línea base
+│   └── ablation/                # 70 YAML + ABLATION_SUMMARY.md
+├── src/
+│   ├── data/                    # IEMOCAP, preprocesado, ProsodyCue
+│   ├── models/                  # conformer.py, fusion.py, encoders
+│   ├── ablation_studies/        # 34 clases de modelo + cabezas
+│   ├── experiments/             # línea de encoders ligeros
+│   ├── utils/                   # métricas, logging, pérdidas
+│   ├── train.py · evaluate.py · inference.py
+│   └── evaluate_ensemble.py     # evaluación de ablaciones y ensembles
+├── scripts/
+│   ├── run_ablation.py          # ejecuta cualquier estudio 1-50, 52-65
+│   ├── run_test_only.py         # solo test sobre un run existente
+│   └── windows/                 # atajos .bat / .ps1
+├── docs/                        # documentación (índice: docs/README.md)
+├── paper/                       # manuscritos, figuras, pósters, presentaciones
+├── tests/
+├── checkpoints/                 # generado al entrenar (fuera de git)
+└── logs/                        # TensorBoard (fuera de git)
+```
+
+---
+
+## Uso
+
+```powershell
+# Entrenamiento de una ablación
+python scripts\run_ablation.py --study 34 --device cuda   # Conflict-Aware
+python scripts\run_ablation.py --study 45 --device cuda   # MultiScaleTemporal
+
+# Evaluación de un checkpoint de ablación
+python src\evaluate_ensemble.py `
+  --checkpoints checkpoints\ablation_34\run\best_model.pt `
+  --configs config\ablation\ablation_34_conflict_aware_attention.yaml `
+  --study_numbers 34 --weights 1.0 --split test --device cuda
+
+# Inferencia (modelo base)
+python src\inference.py --checkpoint checkpoints\best_model.pt --audio audio.wav
+```
+
+> `src\evaluate.py` es **solo** para la línea base. Con checkpoints de ablación usa
+> `evaluate_ensemble.py` o `run_test_only.py`.
+
+---
+
+## Características clave
+
+- **Trimodal**: audio + texto + visión (ViT sobre log-mel generado en el modelo).
+- **4 clases**: reducidas desde 7 por fiabilidad de las etiquetas.
+- **SpeechCue**: prosodia convertida a prompt textual para enriquecer la rama semántica.
+- **Fusión Conflict-Aware**: pondera el desacuerdo entre modalidades (ironía, sarcasmo).
+- **Dirichlet Evidence Learning**: clasificación con estimación de incertidumbre.
+- **OpenSMILE**: descriptores eGeMAPSv02 (estudio 38, requiere `opensmile`).
+- **Hablante-independiente**: sesiones 1–3 train, 4 val, 5 test.
+
+---
+
+## Requisitos técnicos
+
+| | |
+|---|---|
+| Python | 3.8+ |
+| PyTorch | 2.0+ |
+| CUDA | 11.7+ recomendado |
+| Dataset | IEMOCAP (~5K utterances tras filtrar a 4 clases) |
+| RAM | 32 GB recomendado |
+| VRAM | 12 GB+ recomendado |
+| Duración | ~4–8 h por ablación, según GPU |
+
+Dependencias: [../requirements.txt](../requirements.txt). Los extras opcionales (`funasr`,
+`opensmile`, `bitsandbytes`, `xformers`, `triton`) están documentados ahí y `setup_check.py`
+informa de cuáles tienes instalados.
+
+---
+
+## Documentación relacionada
+
+| Documento | Contenido |
+|---|---|
+| [../README.md](../README.md) | Documentación principal |
+| [../quickstart.md](../quickstart.md) | Instalación y comandos |
+| [../AGENTS.md](../AGENTS.md) | Convenciones del repo para asistentes de IA |
+| [README.md](README.md) | Índice de la documentación |
+| [ARCHITECTURE_AND_WORKFLOWS.md](ARCHITECTURE_AND_WORKFLOWS.md) | Mapa técnico y flujos |
+| [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md) | Catálogo de estudios |
+| [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md) | Ranking regenerable de resultados |
+| [COMANDOS_EVALUACION.md](COMANDOS_EVALUACION.md) | Recetario de evaluación |
+
+---
+
+*Versión 5.1.1 · Actualizado en septiembre de 2026 · Licencia MIT*

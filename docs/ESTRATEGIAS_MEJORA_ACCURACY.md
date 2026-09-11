@@ -1,5 +1,10 @@
 # Estrategias para Superar el Estancamiento en 76-77% Accuracy
 
+> [!NOTE]
+> **Documento historico.** Escrito a partir de los primeros **39 experimentos**. Las estrategias
+> siguen siendo validas como analisis, pero las cifras y el diagnostico corresponden a ese momento.
+> Estado actual: [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md).
+
 **Fecha**: Diciembre 2024 (actualizado Marzo 2025)  
 **Problema Identificado**: Todos los experimentos se estancan alrededor del 76-78% UA en test, con gaps significativos entre validación y test (overfitting).  
 **Nota**: Ablation 34 (mejor ejecución) alcanza 77.98% UA con gap de solo 2.68%.

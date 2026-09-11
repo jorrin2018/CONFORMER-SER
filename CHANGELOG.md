@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.1.1] - 2026-09-10
+
+Follow-up to 5.1.0: align the remaining files that the reorganization left behind.
+
+### Changed
+- **`requirements.txt`** rewritten. The core set is unchanged, but the five optional extras are now
+  documented instead of a single commented `funasr` line: `funasr` (studies **50 and 57**, both use
+  `emotion2vec/emotion2vec_base` — the old comment named only study 50), `opensmile` (study 38),
+  and `bitsandbytes` / `xformers` / `triton` (runtime-detected training optimizations). All five are
+  guarded imports, so the repository works without them. Added `huggingface-hub` (hard import in
+  `src/experiments/train_lightweight.py`), lower bounds on torch/torchaudio/transformers, and a
+  reference environment block with the verified installed versions.
+- **`setup_check.py`**:
+  - Resolves every path against the repository root instead of the current working directory, so it
+    now passes when invoked from anywhere (previously `Project Structure` and `Dataset Path` failed
+    unless the CWD was the repo root).
+  - Structure check extended from 6 to 11 directories and from 15 to 23 files: it now covers
+    `config/ablation/`, `src/ablation_studies/`, `scripts/`, `scripts/windows/`, `docs/`,
+    `run_ablation.py`, `run_test_only.py`, `evaluate_ensemble.py`, `losses.py` and `AGENTS.md`.
+  - Reports which optional extras are installed, naming the studies each one gates.
+  - Footer now shows both the baseline and the ablation entry points and the valid study range.
+- **`docs/PROJECT_SUMMARY.md`** rewritten. It claimed "39 ablation studies", "39 ablation configs"
+  and "run any ablation 1-39"; the real figures are 64 runnable studies (`1-50`, `52-63`), 70 YAML
+  configs and 34 model classes. Explains why those three numbers differ. Structure block now
+  includes `paper/`, `scripts/windows/`, `tests/` and `src/experiments/`. Translated to Spanish per
+  the `docs/` convention. Reported results are kept but labelled as not auto-regenerated, pointing
+  at `RANKING_Y_RESULTADOS.md`.
+
+### Fixed — alignment with the post-CIARP-2026 audit
+- The audit (documented in `docs/REWRITE_NOTES.md`) invalidates every result measured before the
+  `_find_audio_file` fix, which was silently discarding the 2 943 improvised utterances. Removed
+  the reference-results table from `docs/PROJECT_SUMMARY.md`, which was reproducing exactly those
+  discredited figures (77.98 / 77.44 / 75.24 % UA), and replaced it with the audit warning, the
+  verified corpus size (5 531 utterances; train 3 259 / val 1 031 / test 1 241) and the
+  requirements for publishable numbers (LOSO 5-fold with mean ± sigma, one factor per row).
+- Added the same warning to `README.md` and `docs/README.md`, pointing at `REWRITE_NOTES.md`,
+  `dataset_integrity_patch.md` and `scripts/verify_iemocap.py`.
+- **Corrected the valid study range from `52-63` to `52-65`** across the documentation: studies 64
+  (SpeechCue as described in the paper) and 65 (unfrozen ViT) are now wired into
+  `create_ablation_model()`.
+
+### Documentation
+- Added scope banners to three historical analyses whose conclusions are drawn from the first 39
+  studies only: `COMPREHENSIVE_ABLATION_ANALYSIS.md`, `ESTRATEGIAS_MEJORA_ACCURACY.md` and
+  `RESUMEN_ESTRATEGIAS.md`. Marked them 🕰️ in the `docs/README.md` index.
+
 ## [5.1.0] - 2026-09-09
 
 ### Repository hygiene

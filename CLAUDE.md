@@ -26,7 +26,7 @@ python scripts\run_test_only.py --checkpoint_dir <run_dir> --study 45 --device c
 
 1. **`src/evaluate.py` is baseline-only.** For ablation checkpoints use `src/evaluate_ensemble.py`
    or `scripts/run_test_only.py`.
-2. **Valid studies are `1–50` and `52–63`; study 51 does not exist.** Some YAMLs in
+2. **Valid studies are `1–50` and `52–65`; study 51 does not exist.** Some YAMLs in
    `config/ablation/` (e.g. `ablation_65_*`) have no code path — a config file is not a runnable
    study.
 3. **The ViT log-mel is computed on the fly inside the model** from the batch waveform. There is

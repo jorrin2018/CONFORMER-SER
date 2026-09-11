@@ -1,17 +1,66 @@
-# CONFORMER-SER — paquetes comprobados por setup_check.py (check_imports).
-# Para GPU/CUDA en Windows, suele ser preferible instalar torch y torchaudio desde:
-#   https://pytorch.org/get-started/locally/
-# y luego: pip install -r requirements.txt
-torch
-torchaudio
-transformers
+# ---------------------------------------------------------------------------
+# CONFORMER-SER — dependencias
+#
+# Paquetes verificados por `python setup_check.py` (check_imports).
+#
+# GPU / CUDA: instala PRIMERO torch y torchaudio con la build de CUDA que
+# corresponda a tu driver, desde https://pytorch.org/get-started/locally/
+# y solo despues ejecuta:
+#     pip install -r requirements.txt
+# Si instalas torch desde este archivo obtendras la build de CPU.
+# ---------------------------------------------------------------------------
+
+# --- Nucleo ----------------------------------------------------------------
+torch>=2.0
+torchaudio>=2.0
+transformers>=4.30
+huggingface-hub>=0.20
+
+# --- Datos y metricas ------------------------------------------------------
 numpy
 pandas
 scikit-learn
 PyYAML
 tqdm
+
+# --- Visualizacion y seguimiento -------------------------------------------
 matplotlib
 seaborn
 tensorboard
-# Opcional: estudio de ablación 50 (Emotion2Vec / encoder Emotion2Vec vía funasr)
+
+# ---------------------------------------------------------------------------
+# EXTRAS OPCIONALES
+#
+# Todos son imports protegidos (try/except): el repositorio funciona sin ellos,
+# pero los estudios indicados fallaran o degradaran si faltan.
+# Instalalos a mano segun lo que vayas a ejecutar.
+# ---------------------------------------------------------------------------
+
+# Encoder Emotion2Vec — necesario para los estudios de ablacion 50 y 57
+#   (ambos usan audio_encoder: "emotion2vec/emotion2vec_base")
+#   Import en src/models/emotion2vec_encoder.py
 # funasr
+
+# Descriptores eGeMAPS — necesario para el estudio de ablacion 38
+#   (rama residual OpenSMILE). Import en src/models/opensmile_extractor.py
+# opensmile
+
+# Optimizaciones de entrenamiento (opcionales, detectadas en tiempo de
+# ejecucion por scripts/run_ablation.py; sin ellas se usa la ruta estandar)
+# bitsandbytes    # optimizadores de 8 bits
+# xformers        # memory-efficient attention
+# triton          # kernels compilados
+
+# --- Desarrollo (opcional) -------------------------------------------------
+# black
+# flake8
+# mypy
+# pytest
+
+# ---------------------------------------------------------------------------
+# Entorno de referencia (verificado el 2026-09-10, Windows 11 + RTX, CUDA 11.8)
+#   torch 2.5.1+cu118      transformers 5.8.0     numpy 2.4.4
+#   torchaudio 2.5.1+cu118 huggingface-hub 1.14.0 pandas 3.0.2
+#   scikit-learn 1.8.0     PyYAML 6.0.3           tqdm 4.67.3
+#   matplotlib 3.10.9      seaborn 0.13.2         tensorboard 2.20.0
+# ---------------------------------------------------------------------------

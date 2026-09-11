@@ -146,6 +146,6 @@ checkpoints/
 - Para comparar varios modelos, usa `src/evaluate_ensemble.py`.
 - Para cambiar rutas de dataset, edita `dataset.data_path` en `config/config.yaml` o en el YAML de ablación correspondiente.
 - Para el estudio 50 (y variantes con Emotion2Vec, p. ej. 57) puede requerirse `funasr`, según el encoder configurado.
-- El código actual lista estudios `1-50` y `52-63`; el estudio 51 no está definido en `scripts/run_ablation.py`.
+- El código actual lista estudios `1-50` y `52-65`; el estudio 51 no está definido en `scripts/run_ablation.py`.
 - Algunos YAML de `config/ablation/` (p. ej. `ablation_65_unfrozen_vit.yaml`) **no tienen ruta de código** y no son ejecutables.
 

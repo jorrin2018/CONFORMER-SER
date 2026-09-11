@@ -16,6 +16,17 @@ fusión sensible al conflicto entre modalidades.
 
 ---
 
+---
+
+> [!CAUTION]
+> **Auditoria post-CIARP-2026: las cifras de resultados anteriores estan invalidadas.**
+> Un bug de carga de datos descartaba las 2 943 utterances improvisadas. Esta corregido,
+> pero ningun numero previo al arreglo (77.98 % UA, etc.) debe reutilizarse. Antes de
+> tocar resultados o el articulo, lee [docs/REWRITE_NOTES.md](docs/REWRITE_NOTES.md) y
+> [docs/dataset_integrity_patch.md](docs/dataset_integrity_patch.md), y ejecuta
+> `python scriptserify_iemocap.py`. Las cifras publicables requieren **LOSO 5-fold**
+> (`--loso`) con media ± sigma.
+
 ## Descripción
 
 CONFORMER-SER investiga arquitecturas multimodales para clasificar emociones en habla sobre el
@@ -24,7 +35,7 @@ corpus **IEMOCAP**, con 4 clases: `angry`, `happy`, `sad` y `neutral`.
 El repositorio contiene dos vías de trabajo independientes:
 
 - una **línea base** entrenable desde `config/config.yaml`, y
-- una **batería extensa de estudios de ablación** (`1–50`, `52–63`) que explora encoders de audio,
+- una **batería extensa de estudios de ablación** (`1–50`, `52–65`) que explora encoders de audio,
   mecanismos de fusión, cabezas de clasificación y funciones de pérdida.
 
 | Aspecto | Valor |
@@ -161,7 +172,7 @@ tensorboard --logdir=logs
 
 ## Estudios de ablación
 
-Estudios válidos: **`1–50`** y **`52–63`**. **No existe el estudio 51.**
+Estudios válidos: **`1–50`** y **`52–65`**. **No existe el estudio 51.**
 
 El mapeo canónico *número de estudio → clase de modelo → YAML* está en
 [`scripts/run_ablation.py`](scripts/run_ablation.py) (función `create_ablation_model`). El catálogo

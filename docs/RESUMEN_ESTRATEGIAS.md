@@ -1,5 +1,10 @@
 # Resumen Ejecutivo: Estrategias para Superar 76-77% Accuracy
 
+> [!NOTE]
+> **Documento historico.** Resumen de [ESTRATEGIAS_MEJORA_ACCURACY.md](ESTRATEGIAS_MEJORA_ACCURACY.md),
+> basado en los primeros 39 experimentos. Estado actual:
+> [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md).
+
 ## 🔍 Problema Identificado
 
 Todos los experimentos se estancan alrededor del **76-77% Unweighted Accuracy** en test, con gaps significativos entre validación y test (overfitting del 4.9% al 9.8%).

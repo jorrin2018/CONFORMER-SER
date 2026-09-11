@@ -1,6 +1,13 @@
 # Comprehensive Deep Analysis: Ablation Studies for Speech Emotion Recognition (SER)
 ## PhD Research Project - CONFORMER-SER
 
+> [!NOTE]
+> **Documento historico.** Este analisis cubre los estudios **1-39**, que eran todos los
+> existentes cuando se escribio. El repositorio tiene hoy estudios **1-50 y 52-63**; las series
+> 40-63 no estan analizadas aqui.
+> Estado actual: [../config/ablation/ABLATION_SUMMARY.md](../config/ablation/ABLATION_SUMMARY.md)
+> y [RANKING_Y_RESULTADOS.md](RANKING_Y_RESULTADOS.md) (regenerable).
+
 **Date**: December 2024 (updated March 2025)  
 **Researcher**: PhD Candidate  
 **Project**: Multimodal Speech Emotion Recognition using Conformer, DistilBERT, and ViT  
