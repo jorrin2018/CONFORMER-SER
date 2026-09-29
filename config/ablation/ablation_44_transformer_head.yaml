@@ -3,7 +3,7 @@
 # Same architecture and training as 34, but replacing the LSTM head with a Transformer-based head.
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

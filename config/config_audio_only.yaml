@@ -2,7 +2,7 @@
 
 # Dataset
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   # Emotion labels (7 categories - fearful, surprised, and other removed due to low/imbalanced sample count)
   emotions:
     - angry

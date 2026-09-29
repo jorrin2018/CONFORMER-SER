@@ -4,7 +4,7 @@
 
 # Dataset (inherited from base, but emotions list updated to 4 classes)
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

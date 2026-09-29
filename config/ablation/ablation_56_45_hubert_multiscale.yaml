@@ -3,7 +3,7 @@
 # Baseline de arquitectura: `ablation_45_multiscale_head.yaml`.
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

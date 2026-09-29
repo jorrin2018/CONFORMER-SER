@@ -3,7 +3,7 @@
 # Base reference: ablation_34_20251210_191151 (77.98% UA, gap 2.68%).
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

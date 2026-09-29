@@ -1,0 +1,179 @@
+# Ablation Study 75: la compuerta de conflicto, esta vez FUNCIONANDO.
+#
+# LO QUE SE DESCUBRIO EL 20/09/2026. Los tres clasificadores por rama que alimentan
+# la deteccion de conflicto (audio_classifier, text_classifier, vision_classifier) se
+# inicializan con normal(0, std=0.01) y se consumen UNICAMENTE a traves de un argmax
+# dentro de _detect_conflict_prediction_divergence. El argmax no es diferenciable:
+# esos clasificadores NUNCA reciben gradiente y se quedan en su inicializacion
+# aleatoria durante todo el entrenamiento.
+#
+# Medido sobre los checkpoints del estudio 72, y las tres cifras coinciden con lo que
+# predice el modelo "tres clasificadores aleatorios sobre 4 clases":
+#
+#   tasa de conflicto  94.5 %   vs   1 - 1/16    = 93.75 %
+#   oraculo            58.4 %   vs   1 - (3/4)^3 = 57.8 %
+#   una rama al azar   22.3 %   vs   1/4         = 25 %
+#
+# Es decir: la compuerta llevaba toda la vida del proyecto disparando sobre ruido, en
+# el 94.5 % de las muestras. El estudio 74 no comparo "con compuerta vs sin": comparo
+# "reponderacion guiada por ruido vs peso uniforme". Que quitarla diera +0.86 pp y
+# bajara la sigma de 4.13 a 3.06 tiene ahora explicacion mecanica.
+#
+# QUE CAMBIA AQUI, y es UN SOLO FACTOR frente al 72: aux_loss_weight > 0 anade una
+# entropia cruzada sobre los tres clasificadores por rama contra la etiqueta. Con eso
+# reciben gradiente, aprenden a clasificar de verdad, y "conflicto" pasa a significar
+# "las ramas discrepan" en vez de "tres dados salieron distintos". Solo entonces se
+# puede responder por primera vez si la compuerta aporta algo.
+#
+# El peso 0.3 es una eleccion inicial, no un valor ajustado: suficiente para que los
+# clasificadores aprendan sin dominar la perdida principal. DECLARARLO ASI en el
+# articulo. Si el 75 funciona, un barrido del peso es trabajo posterior.
+#
+# QUE ESPERAR:
+#   tasa de conflicto muy por debajo del 94.5 % -> la deteccion ya discrimina.
+#   oraculo por encima del 58 % -> hay margen real que recuperar.
+#   75 > 74 -> la compuerta aporta cuando el detector funciona. Contribucion, y el
+#              titulo "Conflict-Aware" se recupera.
+#   75 = 74 -> el mecanismo no aporta ni con el detector arreglado. Es el resultado
+#              definitivo y cierra la pregunta con autoridad, no por un bug.
+#
+# Verificar ANTES:  python scripts/check_aux_loss.py
+# Comparar contra el 74 (75.57 +- 3.06) Y contra el 72 (74.71 +- 4.13), pareado.
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: true
+    aux_loss_weight: 0.3   # <-- EL UNICO CAMBIO frente al 72
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true   # <-- EL UNICO CAMBIO
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_75"
+  checkpoint_dir: "./checkpoints/ablation_75"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-75"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

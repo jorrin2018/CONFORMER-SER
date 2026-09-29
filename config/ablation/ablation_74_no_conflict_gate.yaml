@@ -1,0 +1,166 @@
+# Ablation Study 74: el estudio 72 SIN la compuerta de conflicto.
+#
+# ESTE EXPERIMENTO DECIDE EL TITULO DEL ARTICULO.
+#
+# El articulo se llama "Conflict Aware Multistream Fusion" y esa afirmacion nunca se ha
+# medido: el "+2.73 pp de la compuerta" del manuscrito comparaba arquitecturas distintas
+# y esta retirado.
+#
+# UN SOLO FACTOR, y es de verdad uno solo. La compuerta es una interpolacion:
+#
+#     final_weights = (1 - conflict_mask) * base_weights + conflict_mask * conflict_weights
+#
+# Con enabled: false la deteccion se sigue calculando (para poder reportar cada cuanto
+# habria disparado) pero la mascara se fuerza a 0, asi que final_weights == base_weights,
+# el peso uniforme 1/3. Misma arquitectura, MISMO NUMERO DE PARAMETROS, mismas formas: lo
+# unico que cambia es que la compuerta no dispara.
+#
+# OJO -- hasta el 18/09/2026 esta clave solo se leia en la ruta BIMODAL. En la trimodal
+# la compuerta estaba siempre activa y poner enabled: false no hacia absolutamente nada.
+# Corregido en ablation_34_model.py. Verificar con scripts/check_conflict_gate.py que el
+# interruptor de verdad apaga la compuerta ANTES de gastar GPU.
+#
+# Comparar SOLO contra el 72 (74.71 +- 4.13), pareado por fold.
+#
+# LECTURA:
+#   72 > 74  -> la compuerta aporta; el titulo se sostiene y es LA contribucion.
+#   72 = 74  -> hay que cambiar el titulo. Analizar cuando dispara y por que no ayuda es
+#               mejor subseccion que un numero inventado (R1 elogio esa transparencia).
+#   72 < 74  -> el resultado mas interesante de los tres. Reportarlo tal cual.
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: false   # <-- EL UNICO CAMBIO frente al 72
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true   # <-- EL UNICO CAMBIO
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_74"
+  checkpoint_dir: "./checkpoints/ablation_74"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-74"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

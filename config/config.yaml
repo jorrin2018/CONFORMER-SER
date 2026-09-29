@@ -2,7 +2,7 @@
 
 # Dataset
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   # Emotion labels (4 categories - happy merges happy/excited, others removed)
   emotions:
     - angry

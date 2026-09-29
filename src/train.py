@@ -7,6 +7,7 @@ learning-rate scheduling. Supports resuming from checkpoint.
 
 import os
 import sys
+import random
 import yaml
 import torch
 import torch.nn as nn
@@ -23,7 +24,10 @@ import numpy as np
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.data import IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn, collate_fn_audio_only
+from src.data import (IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn,
+                      collate_fn_audio_only, build_dataset, corpus_from_config)
+from src.data.speechcue import (SPEECHCUE_TOKENS, SpeechCueNormalizer,
+                               SpeechCueStatsCache, SpeechCueTertiles)
 from src.models import ConformerMultimodalModel, AudioOnlyModel
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
 from src.utils.logger import setup_logger, TensorBoardLogger, ExperimentTracker, print_model_summary
@@ -64,6 +68,93 @@ def load_config(config_path: str) -> dict:
     return config
 
 
+def _random_fold_indices(config, logger):
+    """Reparto ALEATORIO estratificado sobre las cinco sesiones, al estilo Yoon et al. 2018.
+
+    DEPENDIENTE DE HABLANTE A PROPOSITO. Los mismos actores aparecen en train, val y
+    test. No es el protocolo honesto y no debe usarse para el numero principal: existe
+    para medir, con el mismo modelo y el mismo corpus, cuanto vale el reparto por si
+    solo frente a LOSO. Yoon reporta 0.718 WAP con 5-fold aleatorio y split 8:0.5:1.5
+    sobre EXACTAMENTE estas 5 531 utterances (1636 happy / 1084 sad / 1103 angry /
+    1708 neutral, los mismos conteos que verify_iemocap.py).
+
+    Lectura de "5-fold" que se adopta aqui, declarada porque el original es ambiguo:
+    particion estricta en 5 bloques estratificados por clase; el bloque k es test
+    (~20 %), y de lo que queda se aparta `val_fraction` estratificado para validacion.
+
+    Devuelve (train_idx, val_idx, test_idx) sobre el dataset construido con las cinco
+    sesiones y en el mismo orden.
+    """
+    import random as _rnd
+
+    rf = config['dataset']['random_folds']
+    n_folds = int(rf.get('n_folds', 5))
+    fold_index = int(rf['fold_index'])
+    val_fraction = float(rf.get('val_fraction', 0.06))
+    all_sessions = config['dataset'].get('all_sessions') or [1, 2, 3, 4, 5]
+
+    # Dataset de sondeo: solo se parsean etiquetas y transcripciones, no se carga audio.
+    sonda = build_dataset(
+        corpus=corpus_from_config(config),
+        data_path=config['dataset']['data_path'],
+        sessions=all_sessions,
+        emotions=config['dataset']['emotions'],
+        sample_rate=config['dataset']['sample_rate'],
+        audio_preprocessor=None,
+        text_preprocessor=None,
+        max_audio_length=config['audio']['max_length'],
+        training=False,
+    )
+    por_clase = {}
+    for i, d in enumerate(sonda.data):
+        por_clase.setdefault(d['emotion'], []).append(i)
+
+    # Semilla FIJA para el reparto, independiente de config['seed']: asi los cinco
+    # folds son una particion de verdad y no cinco muestreos distintos.
+    rng = _rnd.Random(20260918)
+    bloques = [[] for _ in range(n_folds)]
+    for emo in sorted(por_clase):
+        idx = sorted(por_clase[emo])
+        rng.shuffle(idx)
+        for j, i in enumerate(idx):
+            bloques[j % n_folds].append(i)
+
+    test_idx = sorted(bloques[fold_index])
+    resto = sorted(i for j, b in enumerate(bloques) if j != fold_index for i in b)
+
+    emo_de = {i: d['emotion'] for i, d in enumerate(sonda.data)}
+    resto_por_clase = {}
+    for i in resto:
+        resto_por_clase.setdefault(emo_de[i], []).append(i)
+    rng_val = _rnd.Random(20260918 + fold_index)
+    val_idx, train_idx = [], []
+    for emo in sorted(resto_por_clase):
+        idx = sorted(resto_por_clase[emo])
+        rng_val.shuffle(idx)
+        k = max(1, int(round(val_fraction * len(idx))))
+        val_idx += idx[:k]
+        train_idx += idx[k:]
+    val_idx.sort(); train_idx.sort()
+
+    solapa = (set(train_idx) & set(val_idx)) | (set(train_idx) & set(test_idx)) | \
+             (set(val_idx) & set(test_idx))
+    if solapa:
+        raise RuntimeError(f"Reparto aleatorio con solapamiento: {len(solapa)} indices repetidos")
+    if len(train_idx) + len(val_idx) + len(test_idx) != len(sonda.data):
+        raise RuntimeError("El reparto aleatorio no cubre el corpus entero")
+
+    hablante = lambda u: f"{u[:5]}_{u.split('_')[-1][0]}"
+    h_train = {hablante(sonda.data[i]['utterance_id']) for i in train_idx}
+    h_test = {hablante(sonda.data[i]['utterance_id']) for i in test_idx}
+    logger.warning(
+        f"[protocolo ALEATORIO, fold {fold_index}] train {len(train_idx)} / "
+        f"val {len(val_idx)} / test {len(test_idx)} sobre {len(sonda.data)} utterances. "
+        f"Hablantes compartidos entre train y test: {len(h_train & h_test)} de {len(h_test)} "
+        f"-- DEPENDIENTE DE HABLANTE, a proposito. No usar para el numero principal."
+    )
+    return train_idx, val_idx, test_idx
+
+
 def create_dataloaders(config: dict, logger, audio_only: bool = False):
     """Create train, validation, and test dataloaders."""
     logger.info(f"Creating dataloaders for {'audio-only' if audio_only else 'multimodal'} model...")
@@ -87,6 +178,40 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     text_config = config.get('text', {})
     use_prosody_cues = text_config.get('use_prosody_cues', False) if not audio_only else False
 
+    # ---------------------------------------------------------------- SpeechCue
+    # Nine discrete tokens whose LOW/MID/HIGH boundaries come from the TRAIN
+    # sessions of this fold only. Statistics are read from the corpus-wide cache
+    # built by scripts/fit_speechcue_stats.py; pYIN is far too slow to run per
+    # __getitem__. When enabled it replaces the older natural-language prompt.
+    sc_config = text_config.get('speechcue', {}) or {}
+    use_speechcue = bool(sc_config.get('enabled', False)) and not audio_only
+    speechcue_stats = None
+    speechcue_tokens = None
+    if use_speechcue:
+        cache_path = sc_config.get('stats_cache', 'cache/speechcue_stats.json')
+        if not Path(cache_path).exists():
+            raise FileNotFoundError(
+                f"SpeechCue enabled but the statistics cache is missing: {cache_path}. "
+                f"Run: python scripts/fit_speechcue_stats.py"
+            )
+        speechcue_stats = SpeechCueStatsCache.load(cache_path)
+        speechcue_tokens = SPEECHCUE_TOKENS
+        # Per-speaker normalisation of pitch and energy. Without it the pitch
+        # token mostly encodes speaker gender and the energy token encodes the
+        # session's recording gain (see SpeechCueNormalizer for the numbers).
+        # It uses each speaker's own audio only -- no labels -- but it does touch
+        # the test speakers' recordings, so it is unsupervised speaker adaptation
+        # and the paper has to say so.
+        speechcue_normalizer = None
+        if sc_config.get('normalize', 'speaker') == 'speaker':
+            speechcue_normalizer = SpeechCueNormalizer.fit(
+                speechcue_stats.table,
+                stat_names=sc_config.get('normalize_stats', SpeechCueNormalizer.NORMALIZED))
+            logger.info(f"SpeechCue normalisation: {speechcue_normalizer}")
+        use_prosody_cues = False  # the two prompting schemes are mutually exclusive
+        logger.info(f"SpeechCue enabled: {len(speechcue_stats)} cached utterances "
+                    f"from {cache_path}")
+
     # Text preprocessor only if not audio-only
     text_preprocessor = None
     if not audio_only:
@@ -97,15 +222,68 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
             apply_text_augment=apply_text_augment,
-            text_augmentation_config=text_augment_config
+            text_augmentation_config=text_augment_config,
+            additional_tokens=speechcue_tokens
         )
         text_preprocessor.train()
+        if use_speechcue:
+            # The text encoder must be resized to this before the forward pass.
+            config.setdefault('text', {})['_tokenizer_len'] = text_preprocessor.vocab_size
+            logger.info(f"SpeechCue: +{text_preprocessor.n_added_tokens} tokens, "
+                        f"vocab {text_preprocessor.vocab_size}")
     
+    # ------------------------------------------------------------ protocolo
+    # LOSO estandar: entrenar con las CUATRO sesiones que no son test y sacar la
+    # validacion de un hablante de dentro, en vez de gastar una sesion entera en
+    # validacion. Con 3 sesiones de entrenamiento estabamos usando un 25 % menos
+    # de datos que las lineas base publicadas.
+    #   dataset.val_speaker: "Ses02_M"  -> ese hablante valida, el resto entrena
+    #   sin val_speaker                 -> comportamiento anterior (val_sessions)
+    val_speaker = config['dataset'].get('val_speaker')
+    val_fraction = config['dataset'].get('val_fraction')
+    val_sessions = config['dataset']['val_sessions']
+
+    # Protocolo ALEATORIO (Yoon et al. 2018): los tres conjuntos salen de las cinco
+    # sesiones, asi que aqui se sobreescriben las listas de sesiones y el reparto pasa
+    # a hacerse por indices. Es dependiente de hablante a proposito.
+    rand_train_idx = rand_val_idx = rand_test_idx = None
+    if config['dataset'].get('random_folds'):
+        rand_train_idx, rand_val_idx, rand_test_idx = _random_fold_indices(config, logger)
+        todas = config['dataset'].get('all_sessions') or [1, 2, 3, 4, 5]
+        config['dataset']['train_sessions'] = list(todas)
+        config['dataset']['test_sessions'] = list(todas)
+        val_sessions = list(todas)
+        val_speaker = None
+        val_fraction = None
+
+    if val_fraction:
+        val_sessions = config['dataset']['train_sessions']
+        logger.info(
+            f"Protocolo LOSO estandar: entreno en sesiones "
+            f"{config['dataset']['train_sessions']}; la validacion es una muestra "
+            f"estratificada por clase del {100*val_fraction:.0f} % de esas mismas "
+            f"sesiones (todos los hablantes representados). El test sigue siendo "
+            f"una sesion completa no vista."
+        )
+    elif val_speaker:
+        val_sessions = config['dataset']['train_sessions']
+        logger.info(
+            f"Protocolo LOSO estandar: entreno en sesiones "
+            f"{config['dataset']['train_sessions']} excluyendo al hablante "
+            f"{val_speaker}, que forma la validacion (disjunta por hablante)."
+        )
+    else:
+        logger.info(
+            f"Protocolo heredado 3+1+1: entreno en {config['dataset']['train_sessions']}, "
+            f"validacion en la sesion {val_sessions}. NO comparable con la literatura."
+        )
+
     # Set training mode for train dataset (augmentations enabled)
     audio_preprocessor.train()
     
     # Create datasets
-    train_dataset = IEMOCAPDataset(
+    train_dataset = build_dataset(
+        corpus=corpus_from_config(config),
         data_path=config['dataset']['data_path'],
         sessions=config['dataset']['train_sessions'],
         emotions=config['dataset']['emotions'],
@@ -114,8 +292,51 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         text_preprocessor=text_preprocessor,
         max_audio_length=config['audio']['max_length'],
         training=True,  # Enable random segment sampling for training
-        use_prosody_cues=use_prosody_cues
+        use_prosody_cues=use_prosody_cues,
+        speechcue_stats=speechcue_stats,
+        exclude_speakers=[val_speaker] if val_speaker else None,
+        subset_indices=rand_train_idx,
     )
+
+    # Particion estratificada dentro de las sesiones de entrenamiento. Se hace
+    # aqui, sobre train_dataset.data ya construido, para que los indices de val
+    # sean exactamente los complementarios.
+    val_indices = None
+    if val_fraction:
+        import random as _rnd
+        by_class = {}
+        for i, d in enumerate(train_dataset.data):
+            by_class.setdefault(d['emotion'], []).append(i)
+        rng = _rnd.Random(config['seed'])
+        val_indices, keep = [], []
+        for emo in sorted(by_class):
+            idx = sorted(by_class[emo])
+            rng.shuffle(idx)
+            k = max(1, int(round(val_fraction * len(idx))))
+            val_indices += idx[:k]
+            keep += idx[k:]
+        val_indices.sort(); keep.sort()
+        train_dataset.data = [train_dataset.data[i] for i in keep]
+        logger.info(f"Particion interna: {len(keep)} train / {len(val_indices)} val "
+                    f"(estratificada por clase, semilla {config['seed']})")
+
+    # Tertiles are fitted here, AFTER the train dataset exists, so they are
+    # derived from the training utterances of this fold and nothing else.
+    speechcue_tertiles = None
+    if use_speechcue:
+        train_uids = [d['utterance_id'] for d in train_dataset.data]
+        train_stats = speechcue_stats.subset(train_uids)
+        missing = len(train_uids) - len(train_stats)
+        if missing:
+            logger.warning(f"SpeechCue: {missing}/{len(train_uids)} training "
+                           f"utterances missing from the cache; re-run "
+                           f"scripts/fit_speechcue_stats.py")
+        train_uids_present = [u for u in train_uids if u in speechcue_stats]
+        speechcue_tertiles = SpeechCueTertiles.fit(
+            train_stats, config['dataset']['train_sessions'],
+            normalizer=speechcue_normalizer, utterance_ids=train_uids_present)
+        train_dataset.speechcue_tertiles = speechcue_tertiles
+        logger.info(f"SpeechCue tertiles (train only): {speechcue_tertiles}")
     
     # Create validation preprocessors (eval mode, no augmentation)
     val_audio_preprocessor = AudioPreprocessor(
@@ -131,20 +352,26 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         val_text_preprocessor = TextPreprocessor(
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
-            apply_text_augment=False  # No augmentation for val
+            apply_text_augment=False,  # No augmentation for val
+            additional_tokens=speechcue_tokens
         )
         val_text_preprocessor.eval()
     
-    val_dataset = IEMOCAPDataset(
+    val_dataset = build_dataset(
+        corpus=corpus_from_config(config),
         data_path=config['dataset']['data_path'],
-        sessions=config['dataset']['val_sessions'],
+        sessions=val_sessions,
         emotions=config['dataset']['emotions'],
         sample_rate=config['dataset']['sample_rate'],
         audio_preprocessor=val_audio_preprocessor,
         text_preprocessor=val_text_preprocessor,
         max_audio_length=config['audio']['max_length'],
         training=False,  # Use deterministic start for validation
-        use_prosody_cues=use_prosody_cues
+        use_prosody_cues=use_prosody_cues,
+        speechcue_stats=speechcue_stats,
+        speechcue_tertiles=speechcue_tertiles,  # reused unchanged: no leakage
+        only_speakers=[val_speaker] if val_speaker else None,
+        subset_indices=rand_val_idx if rand_val_idx is not None else val_indices,
     )
     
     # Create test preprocessors (eval mode, no augmentation)
@@ -161,11 +388,13 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         test_text_preprocessor = TextPreprocessor(
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
-            apply_text_augment=False  # No augmentation for test
+            apply_text_augment=False,  # No augmentation for test
+            additional_tokens=speechcue_tokens
         )
         test_text_preprocessor.eval()
     
-    test_dataset = IEMOCAPDataset(
+    test_dataset = build_dataset(
+        corpus=corpus_from_config(config),
         data_path=config['dataset']['data_path'],
         sessions=config['dataset']['test_sessions'],
         emotions=config['dataset']['emotions'],
@@ -174,7 +403,10 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         text_preprocessor=test_text_preprocessor,
         max_audio_length=config['audio']['max_length'],
         training=False,  # Use deterministic start for test
-        use_prosody_cues=use_prosody_cues
+        use_prosody_cues=use_prosody_cues,
+        speechcue_stats=speechcue_stats,
+        speechcue_tertiles=speechcue_tertiles,  # reused unchanged: no leakage
+        subset_indices=rand_test_idx,
     )
     
     # Choose collate function based on model type
@@ -465,6 +697,68 @@ def create_optimizer_and_scheduler(
     return optimizer, scheduler
 
 
+def _aux_branch_loss(outputs, labels, config):
+    """Perdida auxiliar sobre los clasificadores por rama de la compuerta de conflicto.
+
+    Sin ella esos clasificadores solo los consume un argmax, que no es diferenciable:
+    reciben gradiente EXACTAMENTE cero, se quedan en su init normal(0, 0.01) y el
+    "conflicto" se detecta entre tres predictores aleatorios (dispara en el 94.5 % de
+    las muestras; oraculo 58.4 % ~= 1-(3/4)^3 = 57.8 %). Medido el 20/09/2026.
+
+    Devuelve (termino, peso) o (None, 0.0). Peso 0 por defecto: no altera nada de lo
+    ya medido.
+
+    OJO: train_epoch tiene DOS ramas -- precision mixta y sin ella -- y cada una con su
+    bloque de perdida. El 21/09/2026 el estudio 75 se corrio entero con el termino
+    puesto solo en la rama de precision mixta, que con mixed_precision: false nunca se
+    ejecuta: los clasificadores acabaron con los MISMOS pesos a seis decimales que sin
+    el arreglo. Por eso esto vive en una funcion y se llama desde las dos.
+    """
+    w = float(config.get('model', {}).get('conflict_aware', {})
+              .get('aux_loss_weight', 0.0) or 0.0)
+    ramas = outputs.get('branch_logits') if w > 0 else None
+    if not ramas:
+        return None, w
+    termino = sum(nn.functional.cross_entropy(bl, labels) for bl in ramas) / len(ramas)
+    return termino, w
+
+
+def _conf_calibration_loss(outputs, labels, config):
+    """Objetivo de calibracion sobre la confidence_net de la compuerta de conflicto.
+
+    La confidence_net emite tres sigmoides (B, 3) que solo se usan para reponderar
+    las ramas cuando se detecta conflicto. Nada la entrena a predecir QUE RAMA
+    ACIERTA: su unica senal es la perdida final de clasificacion. Medido el
+    22/09/2026 con el detector ya entrenado (estudio 75 valido): elegir la rama de
+    mayor confianza acierta el 69.0 %, el voto uniforme el 70.5 % y el oraculo el
+    91.7 %. La confianza informa (+20.1 pp sobre el azar) pero pierde contra
+    promediar. Aqui se le pone el objetivo explicito: BCE de cada sigmoide contra
+    si el argmax de esa rama coincide con la etiqueta.
+
+    Devuelve (termino, peso) o (None, peso). Peso 0 por defecto: no altera nada de
+    lo ya medido.
+
+    OJO: igual que la auxiliar, esto se llama desde LAS DOS ramas de train_epoch.
+    El estudio 75 se perdio entero por poner un termino solo en la de precision
+    mixta, que con mixed_precision: false nunca se ejecuta.
+    """
+    w = float(config.get('model', {}).get('conflict_aware', {})
+              .get('conf_loss_weight', 0.0) or 0.0)
+    if w <= 0:
+        return None, w
+    conf = outputs.get('branch_confidence')
+    ramas = outputs.get('branch_logits')
+    if conf is None or not ramas:
+        return None, w
+    with torch.no_grad():
+        objetivo = torch.stack(
+            [(bl.argmax(dim=-1) == labels).float() for bl in ramas], dim=1
+        )  # (B, 3)
+    conf = conf.float().clamp(1e-6, 1.0 - 1e-6)
+    termino = nn.functional.binary_cross_entropy(conf, objetivo)
+    return termino, w
+
+
 def train_epoch(
     model,
     train_loader,
@@ -481,6 +775,14 @@ def train_epoch(
 ):
     """Train for one epoch with optional gradient accumulation."""
     model.train()
+    # Si se pide la perdida auxiliar, tiene que aplicarse de verdad. El estudio 75 se
+    # corrio entero con el termino en una rama que nunca se ejecutaba.
+    _aux_pedida = float(config.get('model', {}).get('conflict_aware', {})
+                        .get('aux_loss_weight', 0.0) or 0.0) > 0
+    _aux_aplicada = False
+    _conf_pedida = float(config.get('model', {}).get('conflict_aware', {})
+                         .get('conf_loss_weight', 0.0) or 0.0) > 0
+    _conf_aplicada = False
 
     metrics_tracker = EmotionMetrics(config['dataset']['emotions'])
     total_loss = 0.0
@@ -566,6 +868,17 @@ def train_epoch(
                 loss = criterion(outputs['alphas'], labels)
             else:
                 loss = criterion(outputs['logits'], labels)
+
+            _aux_term, _aux_w = _aux_branch_loss(outputs, labels, config)
+            if _aux_term is not None:
+                loss = loss + _aux_w * _aux_term
+                _aux_aplicada = True
+
+            _conf_term, _conf_w = _conf_calibration_loss(outputs, labels, config)
+            if _conf_term is not None:
+                loss = loss + _conf_w * _conf_term
+                _conf_aplicada = True
+
             if outputs.get('loss_contrastive') is not None:
                 cw = config.get('training', {}).get('loss', {}).get(
                     'contrastive_weight', 0.0
@@ -589,6 +902,17 @@ def train_epoch(
                 loss = criterion(outputs['alphas'], labels)
             else:
                 loss = criterion(outputs['logits'], labels)
+
+            _aux_term, _aux_w = _aux_branch_loss(outputs, labels, config)
+            if _aux_term is not None:
+                loss = loss + _aux_w * _aux_term
+                _aux_aplicada = True
+
+            _conf_term, _conf_w = _conf_calibration_loss(outputs, labels, config)
+            if _conf_term is not None:
+                loss = loss + _conf_w * _conf_term
+                _conf_aplicada = True
+
             if outputs.get('loss_contrastive') is not None:
                 cw = config.get('training', {}).get('loss', {}).get(
                     'contrastive_weight', 0.0
@@ -665,6 +989,19 @@ def train_epoch(
 
     avg_loss = total_loss / max(num_loss_batches, 1)
     metrics = metrics_tracker.compute()
+    if _aux_pedida and not _aux_aplicada:
+        raise RuntimeError(
+            'conflict_aware.aux_loss_weight > 0 pero la perdida auxiliar NO se '
+            'aplico en ninguna iteracion. El modelo no devuelve branch_logits, o '
+            'el termino esta en una rama de train_epoch que no se ejecuta. '
+            'Esto invalidaria la corrida entera: se aborta aqui.')
+    if _conf_pedida and not _conf_aplicada:
+        raise RuntimeError(
+            'conflict_aware.conf_loss_weight > 0 pero la perdida de calibracion NO '
+            'se aplico en ninguna iteracion. El modelo no devuelve '
+            'branch_confidence/branch_logits, o el termino esta en una rama de '
+            'train_epoch que no se ejecuta. Esto invalidaria la corrida entera: se '
+            'aborta aqui.')
     return avg_loss, metrics
 
 
@@ -844,11 +1181,19 @@ def main():
         print("CUDA not available, using CPU")
         device = 'cpu'
     
-    # Set random seed
-    torch.manual_seed(config['seed'])
-    np.random.seed(config['seed'])
+    # Set random seed + determinism.
+    # Sin esto, "seed 42" no garantiza reproducibilidad: cuDNN elige algoritmos
+    # no deterministas y la varianza medida entre semillas es en parte ruido.
+    seed = config['seed']
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if device == 'cuda':
-        torch.cuda.manual_seed(config['seed'])
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    torch.use_deterministic_algorithms(True, warn_only=True)
     
     # Setup logging
     logger = setup_logger('train', config['logging']['log_dir'])

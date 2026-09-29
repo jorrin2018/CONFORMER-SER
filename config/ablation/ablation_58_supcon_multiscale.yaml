@@ -3,7 +3,7 @@
 # Audio encoder: Wav2Vec2 (same as 45).
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

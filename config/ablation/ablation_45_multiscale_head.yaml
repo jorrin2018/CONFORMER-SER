@@ -3,7 +3,7 @@
 # Same architecture and training as 34, but replacing the LSTM head with a MultiScaleTemporal head.
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy
@@ -80,8 +80,10 @@ model:
     confidence_weighting: true
     conflict_resolution: "confidence_weighted"
   vision_encoder: "google/vit-base-patch16-224"
-  freeze_vision_encoder: false
-  vision_unfreeze_last_n_layers: 4
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
   vision_image_size: 224
   mel_n_mels: 80
   mel_n_fft: 400

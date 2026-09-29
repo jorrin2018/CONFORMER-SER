@@ -1,6 +1,6 @@
 # Estudios de Ablación - Conformer Multimodal SER
 
-Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52-63**. El estudio 51 no está definido en el listado de ejecución actual.
+Este módulo contiene la implementación de los modelos usados por los estudios de ablación disponibles en `scripts/run_ablation.py`: estudios **1-50, 52-65**. El estudio 51 no está definido en el listado de ejecución actual.
 
 ## 📋 Descripción General
 

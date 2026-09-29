@@ -1,0 +1,496 @@
+"""
+IEMOCAP Dataset implementation for multimodal emotion recognition.
+"""
+
+import os
+import re
+import torch
+import torchaudio
+import random
+import gc
+from torch.utils.data import Dataset
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from src.data.prosody_cues import ProsodyCueExtractor, ProsodyCueConfig
+from src.data.speechcue import SpeechCueStatsCache, SpeechCueTertiles, speaker_id
+
+
+class IEMOCAPDataset(Dataset):
+    """
+    IEMOCAP Dataset for multimodal (audio + text) emotion recognition.
+    
+    The dataset structure:
+    IEMOCAP_full_release/
+        Session1/
+            sentences/
+                wav/
+                    Ses01F_impro01/
+                        Ses01F_impro01_F000.wav
+                    ...
+            dialog/
+                EmoEvaluation/
+                    Ses01F_impro01.txt
+                transcriptions/
+                    Ses01F_impro01.txt
+    """
+    
+    EMOTION_MAP = {
+        'ang': 'angry',
+        'hap': 'happy',
+        # Merge excitement into happy for the common 4-class setup
+        # (angry, happy, sad, neutral). Other emotions can be filtered
+        # out via the `emotions` list in the config.
+        'exc': 'happy',
+        'sad': 'sad',
+        'fru': 'frustrated',
+        'fea': 'fearful',
+        'sur': 'surprised',
+        'neu': 'neutral',
+        'dis': 'disgusted',
+        'oth': 'other',
+        'xxx': 'other',  # Unknown mapped to other
+    }
+    
+    def __init__(
+        self,
+        data_path: str,
+        sessions: List[int],
+        emotions: List[str],
+        sample_rate: int = 16000,
+        audio_preprocessor=None,
+        text_preprocessor=None,
+        max_audio_length: float = 10.0,
+        training: bool = True,
+        use_prosody_cues: bool = False,
+        prosody_config: Optional[Dict] = None,
+        strict_integrity: bool = True,
+        speechcue_tertiles: Optional['SpeechCueTertiles'] = None,
+        speechcue_stats: Optional['SpeechCueStatsCache'] = None,
+        only_speakers: Optional[List[str]] = None,
+        exclude_speakers: Optional[List[str]] = None,
+        subset_indices: Optional[List[int]] = None
+    ):
+        """
+        Args:
+            data_path: Path to IEMOCAP_full_release directory
+            sessions: List of session numbers to include (e.g., [1, 2, 3])
+            emotions: List of emotion labels to include
+            sample_rate: Target sample rate for audio
+            audio_preprocessor: Audio preprocessing function
+            text_preprocessor: Text preprocessing function
+            max_audio_length: Maximum audio length in seconds
+            training: If True, use random segment sampling for augmentation. If False, use deterministic start.
+            speechcue_tertiles: LOW/MID/HIGH boundaries fitted on this fold's TRAIN
+                sessions only. When given (together with speechcue_stats), the three
+                SpeechCue tokens are prepended to the transcript, so the tokenizer
+                places them right after [CLS] and before the lexical word pieces.
+                This is the module described in the paper; `use_prosody_cues` selects
+                the older natural-language prompt and is kept only for reproducing
+                the earlier ablations.
+            speechcue_stats: Corpus-wide statistics cache produced by
+                scripts/fit_speechcue_stats.py (pYIN is too slow for __getitem__).
+            only_speakers / exclude_speakers: Speaker ids ("Ses02_M") to keep or drop.
+                Used to carve a speaker-disjoint validation split out of the training
+                sessions, so the standard LOSO protocol can train on four sessions
+                without validation and training ever sharing a speaker. Applied AFTER
+                the integrity check, which always sees the full session.
+            strict_integrity: If True, raise if the loaded corpus does not match the
+                IEMOCAP 4-class contract (see _assert_integrity). Disable only for
+                tests or debugging on a subset - never for a run that goes in a paper.
+        """
+        self.data_path = Path(data_path)
+        self.sessions = sessions
+        self.emotions = emotions
+        self.sample_rate = sample_rate
+        self.audio_preprocessor = audio_preprocessor
+        self.text_preprocessor = text_preprocessor
+        self.max_audio_length = max_audio_length
+        self.training = training
+        self.strict_integrity = strict_integrity
+        self.subset_indices = subset_indices
+        self.only_speakers = set(only_speakers) if only_speakers else None
+        self.exclude_speakers = set(exclude_speakers) if exclude_speakers else None
+        self.speechcue_tertiles = speechcue_tertiles
+        self.speechcue_stats = speechcue_stats
+        self._speechcue_missing = 0
+        
+        # Prosody cue extractor (optional, for SpeechCue-style prompts)
+        if use_prosody_cues:
+            cfg_dict = prosody_config or {}
+            cfg = ProsodyCueConfig(
+                sample_rate=sample_rate,
+                **{k: v for k, v in cfg_dict.items() if hasattr(ProsodyCueConfig, k)}
+            )
+            self.prosody_extractor = ProsodyCueExtractor(cfg)
+        else:
+            self.prosody_extractor = None
+
+        # Emotion to index mapping
+        self.emotion2idx = {emotion: idx for idx, emotion in enumerate(emotions)}
+        self.idx2emotion = {idx: emotion for emotion, idx in self.emotion2idx.items()}
+        
+        # Load dataset
+        self.data = self._load_data()
+        print(f"Loaded {len(self.data)} samples from sessions {sessions}")
+        
+        # Print class distribution
+        self._print_class_distribution()
+    
+    def _load_data(self) -> List[Dict]:
+        """Load all data samples from specified sessions."""
+        data = []
+        
+        for session in self.sessions:
+            session_name = f"Session{session}"
+            session_path = self.data_path / session_name
+            
+            if not session_path.exists():
+                print(f"Warning: {session_path} does not exist, skipping...")
+                continue
+            
+            # Parse emotion labels
+            emotion_labels = self._parse_emotion_labels(session_path)
+            
+            # Parse transcriptions
+            transcriptions = self._parse_transcriptions(session_path)
+            
+            # Match audio files with labels and transcriptions
+            wav_path = session_path / "sentences" / "wav"
+            
+            for utterance_id, emotion in emotion_labels.items():
+                # Map to our emotion categories
+                if emotion not in self.emotions:
+                    continue
+                
+                # Find audio file
+                audio_file = self._find_audio_file(wav_path, utterance_id)
+                if audio_file is None:
+                    continue
+                
+                # Get transcription
+                transcription = transcriptions.get(utterance_id, "")
+                
+                data.append({
+                    'audio_path': str(audio_file),
+                    'transcription': transcription,
+                    'emotion': emotion,
+                    'emotion_idx': self.emotion2idx[emotion],
+                    'utterance_id': utterance_id,
+                    'session': session
+                })
+
+        self._assert_integrity(data)
+
+        # Speaker filter last: the contract check above must always see the full
+        # session, otherwise carving out a validation speaker would look like a
+        # corrupt corpus.
+        if self.only_speakers or self.exclude_speakers:
+            before = len(data)
+            if self.only_speakers:
+                data = [d for d in data
+                        if speaker_id(d['utterance_id']) in self.only_speakers]
+            if self.exclude_speakers:
+                data = [d for d in data
+                        if speaker_id(d['utterance_id']) not in self.exclude_speakers]
+            kept = sorted({speaker_id(d['utterance_id']) for d in data})
+            print(f"[IEMOCAP] filtro de hablante: {before} -> {len(data)} "
+                  f"utterances; hablantes = {kept}")
+
+        # Subconjunto por indices: permite partir las mismas sesiones en train/val
+        # manteniendo preprocesadores distintos para cada mitad. El orden de
+        # self.data es determinista, asi que los indices son estables entre dos
+        # construcciones con las mismas sesiones.
+        if self.subset_indices is not None:
+            data = [data[i] for i in self.subset_indices]
+            print(f"[IEMOCAP] subconjunto por indices: {len(data)} utterances")
+
+        return data
+
+    # IEMOCAP, protocolo de 4 clases (ang / hap+exc / sad / neu).
+    # Verificado el 2026-09-10 con scripts/verify_iemocap.py.
+    REF_4CLASS_PER_SESSION = {1: 1085, 2: 1023, 3: 1151, 4: 1031, 5: 1241}
+
+    def _assert_integrity(self, data: List[Dict]) -> None:
+        """Fail loudly when the corpus is not what the protocol expects.
+
+        Historical reason this exists: _find_audio_file() used to derive the
+        dialog folder with utterance_id.split('_')[:3], which is correct for
+        scripted ids (4 fields) but returns the whole id for improvised ones
+        (3 fields). Every improvised utterance was therefore dropped silently,
+        leaving 2,588 of 5,531 utterances - scripted only, with heavy lexical
+        overlap between train and test. Nothing warned. This check does.
+        """
+        n_impro = sum(1 for d in data if 'impro' in d['utterance_id'])
+        n_script = len(data) - n_impro
+        n_notext = sum(1 for d in data if not d['transcription'].strip())
+        print(f"[IEMOCAP] sessions={self.sessions} total={len(data)} "
+              f"impro={n_impro} script={n_script} no_transcript={n_notext}")
+
+        if not self.strict_integrity:
+            return
+
+        expected = sum(self.REF_4CLASS_PER_SESSION[s] for s in self.sessions
+                       if s in self.REF_4CLASS_PER_SESSION)
+        if n_impro == 0:
+            raise RuntimeError(
+                f"IEMOCAP integrity: 0 improvised dialogs loaded for sessions "
+                f"{self.sessions}. Either the corpus copy is scripted-only or "
+                f"_find_audio_file() is dropping them. Train and test would "
+                f"share scripted text. data_path={self.data_path}"
+            )
+        if expected and abs(len(data) - expected) > 0.02 * expected:
+            raise RuntimeError(
+                f"IEMOCAP integrity: loaded {len(data)} 4-class utterances, "
+                f"expected ~{expected} for sessions {self.sessions} "
+                f"(impro={n_impro}, script={n_script}). "
+                f"Run scripts/verify_iemocap.py. data_path={self.data_path}"
+            )
+    
+    def _parse_emotion_labels(self, session_path: Path) -> Dict[str, str]:
+        """Parse emotion labels from evaluation files."""
+        emotion_labels = {}
+        eval_path = session_path / "dialog" / "EmoEvaluation"
+        
+        if not eval_path.exists():
+            return emotion_labels
+        
+        for eval_file in sorted(eval_path.glob("*.txt")):
+            # ._foo.txt: resource forks de zips hechos en macOS
+            if eval_file.name.startswith("."):
+                continue
+            with open(eval_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    
+                    # Skip empty lines
+                    if not line:
+                        continue
+                    
+                    # Skip header lines (%), annotator lines (C-, A-), and other non-emotion lines
+                    if line.startswith('%') or line.startswith('C-') or line.startswith('A-'):
+                        continue
+                    
+                    # Parse line format: [start - end]\tUtteranceID\tEmotion\t[...]
+                    # Example: [6.2901 - 8.2357]  Ses01F_impro01_F000     neu     [2.5000, 2.5000, 2.5000]
+                    match = re.match(r'\[[\d.]+\s*-\s*[\d.]+\]\s+(\S+)\s+(\w+)', line)
+                    if match:
+                        utterance_id = match.group(1)
+                        emotion_code = match.group(2).lower()
+                        
+                        # Map emotion code to emotion name
+                        emotion = self.EMOTION_MAP.get(emotion_code, 'other')
+                        emotion_labels[utterance_id] = emotion
+        
+        return emotion_labels
+    
+    def _parse_transcriptions(self, session_path: Path) -> Dict[str, str]:
+        """Parse transcriptions from transcription files."""
+        transcriptions = {}
+        trans_path = session_path / "dialog" / "transcriptions"
+        
+        if not trans_path.exists():
+            return transcriptions
+        
+        for trans_file in sorted(trans_path.glob("*.txt")):
+            # ._foo.txt: resource forks de zips hechos en macOS
+            if trans_file.name.startswith("."):
+                continue
+            with open(trans_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Parse line format: UtteranceID [start-end]: Transcription
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        utterance_id = parts[0].split()[0]
+                        transcription = parts[1].strip()
+                        transcriptions[utterance_id] = transcription
+        
+        return transcriptions
+    
+    def _find_audio_file(self, wav_path: Path, utterance_id: str) -> Optional[Path]:
+        """Find audio file for given utterance ID."""
+        # Extract dialog ID from utterance ID (e.g., Ses01F_impro01_F000 -> Ses01F_impro01)
+        # Ses01F_impro01_F000      -> Ses01F_impro01
+        # Ses05F_script01_1_F000   -> Ses05F_script01_1
+        # [:3] rompia los impro (3 campos): devolvia el id completo
+        # y la carpeta no existia, descartando las 2 943 improvisadas.
+        dialog_id = '_'.join(utterance_id.split('_')[:-1])
+        
+        dialog_path = wav_path / dialog_id
+        if not dialog_path.exists():
+            return None
+        
+        audio_file = dialog_path / f"{utterance_id}.wav"
+        if audio_file.exists():
+            return audio_file
+        
+        return None
+    
+    def _print_class_distribution(self):
+        """Print distribution of emotion classes."""
+        emotion_counts = {}
+        for sample in self.data:
+            emotion = sample['emotion']
+            emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
+        
+        print("\nClass distribution:")
+        for emotion in self.emotions:
+            count = emotion_counts.get(emotion, 0)
+            percentage = (count / len(self.data)) * 100 if len(self.data) > 0 else 0
+            print(f"  {emotion:12s}: {count:4d} ({percentage:5.2f}%)")
+    
+    def get_class_weights(self) -> torch.Tensor:
+        """Calculate class weights for handling imbalanced dataset."""
+        emotion_counts = {}
+        for sample in self.data:
+            emotion = sample['emotion']
+            emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
+        
+        # Calculate weights: inverse of frequency
+        total_samples = len(self.data)
+        weights = []
+        for emotion in self.emotions:
+            count = emotion_counts.get(emotion, 1)  # Avoid division by zero
+            weight = total_samples / (len(self.emotions) * count)
+            weights.append(weight)
+        
+        return torch.tensor(weights, dtype=torch.float32)
+    
+    def __len__(self) -> int:
+        return len(self.data)
+    
+    def __getitem__(self, idx: int) -> Dict:
+        """Get a single sample."""
+        sample = self.data[idx]
+        audio_path = sample['audio_path']
+        max_samples = int(self.max_audio_length * self.sample_rate)
+
+        # Load only the needed segment when possible to reduce host-memory pressure
+        # on Windows and avoid full-file allocations for long utterances.
+        try:
+            metadata = torchaudio.info(audio_path)
+            original_sr = int(metadata.sample_rate)
+            total_frames = int(metadata.num_frames)
+
+            max_frames_in_original_sr = max_samples
+            if original_sr > 0 and original_sr != self.sample_rate:
+                max_frames_in_original_sr = int(self.max_audio_length * original_sr)
+
+            if total_frames > max_frames_in_original_sr:
+                if self.training:
+                    start_frame = random.randint(0, total_frames - max_frames_in_original_sr)
+                else:
+                    start_frame = 0
+                waveform, sr = torchaudio.load(
+                    audio_path,
+                    frame_offset=start_frame,
+                    num_frames=max_frames_in_original_sr,
+                )
+            else:
+                waveform, sr = torchaudio.load(audio_path)
+        except (RuntimeError, OSError, MemoryError):
+            # Best-effort recovery from transient allocation pressure.
+            gc.collect()
+            waveform, sr = torchaudio.load(audio_path)
+
+        # Convert to mono if stereo
+        if waveform.shape[0] > 1:
+            waveform = torch.mean(waveform, dim=0, keepdim=True)
+
+        # Resample if necessary
+        if sr != self.sample_rate:
+            resampler = torchaudio.transforms.Resample(sr, self.sample_rate)
+            waveform = resampler(waveform)
+
+        # Ensure fixed length after possible segment loading/resampling
+        waveform_length = waveform.shape[1]
+        if waveform_length > max_samples:
+            waveform = waveform[:, :max_samples]
+        elif waveform_length < max_samples:
+            padding = max_samples - waveform_length
+            waveform = torch.nn.functional.pad(waveform, (0, padding))
+        
+        # Apply audio preprocessing
+        if self.audio_preprocessor is not None:
+            audio_features = self.audio_preprocessor(waveform.squeeze(0))
+        else:
+            audio_features = waveform.squeeze(0)
+        
+        # Build (optionally enriched) transcription
+        transcription = sample['transcription']
+        if self.speechcue_tertiles is not None and self.speechcue_stats is not None:
+            # SpeechCue: three discrete tokens before the word pieces.
+            # Tokenizers prepend [CLS] themselves, so putting the tokens at the
+            # front of the string yields [CLS] [P_x] [E_x] [R_x] <transcript>.
+            stats = self.speechcue_stats.get(sample['utterance_id'])
+            if stats is None:
+                self._speechcue_missing += 1
+                enriched_text = transcription
+            else:
+                enriched_text = f"{self.speechcue_tertiles.prompt_for(stats, sample['utterance_id'])} {transcription}".strip()
+        elif self.prosody_extractor is not None:
+            prosody_desc = self.prosody_extractor(waveform)
+            # Experiment 1: texto original primero, prosodia después (menos disruptivo)
+            # Ejemplo: "[SPEECH] ... [PROSODY] overall energy is high, variability is medium, speaking rate is fast."
+            enriched_text = f"[SPEECH] {transcription} [PROSODY] {prosody_desc}."
+        else:
+            enriched_text = transcription
+
+        # Apply text preprocessing
+        if self.text_preprocessor is not None:
+            text_features = self.text_preprocessor(enriched_text)
+        else:
+            text_features = {'input_ids': torch.tensor([0]), 'attention_mask': torch.tensor([1])}
+        
+        return {
+            'audio': audio_features,
+            'text_input_ids': text_features['input_ids'],
+            'text_attention_mask': text_features['attention_mask'],
+            'label': sample['emotion_idx'],
+            'emotion': sample['emotion'],
+            'utterance_id': sample['utterance_id']
+        }
+
+
+def collate_fn(batch: List[Dict]) -> Dict:
+    """Custom collate function for batching."""
+    # Stack tensors
+    audio = torch.stack([item['audio'] for item in batch])
+    text_input_ids = torch.stack([item['text_input_ids'] for item in batch])
+    text_attention_mask = torch.stack([item['text_attention_mask'] for item in batch])
+    labels = torch.tensor([item['label'] for item in batch], dtype=torch.long)
+    
+    # Keep metadata
+    emotions = [item['emotion'] for item in batch]
+    utterance_ids = [item['utterance_id'] for item in batch]
+    
+    return {
+        'audio': audio,
+        'text_input_ids': text_input_ids,
+        'text_attention_mask': text_attention_mask,
+        'labels': labels,
+        'emotions': emotions,
+        'utterance_ids': utterance_ids
+    }
+
+
+def collate_fn_audio_only(batch: List[Dict]) -> Dict:
+    """Custom collate function for audio-only batching."""
+    # Stack tensors
+    audio = torch.stack([item['audio'] for item in batch])
+    labels = torch.tensor([item['label'] for item in batch], dtype=torch.long)
+    
+    # Keep metadata
+    emotions = [item['emotion'] for item in batch]
+    utterance_ids = [item['utterance_id'] for item in batch]
+    
+    return {
+        'audio': audio,
+        'labels': labels,
+        'emotions': emotions,
+        'utterance_ids': utterance_ids
+    }

@@ -27,6 +27,119 @@ from .fusion import (
 )
 
 
+
+def build_layer_weights(encoder) -> nn.Parameter:
+    """Logits for a learned softmax over all hidden layers of an HF encoder.
+
+    Pepino et al. (2021) report that for SER the useful paralinguistic information
+    sits in the MIDDLE layers of wav2vec2, not the last one, and that a learned
+    weighted sum over layers beats using `last_hidden_state`. This applies to any
+    transformer speech encoder, not just WavLM.
+    """
+    n = 1 + int(getattr(encoder.config, "num_hidden_layers", 12))
+    return nn.Parameter(torch.zeros(n))
+
+
+def weighted_hidden_states(encoder, inputs, logits: torch.Tensor) -> torch.Tensor:
+    """Softmax-weighted sum over the encoder's hidden layers -> (B, T, H)."""
+    out = encoder(inputs, output_hidden_states=True)
+    hs = getattr(out, "hidden_states", None)
+    if hs is None:
+        raise RuntimeError(
+            "weighted_hidden_states: the encoder returned no hidden_states."
+        )
+    stacked = torch.stack(hs, dim=0)                     # (L, B, T, H)
+    w = torch.softmax(logits, dim=0).view(-1, 1, 1, 1)
+    return (w * stacked).sum(dim=0)
+
+
+def _transformer_layers(encoder):
+    """Return the list of transformer blocks of a HuggingFace encoder, or None.
+
+    Covers Wav2Vec2/WavLM (encoder.layers), BERT/RoBERTa/ViT (encoder.layer)
+    and DistilBERT (transformer.layer).
+    """
+    for attr, sub in (("encoder", "layers"), ("encoder", "layer"), ("transformer", "layer")):
+        parent = getattr(encoder, attr, None)
+        if parent is not None:
+            layers = getattr(parent, sub, None)
+            if layers is not None and len(layers) > 0:
+                return layers
+    return None
+
+
+def apply_finetuning_policy(encoder, freeze_all: bool, unfreeze_last_n: int,
+                            name: str = "encoder",
+                            freeze_feature_extractor: bool = True):
+    """Apply the partial fine-tuning regime described in the paper.
+
+    Semantics, driven by `unfreeze_last_n`:
+
+      unfreeze_last_n > 0  -> PARTIAL: every parameter is frozen, then the last N
+                              transformer blocks (plus the final layer norm and any
+                              pooler/projection head) are unfrozen. This is what the
+                              paper describes: "lower transformer blocks are frozen
+                              ... only the upper transformer blocks are fine-tuned".
+      unfreeze_last_n == 0 -> `freeze_all` decides: fully frozen or fully trainable.
+
+    Before this function existed the partial regime was only reachable with
+    `freeze_*_encoder: true`; every config that set `false` plus a non-zero
+    `unfreeze_last_n` silently fine-tuned the WHOLE encoder, which is not what the
+    paper or Figure 1 describe.
+
+    For Wav2Vec2/WavLM the convolutional feature extractor stays frozen whenever any
+    freezing applies, as the paper states.
+
+    Returns:
+        (total_params, trainable_params)
+    """
+    partial = bool(unfreeze_last_n and unfreeze_last_n > 0)
+
+    if not partial and not freeze_all:
+        mode = "full fine-tuning"
+    else:
+        for p in encoder.parameters():
+            p.requires_grad = False
+        mode = "frozen"
+
+        if partial:
+            layers = _transformer_layers(encoder)
+            if layers is None:
+                print(f"Warning [{name}]: no transformer blocks found; encoder stays frozen")
+            else:
+                n = min(unfreeze_last_n, len(layers))
+                for layer in layers[-n:]:
+                    for p in layer.parameters():
+                        p.requires_grad = True
+                # Final layer norm / pooler / projection heads ride with the top blocks
+                for attr in ("layer_norm", "layernorm", "final_layer_norm"):
+                    parent = getattr(encoder, "encoder", encoder)
+                    mod = getattr(parent, attr, None) or getattr(encoder, attr, None)
+                    if mod is not None and hasattr(mod, "parameters"):
+                        for p in mod.parameters():
+                            p.requires_grad = True
+                for attr in ("pooler", "project_hid", "project_q"):
+                    mod = getattr(encoder, attr, None)
+                    if mod is not None and hasattr(mod, "parameters"):
+                        for p in mod.parameters():
+                            p.requires_grad = True
+                mode = f"partial: last {n}/{len(layers)} blocks trainable"
+
+        # Convolutional feature extractor (Wav2Vec2 / WavLM) stays frozen.
+        if freeze_feature_extractor:
+            fe = getattr(encoder, "feature_extractor", None)
+            if fe is not None and hasattr(fe, "parameters"):
+                for p in fe.parameters():
+                    p.requires_grad = False
+                mode += " (conv extractor frozen)"
+
+    total = sum(p.numel() for p in encoder.parameters())
+    trainable = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+    print(f"[finetune] {name}: {mode} -- {trainable:,}/{total:,} params trainable "
+          f"({100.0 * trainable / max(total, 1):.1f}%)")
+    return total, trainable
+
+
 class ConformerMultimodalModel(nn.Module):
     """Multimodal emotion recognition model (audio + text, or placeholder for trimodal).
 
@@ -91,39 +204,15 @@ class ConformerMultimodalModel(nn.Module):
                 self.audio_encoder = Wav2Vec2Model(config)
                 audio_hidden_size = config.hidden_size
         
-        # Freezing strategy for audio encoder
-        if freeze_audio_encoder:
-            # Freeze all by default
-            for param in self.audio_encoder.parameters():
-                param.requires_grad = False
-            # Optionally unfreeze last N transformer layers for fine-tuning
-            if audio_unfreeze_last_n_layers and audio_unfreeze_last_n_layers > 0:
-                try:
-                    # Unfreeze last N encoder layers (Wav2Vec2/WavLM use encoder.layers)
-                    if hasattr(self.audio_encoder, 'encoder') and hasattr(self.audio_encoder.encoder, 'layers'):
-                        encoder_layers = self.audio_encoder.encoder.layers
-                        for layer in encoder_layers[-audio_unfreeze_last_n_layers:]:
-                            for p in layer.parameters():
-                                p.requires_grad = True
-                        if hasattr(self.audio_encoder.encoder, 'layer_norm'):
-                            for p in self.audio_encoder.encoder.layer_norm.parameters():
-                                p.requires_grad = True
-                    elif hasattr(self.audio_encoder, 'encoder') and hasattr(self.audio_encoder.encoder, 'layer'):
-                        # Fallback for encoder.layer (BERT-style)
-                        encoder_layers = self.audio_encoder.encoder.layer
-                        for layer in encoder_layers[-audio_unfreeze_last_n_layers:]:
-                            for p in layer.parameters():
-                                p.requires_grad = True
-                    # Also unfreeze projection heads if present
-                    if hasattr(self.audio_encoder, 'project_hid'):
-                        for p in self.audio_encoder.project_hid.parameters():
-                            p.requires_grad = True
-                    if hasattr(self.audio_encoder, 'project_q'):
-                        for p in self.audio_encoder.project_q.parameters():
-                            p.requires_grad = True
-                except Exception as e:
-                    print(f"Warning: could not unfreeze last {audio_unfreeze_last_n_layers} layers of audio encoder: {e}")
-        
+        # Freezing strategy for audio encoder (see apply_finetuning_policy)
+        apply_finetuning_policy(
+            self.audio_encoder,
+            freeze_all=freeze_audio_encoder,
+            unfreeze_last_n=audio_unfreeze_last_n_layers,
+            name=f"audio/{audio_encoder_name}",
+            freeze_feature_extractor=True,
+        )
+
         # Text encoder (BERT/DistilBERT)
         try:
             self.text_encoder = AutoModel.from_pretrained(text_encoder_name)
@@ -135,29 +224,14 @@ class ConformerMultimodalModel(nn.Module):
             self.text_encoder = AutoModel.from_config(config)
             text_hidden_size = config.hidden_size
         
-        if freeze_text_encoder:
-            # Freeze all by default
-            for param in self.text_encoder.parameters():
-                param.requires_grad = False
-            # Optionally unfreeze last N transformer layers for fine-tuning
-            if text_unfreeze_last_n_layers and text_unfreeze_last_n_layers > 0:
-                try:
-                    # For DistilBERT/BERT, layers are in transformer.layer or encoder.layer
-                    if hasattr(self.text_encoder, 'transformer') and hasattr(self.text_encoder.transformer, 'layer'):
-                        # DistilBERT structure
-                        encoder_layers = self.text_encoder.transformer.layer
-                        for layer in encoder_layers[-text_unfreeze_last_n_layers:]:
-                            for p in layer.parameters():
-                                p.requires_grad = True
-                    elif hasattr(self.text_encoder, 'encoder') and hasattr(self.text_encoder.encoder, 'layer'):
-                        # BERT structure
-                        encoder_layers = self.text_encoder.encoder.layer
-                        for layer in encoder_layers[-text_unfreeze_last_n_layers:]:
-                            for p in layer.parameters():
-                                p.requires_grad = True
-                except Exception as e:
-                    print(f"Warning: could not unfreeze last {text_unfreeze_last_n_layers} layers of text encoder: {e}")
-        
+        apply_finetuning_policy(
+            self.text_encoder,
+            freeze_all=freeze_text_encoder,
+            unfreeze_last_n=text_unfreeze_last_n_layers,
+            name=f"text/{text_encoder_name}",
+            freeze_feature_extractor=False,
+        )
+
         # Attention pooling for audio (if needed)
         if audio_pooling == "attention":
             self.audio_attention = nn.Sequential(

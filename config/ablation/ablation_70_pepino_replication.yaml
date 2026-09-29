@@ -1,0 +1,183 @@
+# Ablation Study 70: REPLICACION de Pepino, Riera y Ferrer (Interspeech 2021).
+#
+# ESTO NO ES UNA FILA DE ABLACION. Es una replicacion: cambia mas de un factor a
+# proposito, porque su objetivo es reproducir un montaje publicado, no aislar un
+# efecto. No compararlo pareado contra el 66/69 como si lo fuera.
+#
+# POR QUE EXISTE. Los estudios 66 (protocolo), 68 (capas) y 69 (cabeza) salieron
+# nulos persiguiendo un hueco de 8.5 pp contra "Pepino 72.50". Ese 72.50 venia de la
+# tabla de estado del arte del manuscrito de CAMF y ESTA MAL. La fuente
+# (isca-archive.org/interspeech_2021/pepino21_interspeech.pdf) reporta:
+#
+#   67.2 +- 0.7  average recall (= UA), wav2vec2-base, 4 clases, 5-fold LOSO
+#   65.8 +- 0.3  en su tabla comparativa
+#   sigma sobre 5 SEMILLAS, no sobre folds -- no es comparable con la nuestra
+#
+# Nuestra linea base (66) da 63.93. El hueco real es de 3.3 pp, no de 8.5.
+#
+# QUE COPIA DE ELLOS (las tres diferencias con el 69):
+#   1. encoder CONGELADO. Cita literal: "During the training of the downstream model,
+#      the weights of the wav2vec 2.0 model remain unaltered, so it serves as a
+#      feature extractor." Nosotros descongelabamos los 6 bloques superiores.
+#   2. suma ponderada aprendida sobre las 13 capas (12 bloques + salida del encoder
+#      local), que es su contribucion central.
+#   3. cabeza pequena sobre el vector agrupado (la del estudio 69).
+#
+# TASAS DE APRENDIZAJE -- OJO, ESTO NO ES COSMETICO. Con el encoder congelado, lo
+# unico entrenable son la proyeccion, la cabeza y los 13 logits de capa: ~198 K
+# parametros inicializados desde cero. create_optimizer() los mandaria a lr_fusion
+# = 5e-6, con lo que no convergerian JAMAS y leeriamos un falso negativo. Se sube a
+# 1e-3, que es lo normal para una sonda lineal. lr_audio tambien sube porque, con
+# todo el encoder congelado, el unico parametro suyo que queda vivo es
+# audio_encoder_layer_logits (13 escalares).
+#
+# QUE ESPERAMOS:
+#   ~67 UA -> replicamos la referencia. Lo que nos cuesta puntos es NUESTRO regimen
+#             de fine-tuning, no la arquitectura. Es la explicacion y se acabo.
+#   ~64 UA -> el codigo no reproduce un montaje publicado con la receta publicada.
+#             Entonces el problema esta aguas arriba, en el pipeline de datos, y ahi
+#             ya hay un cabo suelto medido: _apply_pitch_shift es un no-op
+#             (remuestrear y volver a remuestrear es la identidad; verificado con un
+#             tono de 200 Hz, correlacion 1.0000 con el original).
+#
+# La augmentacion se deja COMO EN EL 66/69, no como en Pepino, a proposito: asi la
+# unica diferencia con el 69 es el regimen del encoder. Si el 70 se queda en 64,
+# apagar la augmentacion es el siguiente factor, no un cambio mas que meter aqui.
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: false   # sin prompt prosodico: es la linea base de audio puro
+
+model:
+  modality: audio
+  audio_weighted_hidden_states: true   # <-- su contribucion central
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: true    # <-- Pepino: el encoder es un extractor de rasgos
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 0    # <-- nada descongelado
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "simple"   # <-- EL UNICO CAMBIO frente al 66
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: true
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  learning_rate_audio: 1.0e-3    # solo afecta a los 13 logits de capa (encoder congelado)
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 1.0e-3   # proyeccion + cabeza, ~198 K param desde cero
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_70"
+  checkpoint_dir: "./checkpoints/ablation_70"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-70"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

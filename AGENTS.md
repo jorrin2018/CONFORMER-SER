@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–63`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–65`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -216,3 +216,146 @@ back into `paper/posters/`. Do not hand-edit the generated PDFs/PNGs.
 | `src/ablation_studies/classification_heads.py` | All classification heads |
 | `src/utils/losses.py` | Loss configuration contract |
 | `src/models/conformer.py` | Baseline model |
+
+---
+
+## Post-CIARP-2026 audit — read before touching results or the paper
+
+The CIARP 2026 submission was rejected. A full audit (Sept 2026) found ten issues; the
+data-loading bug behind most of them is fixed, but **every number in the previous
+manuscript and in `docs/ANALISIS_RESULTADOS_EXPERIMENTOS.md` predates the fix and must
+not be reused.**
+
+| Read this | For |
+|---|---|
+| `docs/REWRITE_NOTES.md` | Everything the paper rewrite has to change, section by section, with verified numbers and their provenance |
+| `docs/dataset_integrity_patch.md` | The dataset contract and why it exists |
+| `scripts/verify_iemocap.py` | Run before any training run. 5 531 four-class utterances, `impro > 0` in all five sessions |
+| `scripts/report_finetuning.py` | Which blocks actually train, per study |
+
+Non-negotiables for anything that goes in a paper:
+
+- **LOSO 5-fold** (`--loso --protocol standard`), report mean ± sigma. `standard` trains
+  on four sessions and validates on a class-stratified 12 % of them; `speaker` validates
+  on one held-out speaker instead (measured: val UA sigma 8.00 pp, too noisy to select a
+  checkpoint); `legacy` (3+1+1) is kept only to reproduce runs from before 12/09/2026 and
+  is not comparable with published numbers. The protocol is recorded in every
+  `kfold_summary_*.json` and in every fold's `config.json`.
+- **The protocol is not a knob for the absolute number.** Measured on study 66 (audio
+  only, same seed): legacy 64.02 +- 4.89, speaker 63.63 +- 5.02, standard 63.93 +- 2.68.
+  What `standard` buys is honest variance (test WA sigma 3.74 -> 0.90), not accuracy.
+  Do not re-litigate this.
+- Pair ablations **by fold**: the paired sigma is about half the absolute between-fold
+  sigma (1.7 pp vs 3.4 pp measured), which is what makes a 4-7 pp effect detectable at
+  all. With five folds the exact sign test bottoms out at p = 0.0625, so report the
+  paired t-test alongside it and say so.
+- **One factor per ablation row.** Never compare runs whose `config.json` differs in
+  encoder, branches or fusion type.
+- Report the test N and per-class support in every results table; confusion matrices in
+  absolute counts.
+- The description of the training regime must match the released `config.json`.
+- **Verify the optimizer before every run that matters**: `python scripts/report_optimizer.py
+  --study N`. `create_ablation_optimizer()` has a single-LR branch whose comment assumes
+  "encoders frozen"; studies not listed in `studies_with_separate_lr` fall into it and train
+  EVERYTHING at `learning_rate_fusion`, ignoring `learning_rate_audio`/`_text`. That is how
+  studies 44, 45 and 66-69 trained their unfrozen encoders at 5e-6. Applying the declared
+  rates (`training.use_param_groups: true`) is worth **+5.06 +- 1.46 pp, t(4)=7.76, 5/5
+  folds** (study 71 vs 66). Every number produced before 18/09/2026 by a study in that
+  branch is void.
+- **Verify what the paper claims against what the code does.** Three mismatches found in
+  this audit: the "MultiScaleTemporal" head receives a pooled vector, not a sequence
+  (`scripts/check_head_69.py`); `_apply_pitch_shift` resamples and resamples back, which is
+  the identity; and the differential learning rates were never applied
+  (`scripts/report_optimizer.py`).
+- **Verify every literature number against the primary source before citing it.** "Pepino
+  72.50" in the manuscript's SOTA table does not exist; the paper reports 67.2 +- 0.7. That
+  one miscitation drove three experiments.
+
+**When a k-fold run dies mid-way** (GPU fault, reboot, `CUDA error: unknown error`):
+never restart the whole study. The folds that finished are on disk.
+
+```powershell
+# 1. reconstruir el resumen desde los folds que si terminaron
+python scripts\rebuild_kfold_summary.py --study 68 --experiment std2
+
+# 2. correr SOLO lo que falta, reanudando el fold a medias desde su checkpoint
+python scripts\run_ablation.py --study 68 --loso --protocol standard --folds 4 5 --resume
+```
+
+`--resume` retoma cada fold desde `last_model.pt` (modelo, optimizador, scheduler,
+mejor metrica y contador de paciencia, guardados cada epoca con escritura atomica).
+Si solo hay `best_model.pt` de una corrida anterior a este cambio, reanuda desde ahi y
+recuenta la paciencia leyendo `metrics.json`. Encuentra el checkpoint aunque el nombre
+del experimento haya cambiado —busca en las carpetas hermanas del mismo fold— pero solo
+acepta una cuyo `config.json` coincida en sesiones, modelo y semilla, y que no tenga ya
+`final_results.json`. Tambien copia el mejor checkpoint previo a la carpeta de la corrida
+nueva: sin eso, un fold que reanuda con la paciencia avanzada y no vuelve a mejorar
+evaluaria en test con los pesos de la ultima epoca en vez de los mejores, y el numero
+saldria peor sin ningun aviso.
+
+**Un fold reanudado no es bit-identico a uno corrido de un tiron**: el orden de shuffle
+del DataLoader arranca de nuevo, asi que la semilla ya no lo reproduce exactamente. Queda
+marcado con `resumed: true` y `resume_points` en su `final_results.json`. Usar `--resume`
+para no perder horas de GPU, y volver a correr limpio ese fold si el numero acaba siendo
+decisivo para una afirmacion del articulo.
+
+`--folds` keeps the global fold index, so the per-fold split is identical to what a full
+run would have produced. Folds recovered from the previous summary whose `protocol` does
+not match the one requested are discarded with a warning — mixing protocols in one mean
+is how a table becomes unreproducible.
+
+**`train_epoch` tiene DOS ramas de perdida** — precision mixta y sin ella — y los
+configs de ablacion corren con `mixed_precision: false`. El 21/09/2026 el estudio 75 se
+corrio entero, los cinco folds, con un termino puesto solo en la rama de precision mixta:
+nunca se ejecuto, los tres clasificadores acabaron con los MISMOS pesos a seis decimales
+que sin el arreglo, y el resultado no media nada. Cualquier termino nuevo de perdida va
+en una funcion propia (`_aux_branch_loss`, `_conf_calibration_loss`), se llama desde las
+dos ramas, y lleva una guardia que aborta con `RuntimeError` al final de la epoca si se
+pidio y no se aplico.
+
+Y el test que lo verifica tiene que ejercitar **la ruta real**: `check_aux_loss.py`
+probaba el modulo de fusion en aislamiento y daba verde mientras el entrenamiento no
+aplicaba nada. `check_aux_integration.py` monta el modelo real con el config real y da un
+paso de optimizacion. Ojo con el criterio: para la auxiliar vale mirar si los pesos se
+mueven (sin ella reciben gradiente exactamente cero), pero para la calibracion **no**
+—la `confidence_net` ya se mueve por la perdida final— asi que hay que derivar SOLO ese
+termino y comprobar que su gradiente sobre la `confidence_net` no es nulo.
+
+**Los corpus se registran, no se instancian a mano** (refactor del 22/09/2026).
+`src/data/base_dataset.py` tiene `BaseSERDataset` con todo lo que no depende del
+corpus -- `__getitem__`, recorte de audio, prosodia, SpeechCue, pesos de clase, filtro
+de hablante, subconjunto por indices -- y cada corpus implementa `_collect_records()`,
+`_assert_integrity()` y, casi siempre, `speaker_of()`. `src/data/registry.py` mapea
+`dataset.corpus` del YAML a la clase; ausente significa `iemocap`, que es lo que hacen
+todos los configs que ya existen. Nadie llama `IEMOCAPDataset(...)` directamente: se
+usa `build_dataset(corpus=corpus_from_config(config), ...)`.
+
+Dos trampas al anadir un corpus. Una: `speaker_of()` por defecto parsea el formato de
+IEMOCAP, y si no se sobrescribe el filtro de hablante agrupa mal **sin lanzar ninguna
+excepcion** -- train y validacion acaban compartiendo locutor y el numero sube solo.
+Dos: `_assert_integrity()` no es opcional en la practica. En IEMOCAP fue lo que
+detecto que un troceado de cadena tiraba 2,943 de 5,531 utterances en silencio. Un
+corpus sin contrato verificable puede mentir durante meses.
+
+El refactor se verifica con `scripts/check_dataset_refactor.py`, que carga
+`tests/fixtures/dataset_pre_refactor.py.frozen` -- la copia del archivo anterior -- por
+ruta, como modulo aparte, y compara registro a registro. Esa copia no se borra: es la
+unica referencia de que el cargador sigue leyendo lo mismo.
+
+**El pipeline NO es reproducible corrida a corrida.** Medido el 23/09/2026: el fold S1
+del estudio 74, misma config, misma semilla, mismo fold, dio 76.11 el 18/09 y 74.77 el
+22/09, con `config.json` identico y trayectorias distintas (20 vs 29 epocas). Las dos
+corridas del estudio 75 difieren hasta 1.72 pp por fold. **Cualquier diferencia pareada
+por debajo de ~1.5 pp esta dentro del ruido de re-ejecucion y no se puede atribuir al
+modelo.** Los resultados NULOS aguantan (el ruido ensancha el intervalo y el cero sigue
+dentro); los positivos pequenos, no.
+
+Dos agujeros concretos: `torch.use_deterministic_algorithms(True, warn_only=True)` deja
+correr sin aviso de error toda operacion sin implementacion determinista, y
+`CUBLAS_WORKSPACE_CONFIG` se pone con `setdefault` DENTRO de la funcion de
+entrenamiento, cuando tiene que estar en el entorno antes de crear el contexto de CUDA.
+
+Consecuencia practica: antes de afirmar que un cambio mejora algo, comprobar que el
+efecto es mayor que esa banda, o correr multi-semilla. Y **commitear**: el ultimo commit
+era del 10/09 mientras dos semanas de cambios vivian sin confirmar, asi que no hubo
+forma de preguntarle a git si ademas del ruido habia cambiado el codigo.

@@ -15,6 +15,7 @@ from transformers import AutoModel, AutoConfig
 
 from .ablation_25_enhanced_cross_attention import Ablation25Model
 from src.models.fusion import ConflictAwareCrossAttentionFusion, GatedInteractiveAttentionFusion
+from src.models.conformer import apply_finetuning_policy
 from .classification_heads import (
     LSTMClassificationHead,
     MultiScaleTemporalClassificationHead,
@@ -70,6 +71,11 @@ class Ablation34Model(Ablation25Model):
             conflict_detection_method=conflict_config.get(
                 "conflict_detection_method", "prediction_divergence"
             ),
+            # Hasta el 18/09/2026 esta clave solo se leia en la ruta BIMODAL: en la
+            # trimodal la compuerta estaba siempre activa y poner enabled: false no
+            # hacia nada. Una ablacion hecha con esa clave habria salido identica y
+            # habriamos concluido "la compuerta no aporta" por el motivo equivocado.
+            conflict_aware_enabled=conflict_config.get("enabled", True),
         )
         fusion_output_dim = self.hidden_dim // 2
 
@@ -150,15 +156,13 @@ class Ablation34Model(Ablation25Model):
             self.audio_encoder = AutoModel.from_config(cfg)
             audio_hidden_size = cfg.hidden_size
 
-        freeze_audio = model_config.get("freeze_audio_encoder", False)
-        if freeze_audio:
-            for p in self.audio_encoder.parameters():
-                p.requires_grad = False
-        unfreeze_audio_n = model_config.get("audio_unfreeze_last_n_layers", 0)
-        if unfreeze_audio_n and hasattr(self.audio_encoder, "encoder") and hasattr(self.audio_encoder.encoder, "layers"):
-            for layer in self.audio_encoder.encoder.layers[-unfreeze_audio_n:]:
-                for p in layer.parameters():
-                    p.requires_grad = True
+        apply_finetuning_policy(
+            self.audio_encoder,
+            freeze_all=model_config.get("freeze_audio_encoder", False),
+            unfreeze_last_n=model_config.get("audio_unfreeze_last_n_layers", 0),
+            name=f"audio/{audio_encoder_name}",
+            freeze_feature_extractor=True,
+        )
 
         # Text encoder
         try:
@@ -170,15 +174,13 @@ class Ablation34Model(Ablation25Model):
             self.text_encoder = AutoModel.from_config(cfg)
             text_hidden_size = cfg.hidden_size
 
-        freeze_text = model_config.get("freeze_text_encoder", False)
-        if freeze_text:
-            for p in self.text_encoder.parameters():
-                p.requires_grad = False
-        unfreeze_text_n = model_config.get("text_unfreeze_last_n_layers", 0)
-        if unfreeze_text_n and hasattr(self.text_encoder, "encoder") and hasattr(self.text_encoder.encoder, "layer"):
-            for layer in self.text_encoder.encoder.layer[-unfreeze_text_n:]:
-                for p in layer.parameters():
-                    p.requires_grad = True
+        apply_finetuning_policy(
+            self.text_encoder,
+            freeze_all=model_config.get("freeze_text_encoder", False),
+            unfreeze_last_n=model_config.get("text_unfreeze_last_n_layers", 0),
+            name=f"text/{text_encoder_name}",
+            freeze_feature_extractor=False,
+        )
 
         if audio_pooling == "attention":
             self.audio_attention = nn.Sequential(

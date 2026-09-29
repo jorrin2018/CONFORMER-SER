@@ -18,7 +18,8 @@ from typing import List, Dict, Tuple
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.data import IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn
+from src.data import (IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn,
+                      build_dataset, corpus_from_config)
 from scripts.run_ablation import create_ablation_model, load_ablation_config
 from src.ablation_studies import load_base_config
 from src.utils.metrics import EmotionMetrics
@@ -127,7 +128,8 @@ def create_dataloader(config: dict, split: str):
                    config['dataset']['test_sessions'])
     
     # Create dataset
-    dataset = IEMOCAPDataset(
+    dataset = build_dataset(
+        corpus=corpus_from_config(config),
         data_path=config['dataset']['data_path'],
         sessions=sessions,
         emotions=config['dataset']['emotions'],

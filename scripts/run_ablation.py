@@ -24,6 +24,7 @@ import numpy as np
 from datetime import datetime
 import copy
 import gc
+import shutil
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -200,7 +201,11 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation34Model(config)
     elif study_number == 43:
         model = Ablation43Model(config)
-    elif study_number in (44, 45, 46, 55, 56, 57):
+    elif study_number in (66, 67, 68, 69, 70, 71, 73):
+        # Lineas base unimodales con el mismo regimen que el 45.
+        from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
+        model = UnimodalBaselineModel(config)
+    elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         model = Ablation34Model(config)
@@ -244,7 +249,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-63 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-65 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -257,7 +262,8 @@ def _run_ablation_with_config(
     config: dict,
     device: str,
     experiment_name: str,
-    seed_override: int = None
+    seed_override: int = None,
+    resume: bool = False
 ):
     """
     Core training/evaluation loop shared by standard and LOSO ablations.
@@ -620,9 +626,29 @@ def _run_ablation_with_config(
     train_metrics_list = []
     val_metrics_list = []
 
+    start_epoch = 1
+    resume_points = []
+    if resume:
+        restaurado = _load_resume_state(
+            checkpoint_dir, experiment_name, model, optimizer, scheduler,
+            device, monitor_metric, monitor_mode, logger, config_actual=config)
+        if restaurado is not None:
+            (start_epoch, best_val_metric, patience_counter,
+             resume_points, historias) = restaurado
+            train_losses, val_losses, train_metrics_list, val_metrics_list = historias
+        else:
+            logger.info("[reanudacion] no hay checkpoint previo; se entrena desde cero.")
+
+    epocas_previas = start_epoch - 1     # para no reportar una epoca final inventada
+    if start_epoch > config['training']['num_epochs']:
+        logger.info("El fold ya habia agotado las epocas; se pasa directo a evaluar en test.")
+    if patience_counter >= config['training']['early_stopping_patience']:
+        logger.info("El fold ya habia disparado early stopping; se pasa directo a evaluar en test.")
+        start_epoch = config['training']['num_epochs'] + 1
+
     logger.info("Starting training...")
     
-    for epoch in range(1, config['training']['num_epochs'] + 1):
+    for epoch in range(start_epoch, config['training']['num_epochs'] + 1):
         logger.info(f"\nEpoch {epoch}/{config['training']['num_epochs']}")
         
         # Update epoch in Dirichlet loss function if applicable
@@ -706,7 +732,7 @@ def _run_ablation_with_config(
             else:
                 patience_counter += 1
                 logger.info(f"Patience: {patience_counter}/{config['training']['early_stopping_patience']}")
-            
+
             # Step plateau scheduler only (step-based schedulers step inside train_epoch)
             if scheduler is not None and isinstance(scheduler, ReduceLROnPlateau):
                 scheduler_metric = config['training'].get('scheduler_metric', 'val_loss')
@@ -719,13 +745,24 @@ def _run_ablation_with_config(
                 else:
                     metric_value = val_loss
                 scheduler.step(metric_value)
-            
+
+            # Estado completo de ESTA epoca, mejore o no, y DESPUES de que el
+            # scheduler haya dado su paso: best_model.pt solo se escribe al
+            # mejorar, asi que por si solo no sirve para reanudar -- tras una
+            # caida se perderian hasta 'patience' epocas y el LR volveria atras.
+            _save_resume_state(
+                _resume_state_path(checkpoint_dir, experiment_name),
+                epoch=epoch, model=model, optimizer=optimizer, scheduler=scheduler,
+                best_val_metric=best_val_metric, patience_counter=patience_counter,
+                resume_points=resume_points, config=config, logger=logger)
+
             # Early stopping
             if patience_counter >= config['training']['early_stopping_patience']:
                 logger.info("Early stopping triggered!")
                 break
     
     # Plot training curves
+    ultima_epoca = locals().get('epoch', epocas_previas)
     if len(train_losses) > 0:
         fig = plot_training_curves(
             train_losses, val_losses,
@@ -733,7 +770,7 @@ def _run_ablation_with_config(
             metric_name='Unweighted Accuracy'
         )
         if tb_logger:
-            tb_logger.log_figure('training/curves', fig, epoch)
+            tb_logger.log_figure('training/curves', fig, ultima_epoca)
         fig.savefig(Path(checkpoint_dir) / experiment_name / 'training_curves.png')
 
     # Load best checkpoint so test evaluation uses the best model, not the last epoch
@@ -774,7 +811,11 @@ def _run_ablation_with_config(
         json.dump({
             'test_metrics': test_metrics,
             'best_val_ua': best_val_ua,
-            'final_epoch': epoch
+            'final_epoch': ultima_epoca,
+            # Un fold reanudado no es bit-identico a uno corrido de un tiron.
+            # Queda marcado para poder rehacerlo limpio si hace falta.
+            'resumed': bool(resume_points),
+            'resume_points': resume_points,
         }, f, indent=2)
 
     logger.info(f"Ablation Study {study_number} run completed!")
@@ -787,7 +828,9 @@ def _run_ablation_with_config(
         'best_val_ua': best_val_ua,
         'test_unweighted_accuracy': float(test_ua) if test_ua is not None else None,
         'test_weighted_accuracy': float(test_wa) if test_wa is not None else None,
-        'final_epoch': int(epoch),
+        'final_epoch': int(ultima_epoca),
+        'resumed': bool(resume_points),
+        'resume_points': resume_points,
         'results_dir': str(results_dir)
     }
 
@@ -927,12 +970,303 @@ def run_ablation_study_loso(
     print(f"\nLOSO summary saved to: {summary_path}")
 
 
+# ---------------------------------------------------------------------------
+# Reanudacion a mitad de fold
+# ---------------------------------------------------------------------------
+# Un fold cuesta 3-4.5 h. Sin esto, cualquier caida (reset del driver, reinicio
+# de Windows, corte de luz) devuelve el fold a la epoca 0. El checkpoint ya
+# guardaba modelo, optimizador y scheduler; lo que faltaba era guardarlo TODAS
+# las epocas -- no solo al mejorar -- y poder volver a entrarle.
+#
+# AVISO METODOLOGICO: un fold reanudado NO es bit-identico a uno corrido de un
+# tiron. El orden de shuffle del DataLoader arranca de nuevo en la epoca de
+# reanudacion, asi que la semilla ya no reproduce ese fold exactamente. Por eso
+# cada reanudacion queda registrada en 'resume_points' y el fold se marca con
+# 'resumed': True en su final_results.json. Un fold marcado asi se puede volver
+# a correr limpio si el revisor lo pide; lo que no se puede es ocultarlo.
+
+def _resume_state_path(checkpoint_dir, experiment_name):
+    return os.path.join(checkpoint_dir, experiment_name, 'last_model.pt')
+
+
+def _scheduler_state(scheduler):
+    if scheduler is None:
+        return None
+    try:
+        return {'kind': 'state_dict', 'data': scheduler.state_dict()}
+    except Exception:
+        return {'kind': 'plateau_attrs', 'data': {
+            'best': getattr(scheduler, 'best', None),
+            'num_bad_epochs': getattr(scheduler, 'num_bad_epochs', None),
+            'cooldown_counter': getattr(scheduler, 'cooldown_counter', None),
+        }}
+
+
+def _restore_scheduler(scheduler, state, logger):
+    if scheduler is None or not state:
+        return
+    try:
+        if state.get('kind') == 'state_dict':
+            scheduler.load_state_dict(state['data'])
+        else:
+            for k, v in (state.get('data') or {}).items():
+                if v is not None:
+                    setattr(scheduler, k, v)
+    except Exception as e:
+        logger.warning(f"No se pudo restaurar el scheduler ({e}); sigue con su estado inicial.")
+
+
+def _save_resume_state(path, *, epoch, model, optimizer, scheduler, best_val_metric,
+                       patience_counter, resume_points, config, logger):
+    """Guarda el estado completo de la epoca. Escritura atomica: si la maquina
+    muere a mitad del torch.save, el last_model.pt anterior sigue intacto."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    data = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state': _scheduler_state(scheduler),
+        'best_val_metric': best_val_metric,
+        'patience_counter': patience_counter,
+        'resume_points': resume_points,
+        'config': config,
+    }
+    try:
+        torch.save(data, tmp)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.warning(f"No se pudo guardar el estado de reanudacion: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _rebuild_histories(checkpoint_dir, experiment_name, last_epoch, monitor_metric):
+    """Reconstruye las curvas de entrenamiento desde metrics.json.
+
+    Solo alimentan la grafica final, pero sin esto un fold reanudado pierde la
+    mitad de su curva y la figura del articulo mentiria por omision.
+    """
+    acc_key = 'weighted_accuracy' if monitor_metric == 'val_wa' else 'unweighted_accuracy'
+    tl, vl, tm, vm = [], [], [], []
+    mpath = os.path.join(checkpoint_dir, experiment_name, 'metrics.json')
+    if not os.path.isfile(mpath):
+        return tl, vl, tm, vm
+    try:
+        hist = json.load(open(mpath))
+    except Exception:
+        return tl, vl, tm, vm
+    for e in range(1, last_epoch + 1):
+        row = hist.get(str(e))
+        if not isinstance(row, dict):
+            continue
+        if 'train_loss' in row:
+            tl.append(row['train_loss'])
+            tm.append(row.get(f'train_{acc_key}', 0.0))
+        if 'val_loss' in row:
+            vl.append(row['val_loss'])
+            vm.append(row.get(f'val_{acc_key}', 0.0))
+    return tl, vl, tm, vm
+
+
+def _config_experimental(cfg):
+    """Los campos que definen el experimento. Si dos corridas coinciden en esto,
+    una es continuacion de la otra; si no, reanudar mezclaria experimentos."""
+    ds = (cfg or {}).get('dataset', {})
+    return {
+        'train_sessions': ds.get('train_sessions'),
+        'val_sessions': ds.get('val_sessions'),
+        'test_sessions': ds.get('test_sessions'),
+        'val_speaker': ds.get('val_speaker'),
+        'val_fraction': ds.get('val_fraction'),
+        'model': (cfg or {}).get('model'),
+        'seed': (cfg or {}).get('seed'),
+    }
+
+
+def _buscar_checkpoint_hermano(checkpoint_dir, experiment_name, config_actual, logger):
+    """Checkpoint de una corrida anterior del MISMO fold, en otra carpeta.
+
+    Devuelve (ruta, exacto) o None. 'exacto' es True para last_model.pt.
+    """
+    if not os.path.isdir(checkpoint_dir):
+        return None
+    esperado = _config_experimental(config_actual)
+    candidatos = []
+    for nombre in sorted(os.listdir(checkpoint_dir)):
+        if nombre == experiment_name:
+            continue
+        d = os.path.join(checkpoint_dir, nombre)
+        if not os.path.isdir(d):
+            continue
+        for fichero, exacto in (('last_model.pt', True), ('best_model.pt', False)):
+            ruta = os.path.join(d, fichero)
+            if not os.path.isfile(ruta):
+                continue
+            cfg_prev = None
+            cfg_path = os.path.join(d, 'config.json')
+            if os.path.isfile(cfg_path):
+                try:
+                    cfg_prev = json.load(open(cfg_path))
+                except Exception:
+                    cfg_prev = None
+            if cfg_prev is None or _config_experimental(cfg_prev) != esperado:
+                logger.info(f"[reanudacion] se ignora {nombre}: su config no coincide "
+                            f"con el de esta corrida")
+                break
+            if os.path.isfile(os.path.join(d, 'final_results.json')):
+                logger.info(f"[reanudacion] se ignora {nombre}: ese fold ya termino")
+                break
+            candidatos.append((os.path.getmtime(ruta), ruta, exacto))
+            break
+    if not candidatos:
+        return None
+    _, ruta, exacto = max(candidatos)
+    logger.warning(f"[reanudacion] no hay checkpoint en {experiment_name}; se continua "
+                   f"la corrida anterior {os.path.basename(os.path.dirname(ruta))} "
+                   f"({os.path.basename(ruta)})")
+    return ruta, exacto
+
+
+def _load_resume_state(checkpoint_dir, experiment_name, model, optimizer, scheduler,
+                       device, monitor_metric, monitor_mode, logger,
+                       config_actual=None):
+    """Devuelve (start_epoch, best_val_metric, patience, resume_points, histories)
+    o None si no hay nada que reanudar.
+
+    Prefiere last_model.pt (estado exacto de la ultima epoca). Si solo existe
+    best_model.pt -- una corrida anterior a este cambio -- reanuda desde ahi y
+    reconstruye el mejor valor y la paciencia desde metrics.json.
+    """
+    base = os.path.join(checkpoint_dir, experiment_name)
+    last_path = os.path.join(base, 'last_model.pt')
+    best_path = os.path.join(base, 'best_model.pt')
+
+    if os.path.isfile(last_path):
+        path, exacto = last_path, True
+    elif os.path.isfile(best_path):
+        path, exacto = best_path, False
+    else:
+        # Sin --experiment_name el nombre del experimento lleva la marca de
+        # tiempo del lanzamiento, asi que cada relanzamiento estrena carpeta y
+        # no encontraria nada que reanudar. Se busca en las carpetas hermanas
+        # del mismo fold, que son corridas anteriores de ESTE fold, y se exige
+        # que el config coincida en lo que define el experimento.
+        hermano = _buscar_checkpoint_hermano(checkpoint_dir, experiment_name, config_actual, logger)
+        if hermano is None:
+            return None
+        path, exacto = hermano
+        base = os.path.dirname(path)
+
+    try:
+        ck = torch.load(path, map_location=device, weights_only=False)
+    except Exception as e:
+        logger.warning(f"No se pudo leer {path} para reanudar ({e}); se entrena desde cero.")
+        return None
+
+    model.load_state_dict(ck['model_state_dict'], strict=True)
+    if 'optimizer_state_dict' in ck:
+        try:
+            optimizer.load_state_dict(ck['optimizer_state_dict'])
+        except Exception as e:
+            logger.warning(f"No se pudo restaurar el optimizador ({e}); sigue desde su estado inicial.")
+    _restore_scheduler(scheduler, ck.get('scheduler_state'), logger)
+
+    done = int(ck.get('epoch', 0))
+    resume_points = list(ck.get('resume_points') or [])
+    resume_points.append({'restored_from': os.path.basename(path),
+                          'exact': exacto,
+                          'resumed_after_epoch': done})
+
+    if exacto and ck.get('best_val_metric') is not None:
+        best_val_metric = ck['best_val_metric']
+        patience = int(ck.get('patience_counter', 0))
+    else:
+        # Reconstruir desde metrics.json: el best_model.pt es de la mejor epoca,
+        # no de la ultima, asi que la paciencia hay que recontarla.
+        best_val_metric = -1.0 if monitor_mode == 'max' else float('inf')
+        patience = 0
+        acc_key = 'weighted_accuracy' if monitor_metric == 'val_wa' else 'unweighted_accuracy'
+        mpath = os.path.join(base, 'metrics.json')
+        ultima = done
+        if os.path.isfile(mpath):
+            try:
+                hist = json.load(open(mpath))
+                epochs = sorted(int(k) for k in hist)
+                ultima = max(epochs) if epochs else done
+                for e in epochs:
+                    v = hist[str(e)].get(f'val_{acc_key}')
+                    if v is None:
+                        continue
+                    mejor = (monitor_mode == 'max' and v > best_val_metric) or \
+                            (monitor_mode == 'min' and v < best_val_metric)
+                    if mejor:
+                        best_val_metric, patience = v, 0
+                    else:
+                        patience += 1
+            except Exception as e:
+                logger.warning(f"No se pudo reconstruir la paciencia desde metrics.json ({e}).")
+        logger.warning(
+            f"Reanudando desde best_model.pt (epoca {done}); las epocas {done + 1}-{ultima} "
+            f"de la corrida anterior se repiten porque sus pesos no se guardaron.")
+        done = min(done, ultima)
+
+    # El mejor checkpoint tiene que quedar en la carpeta de ESTA corrida: al final
+    # se evalua en test cargando <experiment_name>/best_model.pt. Si se reanuda con
+    # la paciencia ya avanzada y no se vuelve a mejorar, esa carpeta no tendria
+    # best_model.pt y el test se haria con los pesos de la ultima epoca -- un
+    # numero peor que el real, sin ningun aviso.
+    destino_dir = os.path.join(checkpoint_dir, experiment_name)
+    destino_best = os.path.join(destino_dir, 'best_model.pt')
+    origen_best = os.path.join(base, 'best_model.pt')
+    if not os.path.isfile(destino_best) and os.path.isfile(origen_best):
+        try:
+            os.makedirs(destino_dir, exist_ok=True)
+            shutil.copy2(origen_best, destino_best)
+            logger.info(f"[reanudacion] se copia el mejor checkpoint previo a "
+                        f"{experiment_name}/best_model.pt para la evaluacion en test")
+        except Exception as e:
+            logger.warning(f"No se pudo copiar el mejor checkpoint previo ({e}). "
+                           f"REVISA que el test no acabe evaluando la ultima epoca.")
+
+    histories = _rebuild_histories(os.path.dirname(base), os.path.basename(base),
+                                   done, monitor_metric)
+    logger.info(f"[reanudacion] {os.path.basename(path)}: se reanuda en la epoca {done + 1}, "
+                f"mejor {monitor_metric}={best_val_metric:.4f}, paciencia {patience}")
+    return done + 1, best_val_metric, patience, resume_points, histories
+
+
+def _clear_cuda_cache(quiet: bool = False) -> bool:
+    """Libera cache de CUDA. Devuelve False si el contexto esta muerto.
+
+    Tras un 'CUDA error: unknown error' todas las llamadas al runtime siguen
+    fallando hasta reiniciar el proceso. Esta funcion lo detecta en vez de
+    propagar la excepcion y tumbar la agregacion de resultados.
+    """
+    gc.collect()
+    if not torch.cuda.is_available():
+        return True
+    try:
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        return True
+    except RuntimeError as e:
+        if not quiet:
+            print(f"[aviso] CUDA no responde al limpiar cache: {e}")
+        return False
+
+
 def run_ablation_study_kfold(
     study_number: int,
     config_path: str,
     device: str = 'cuda',
     experiment_name: str = None,
-    seed: int = None
+    seed: int = None,
+    protocol: str = 'standard',
+    folds: list = None,
+    resume: bool = False
 ):
     """
     Run Ablation Study with K-Fold cross-validation.
@@ -976,30 +1310,90 @@ def run_ablation_study_kfold(
         base_experiment_name = experiment_name
     
     fold_results = []
-    
+
+    # Reanudacion: --folds 4 5 corre solo esos folds y FUSIONA con el resumen que ya
+    # exista en disco, para no repetir folds que ya costaron GPU. El fold_idx sigue
+    # siendo el indice global dentro de all_sessions, porque de el dependen el
+    # hablante de validacion del protocolo 'speaker' y la semilla por fold.
+    requested = [int(x) for x in folds] if folds else None
+    if requested:
+        desconocidas = [s for s in requested if s not in all_sessions]
+        if desconocidas:
+            raise ValueError(f"--folds {desconocidas} no estan en all_sessions={all_sessions}")
+
     for fold_idx, test_session in enumerate(all_sessions):
+        if requested and test_session not in requested:
+            print(f"\n[skip] fold {fold_idx + 1}/{len(all_sessions)} (test S{test_session}) "
+                  f"-- no esta en --folds")
+            continue
         print(f"\n{'='*60}")
         print(f"K-Fold Fold {fold_idx + 1}/{len(all_sessions)}")
         print(f"{'='*60}")
         
         # Clear cache before starting new fold
         print("Clearing cache before fold...")
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        _clear_cuda_cache()
         print("Cache cleared.")
         
-        # Choose validation session as the next available session (cyclic),
-        # different from the test session.
-        remaining = [s for s in all_sessions if s != test_session]
-        val_session = remaining[0]
-        train_sessions = [s for s in all_sessions if s not in (test_session, val_session)]
-        
+        # -------------------------------------------------- reparto de sesiones
+        # 'standard': LOSO como lo usa la literatura de IEMOCAP. Se entrena con las
+        #   CUATRO sesiones que no son test y la validacion sale de UN hablante de
+        #   dentro, rotando por fold. Sigue siendo independiente de hablante en los
+        #   tres conjuntos y aprovecha ~87 % de las cuatro sesiones para entrenar.
+        # 'legacy': 3 sesiones de entrenamiento + 1 de validacion + 1 de test. Es lo
+        #   que se corrio hasta el 12/09/2026; usa un 25 % menos de datos y NO es
+        #   comparable con las cifras publicadas.
+        val_speaker = None
+        val_fraction = None
+        random_folds = None
+        if protocol == 'random':
+            # Reparto ALEATORIO estratificado sobre las cinco sesiones (Yoon et al.
+            # 2018). DEPENDIENTE DE HABLANTE a proposito: los mismos actores aparecen
+            # en train y test. No es el numero honesto; existe para medir, con el mismo
+            # modelo y el mismo corpus, cuanto vale el reparto por si solo frente a
+            # LOSO. Reportarlo SIEMPRE junto al 'standard', nunca solo.
+            train_sessions = list(all_sessions)
+            val_session = None
+            random_folds = {'n_folds': len(all_sessions),
+                            'fold_index': fold_idx,
+                            'val_fraction': 0.06}
+        elif protocol in ('standard', 'speaker'):
+            train_sessions = [x for x in all_sessions if x != test_session]
+            val_session = None
+            if protocol == 'speaker':
+                # Un hablante de la sesion siguiente a la de test (ciclico),
+                # alternando genero por fold: cinco hablantes distintos.
+                # Medido: la validacion de un solo hablante es muy ruidosa
+                # (sigma de val UA 8.0 pp frente a 1.7) y para el entrenamiento
+                # demasiado pronto. Se conserva como variante, no por defecto.
+                nxt = all_sessions[(all_sessions.index(test_session) + 1) % len(all_sessions)]
+                val_speaker = f"Ses{nxt:02d}_{'F' if fold_idx % 2 == 0 else 'M'}"
+            else:
+                # Muestra estratificada por clase dentro de las cuatro sesiones de
+                # entrenamiento: todos los hablantes representados, senal de
+                # validacion mucho mas estable para elegir el checkpoint.
+                val_fraction = 0.12
+        else:
+            remaining = [x for x in all_sessions if x != test_session]
+            val_session = remaining[0]
+            train_sessions = [x for x in all_sessions
+                              if x not in (test_session, val_session)]
+
         fold_config = copy.deepcopy(base_ablation_config)
         fold_config['dataset']['train_sessions'] = train_sessions
-        fold_config['dataset']['val_sessions'] = [val_session]
+        fold_config['dataset']['val_sessions'] = (
+            train_sessions if val_speaker else [val_session])
         fold_config['dataset']['test_sessions'] = [test_session]
+        fold_config['dataset'].pop('val_speaker', None)
+        fold_config['dataset'].pop('val_fraction', None)
+        fold_config['dataset'].pop('random_folds', None)
+        if random_folds:
+            fold_config['dataset']['random_folds'] = random_folds
+            fold_config['dataset']['test_sessions'] = list(all_sessions)
+        if val_speaker:
+            fold_config['dataset']['val_speaker'] = val_speaker
+        if val_fraction:
+            fold_config['dataset']['val_fraction'] = val_fraction
         
         # Create per-fold logging/checkpoint dirs to avoid collisions
         fold_suffix = f"fold_S{test_session}_test"
@@ -1010,8 +1404,12 @@ def run_ablation_study_kfold(
         
         fold_experiment_name = f"{base_experiment_name}_{fold_suffix}"
         
+        print(f"Protocolo:      {protocol}")
         print(f"Train sessions: {train_sessions}")
-        print(f"Val session:    {[val_session]}")
+        print("Validacion:     " + (
+            f"hablante {val_speaker} (dentro de train)" if val_speaker
+            else f"{100*val_fraction:.0f} % estratificado de train" if val_fraction
+            else f"sesion {val_session}"))
         print(f"Test session:   {[test_session]}")
         print(f"Experiment:     {fold_experiment_name}")
         print()
@@ -1022,30 +1420,90 @@ def run_ablation_study_kfold(
                 config=fold_config,
                 device=device,
                 experiment_name=fold_experiment_name,
-                seed_override=seed
+                seed_override=seed,
+                resume=resume
             )
             fold_metrics['test_session'] = int(test_session)
-            fold_metrics['val_session'] = int(val_session)
+            fold_metrics['protocol'] = protocol
+            fold_metrics['val_speaker'] = val_speaker
+            fold_metrics['val_fraction'] = val_fraction
+            fold_metrics['random_folds'] = random_folds
+            fold_metrics['val_session'] = (
+                int(val_session) if val_session is not None else None)
             fold_metrics['train_sessions'] = [int(s) for s in train_sessions]
+            # Sello de procedencia. Sin esto, el rescate de folds del resumen previo
+            # puede mezclar semillas distintas en una misma media sin avisar.
+            fold_metrics['seed'] = int(seed) if seed is not None else None
+            fold_metrics['experiment_name'] = fold_experiment_name
             fold_results.append(fold_metrics)
         except Exception as e:
             print(f"Error in fold {fold_idx + 1}: {e}")
             import traceback
             traceback.print_exc()
-            # Clear cache even on error
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _clear_cuda_cache(quiet=True)
             continue
         finally:
-            # Always clear cache after each fold
+            # Always clear cache after each fold. Si el contexto de CUDA ha muerto
+            # (error 'unknown error': reset del driver, TDR, GPU caida del bus),
+            # empty_cache() vuelve a lanzar. Antes eso escapaba del bucle y se perdia
+            # el resumen de los folds que SI habian terminado.
             print(f"\nClearing cache after fold {fold_idx + 1}...")
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+            if not _clear_cuda_cache():
+                print("[aviso] el contexto de CUDA no responde: los folds restantes no "
+                      "pueden correr en este proceso. Se guarda el resumen parcial y se "
+                      "sale; reanuda con --folds sobre las sesiones que falten.")
+                break
             print("Cache cleared.\n")
     
+    # --- fusion con el resumen previo -------------------------------------------
+    # Con --folds solo se han corrido algunas sesiones. Se recuperan del resumen en
+    # disco las que no se pidieron, siempre que su protocolo coincida: mezclar folds
+    # de protocolos distintos produciria una media sin sentido.
+    ckpt_root = base_ablation_config['logging']['checkpoint_dir']
+    # El nombre del resumen lleva la semilla cuando se pide una explicitamente. Sin
+    # esto, correr 42/123/456 sobre el mismo estudio sobrescribe el resumen anterior
+    # cada vez y la multi-semilla se destruye a si misma en silencio.
+    sufijo_semilla = '' if seed is None else '_seed{}'.format(int(seed))
+    summary_path = (Path(ckpt_root) /
+                    'kfold_summary_ablation_{:02d}{}.json'.format(study_number,
+                                                                  sufijo_semilla))
+    if requested and summary_path.exists():
+        try:
+            previo = json.load(open(summary_path))
+        except Exception as e:
+            print(f"[aviso] no se pudo leer el resumen previo ({e}); se guarda solo lo corrido ahora")
+            previo = None
+        if previo:
+            nuevas = {fr.get('test_session') for fr in fold_results}
+            recuperados = []
+            for fr in previo.get('folds', []):
+                if fr.get('test_session') in nuevas:
+                    continue                      # lo de ahora manda
+                if fr.get('protocol') != protocol:
+                    print(f"[aviso] fold S{fr.get('test_session')} del resumen previo es "
+                          f"protocolo '{fr.get('protocol')}' y no '{protocol}': se descarta")
+                    continue
+                semilla_previa = fr.get('seed')
+                semilla_actual = int(seed) if seed is not None else None
+                if 'seed' in fr and semilla_previa != semilla_actual:
+                    print(f"[aviso] fold S{fr.get('test_session')} del resumen previo "
+                          f"se corrio con semilla {semilla_previa} y ahora se pide "
+                          f"{semilla_actual}: se descarta. Mezclar semillas en una "
+                          f"media la invalida.")
+                    continue
+                recuperados.append(fr)
+            if recuperados:
+                print(f"[reanudacion] se recuperan del resumen previo los folds "
+                      f"{sorted(fr['test_session'] for fr in recuperados)}")
+            fold_results = sorted(fold_results + recuperados,
+                                  key=lambda fr: fr.get('test_session', 0))
+
+    if len(fold_results) < len(all_sessions):
+        faltan = sorted(set(int(s) for s in all_sessions)
+                        - {fr.get('test_session') for fr in fold_results})
+        print(f"\n[PARCIAL] {len(fold_results)}/{len(all_sessions)} folds. Faltan {faltan}. "
+              f"Reanuda con:  --folds {' '.join(str(s) for s in faltan)} --protocol {protocol}")
+
     # Aggregate K-Fold results across folds
     best_val_uas = [fr['best_val_ua'] for fr in fold_results if fr.get('best_val_ua') is not None]
     test_uas = [fr['test_unweighted_accuracy'] for fr in fold_results if fr.get('test_unweighted_accuracy') is not None]
@@ -1053,8 +1511,11 @@ def run_ablation_study_kfold(
     
     summary = {
         'folds': fold_results,
+        'protocol': protocol,
         'num_folds': len(fold_results),
+        'complete': len(fold_results) == len(all_sessions),
         'all_sessions': [int(s) for s in all_sessions],
+        'seed': int(seed) if seed is not None else None,
     }
     if best_val_uas:
         summary['mean_best_val_ua'] = float(sum(best_val_uas) / len(best_val_uas))
@@ -1067,8 +1528,6 @@ def run_ablation_study_kfold(
         summary['std_test_weighted_accuracy'] = float(np.std(test_was))
     
     # Save K-Fold summary next to the base checkpoint directory
-    ckpt_root = base_ablation_config['logging']['checkpoint_dir']
-    summary_path = Path(ckpt_root) / 'kfold_summary_ablation_{:02d}.json'.format(study_number)
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2)
     
@@ -1088,13 +1547,41 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-63; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-77; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Experiment name prefix')
     parser.add_argument('--seed', type=int, default=None,
                         help='Random seed (overrides config seed)')
+    parser.add_argument('--protocol', choices=['standard', 'speaker', 'legacy', 'random'],
+                        default='standard',
+                        help="Reparto de sesiones en k-fold. 'standard': 4 sesiones de "
+                             "entrenamiento y validacion estratificada del 12%% de ellas. "
+                             "'speaker': 4 sesiones y validacion de un hablante de dentro "
+                             "(disjunta por hablante pero ruidosa: sigma de val UA 8 pp). "
+                             "'legacy': 3+1+1, con 25%% menos datos y NO comparable con "
+                             "las cifras publicadas. 'random': folds aleatorios sobre las "
+                             "cinco sesiones al estilo de Yoon et al. 2018, DEPENDIENTE DE "
+                             "HABLANTE -- solo para medir cuanto vale el reparto; nunca "
+                             "como numero principal.")
+    parser.add_argument('--resume', action='store_true',
+                        help='Reanudar cada fold desde su ultimo checkpoint en vez de '
+                             'empezar en la epoca 0. Usa last_model.pt (estado exacto de '
+                             'la ultima epoca); si solo hay best_model.pt de una corrida '
+                             'anterior, reanuda desde ahi. AVISO: un fold reanudado no es '
+                             'bit-identico a uno corrido de un tiron -- queda marcado con '
+                             'resumed:true en su final_results.json.')
+    parser.add_argument('--folds', type=int, nargs='+', default=None,
+                        help='Correr solo estos folds (por sesion de test), p. ej. '
+                             '--folds 4 5. Los demas se recuperan del resumen previo '
+                             'si su protocolo coincide. Para reanudar tras un fallo de '
+                             'GPU sin repetir folds ya terminados.')
+    parser.add_argument('--loso', action='store_true',
+                        help='Force 5-fold leave-one-session-out for the requested '
+                             'study, regardless of its number. Required for any '
+                             'result that goes in a paper: a single split on '
+                             'IEMOCAP has a between-fold sigma of 4-5 pp.')
     args = parser.parse_args()
     
     # Define all studies
@@ -1161,13 +1648,27 @@ def main():
         (61, "config/ablation/ablation_61_composite_neutral.yaml"),  # SOTA Combo + CompositeLoss with neutral focus
         (62, "config/ablation/ablation_62_attention_pooling.yaml"),  # SOTA Combo + attention-based audio pooling
         (63, "config/ablation/ablation_63_finetuned_45.yaml"),  # Fine-tuned Study 45
+        (64, "config/ablation/ablation_64_speechcue_real.yaml"),  # 45 + SpeechCue del articulo (F0 pYIN + terciles + 9 tokens)
+        (65, "config/ablation/ablation_65_vit_unfrozen.yaml"),  # 45 con el ViT descongelado (un solo factor)
+        (66, "config/ablation/ablation_66_audio_only.yaml"),  # linea base unimodal de audio, regimen del 45
+        (67, "config/ablation/ablation_67_text_only.yaml"),  # linea base unimodal de texto, regimen del 45
+        (68, "config/ablation/ablation_68_audio_weighted_layers.yaml"),  # 66 + suma ponderada de capas (Pepino)
+        (69, "config/ablation/ablation_69_audio_simple_head.yaml"),  # 66 + cabeza simple: la MST son 10M param sobre un vector
+        (70, "config/ablation/ablation_70_pepino_replication.yaml"),  # REPLICACION de Pepino 2021 (congelado + capas + cabeza simple)
+        (71, "config/ablation/ablation_71_param_groups.yaml"),  # 66 con las tasas por grupo que el articulo describe
+        (72, "config/ablation/ablation_72_trimodal_param_groups.yaml"),  # 45 con las tasas por grupo -- NUMERO PRINCIPAL
+        (73, "config/ablation/ablation_73_text_param_groups.yaml"),  # 67 con las tasas por grupo
+        (74, "config/ablation/ablation_74_no_conflict_gate.yaml"),  # 72 SIN compuerta de conflicto -- DECIDE EL TITULO
+        (75, "config/ablation/ablation_75_conflict_gate_trained.yaml"),  # 72 + perdida auxiliar: la compuerta con detector que SI entrena
+        (76, "config/ablation/ablation_76_confidence_calibrated.yaml"),  # 75 + objetivo de calibracion sobre la confianza por rama
+        (77, "config/ablation/ablation_77_cremad_trimodal.yaml"),  # el modelo del 74, sin cambios, sobre CREMA-D (segundo corpus)
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-63 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-77 (there is no study 51)")
             return
     
     # Run each study
@@ -1183,14 +1684,17 @@ def main():
                     experiment_name=experiment_name,
                     seed=args.seed
                 )
-            elif study_number in (20, 29, 41):
+            elif args.loso or study_number in (20, 29, 41):
                 # Special case: Ablation 20, 29 and 41 run K-Fold cross-validation with cache clearing
                 run_ablation_study_kfold(
                     study_number=study_number,
                     config_path=config_path,
                     device=args.device,
                     experiment_name=experiment_name,
-                    seed=args.seed
+                    seed=args.seed,
+                    protocol=args.protocol,
+                    folds=args.folds,
+                    resume=args.resume
                 )
             else:
                 run_ablation_study(

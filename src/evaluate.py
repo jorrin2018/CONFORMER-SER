@@ -18,7 +18,8 @@ from torch.utils.data import DataLoader
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.data import IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn
+from src.data import (IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn,
+                      build_dataset, corpus_from_config)
 from src.models import ConformerMultimodalModel
 from src.utils.metrics import EmotionMetrics
 from src.utils.logger import setup_logger
@@ -129,7 +130,8 @@ def create_dataloader(config: dict, split: str):
         raise ValueError(f"Unknown split: {split}")
     
     # Create dataset
-    dataset = IEMOCAPDataset(
+    dataset = build_dataset(
+        corpus=corpus_from_config(config),
         data_path=config['dataset']['data_path'],
         sessions=sessions,
         emotions=config['dataset']['emotions'],

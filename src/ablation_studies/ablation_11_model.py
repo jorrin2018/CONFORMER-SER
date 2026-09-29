@@ -20,7 +20,8 @@ import torch.nn.functional as F
 import torchaudio
 from transformers import ViTModel, ViTConfig
 
-from src.models.conformer import ConformerMultimodalModel
+from src.models.conformer import (ConformerMultimodalModel, apply_finetuning_policy,
+                                  build_layer_weights, weighted_hidden_states)
 from src.models.fusion import TriModalCrossAttentionFusion
 from .classification_heads import LSTMClassificationHead
 
@@ -65,6 +66,42 @@ class Ablation11Model(ConformerMultimodalModel):
         )
 
         # -----------------------------
+        # SpeechCue: nueve tokens nuevos
+        # -----------------------------
+        # create_dataloaders() los anade al tokenizer y deja aqui el tamano
+        # resultante del vocabulario. El encoder de texto tiene que crecer las
+        # mismas nueve filas, y esas filas deben quedar entrenables aunque el
+        # resto del encoder este congelado: son "los nueve embeddings" del
+        # articulo.
+        tokenizer_len = config.get("text", {}).get("_tokenizer_len")
+        if tokenizer_len:
+            emb = self.text_encoder.get_input_embeddings()
+            current = emb.weight.shape[0]
+            if tokenizer_len != current:
+                self.text_encoder.resize_token_embeddings(tokenizer_len)
+                emb = self.text_encoder.get_input_embeddings()
+                n_new = tokenizer_len - current
+                emb.weight.requires_grad = True
+                # "adds only nine learnable embeddings": the gradient of every
+                # pre-existing row is zeroed, so only the new rows actually learn.
+                # Without this the whole embedding matrix would train, which is a
+                # different (and much larger) change than the paper claims.
+                mask = torch.zeros_like(emb.weight)
+                mask[current:] = 1.0
+                emb.weight.register_hook(lambda grad, m=mask: grad * m)
+                # The whole matrix has requires_grad=True so autograd reaches the new
+                # rows, but the hook zeroes the gradient of every pre-existing row.
+                # Record the split so parameter counts can report what actually learns
+                # instead of the nominal size of the matrix.
+                dim = emb.weight.shape[1]
+                self.speechcue_new_embeddings = n_new * dim
+                self.speechcue_frozen_embeddings = current * dim
+                print(f"[SpeechCue] text embeddings {current} -> {tokenizer_len}; "
+                      f"only the {n_new} new rows learn "
+                      f"({self.speechcue_new_embeddings:,} params, not "
+                      f"{self.speechcue_frozen_embeddings + self.speechcue_new_embeddings:,})")
+
+        # -----------------------------
         # Rama Visual: ViT sobre Mel-espectrograma
         # -----------------------------
         vit_name = model_config.get("vision_encoder", "google/vit-base-patch16-224")
@@ -78,10 +115,18 @@ class Ablation11Model(ConformerMultimodalModel):
         vision_hidden_size = self.vision_encoder.config.hidden_size
 
         # Opcional: congelar la rama visual (por defecto True para reducir coste)
+        # ViT: "frozen" means frozen. vision_unfreeze_last_n_layers only applies when
+        # freeze_vision_encoder is False, so a config cannot claim a frozen ViT while
+        # quietly fine-tuning its top blocks.
         freeze_vision = model_config.get("freeze_vision_encoder", True)
-        if freeze_vision:
-            for p in self.vision_encoder.parameters():
-                p.requires_grad = False
+        apply_finetuning_policy(
+            self.vision_encoder,
+            freeze_all=freeze_vision,
+            unfreeze_last_n=(0 if freeze_vision
+                             else model_config.get("vision_unfreeze_last_n_layers", 0)),
+            name=f"vision/{vit_name}",
+            freeze_feature_extractor=False,
+        )
 
         # Parámetros para construir Mel-espectrograma como imagen
         sample_rate = dataset_config.get("sample_rate", 16000)
@@ -149,25 +194,20 @@ class Ablation11Model(ConformerMultimodalModel):
             bidirectional=lstm_bidirectional,
         )
 
-        # Optional: WavLM — weighted combination of all hidden states (paper recommendation)
-        self._wavlm_weighted_hidden_states = False
-        self.wavlm_layer_logits: Optional[nn.Parameter] = None
-        want_weighted = bool(model_config.get("wavlm_weighted_hidden_states", False))
-        enc_name = str(model_config.get("audio_encoder", "")).lower()
-        model_type = getattr(self.audio_encoder.config, "model_type", "") or ""
-        is_wavlm = model_type == "wavlm" or "wavlm" in enc_name
-        if want_weighted and is_wavlm:
-            n_layers = 1 + int(
-                getattr(self.audio_encoder.config, "num_hidden_layers", 12)
-            )
-            self.wavlm_layer_logits = nn.Parameter(torch.zeros(n_layers))
-            self._wavlm_weighted_hidden_states = True
-        elif want_weighted and not is_wavlm:
-            warnings.warn(
-                "model.wavlm_weighted_hidden_states=True ignored: audio encoder is not WavLM.",
-                UserWarning,
-                stacklevel=2,
-            )
+        # Suma ponderada de capas ocultas (Pepino et al.). Estaba restringida a WavLM
+        # sin motivo: la informacion paralinguistica vive en las capas intermedias de
+        # cualquier encoder de voz, wav2vec2 incluido.
+        # El parametro se llama audio_encoder_layer_logits a proposito: create_optimizer()
+        # agrupa por subcadena del nombre, asi que ese nombre lo deja en el grupo de
+        # audio (3e-5). Como wavlm_layer_logits caia en el grupo de fusion y entrenaba
+        # a 5e-6, seis veces mas lento, los pesos de capa apenas se movian.
+        self._weighted_hidden_states = bool(
+            model_config.get("audio_weighted_hidden_states",
+                             model_config.get("wavlm_weighted_hidden_states", False))
+        )
+        self.audio_encoder_layer_logits: Optional[nn.Parameter] = None
+        if self._weighted_hidden_states:
+            self.audio_encoder_layer_logits = build_layer_weights(self.audio_encoder)
 
     def _waveform_to_vit_image(self, audio: torch.Tensor) -> torch.Tensor:
         """
@@ -232,26 +272,11 @@ class Ablation11Model(ConformerMultimodalModel):
         # -----------------------------
         # Audio (WavLM optional: weighted hidden states)
         # -----------------------------
-        if self._wavlm_weighted_hidden_states and self.wavlm_layer_logits is not None:
-            audio_outputs = self.audio_encoder(
-                audio, output_hidden_states=True
+        if self._weighted_hidden_states and self.audio_encoder_layer_logits is not None:
+            audio_features = weighted_hidden_states(
+                self.audio_encoder, audio, self.audio_encoder_layer_logits
             )
-            hidden_states = getattr(audio_outputs, "hidden_states", None)
-            if hidden_states is None:
-                raise RuntimeError(
-                    "wavlm_weighted_hidden_states is enabled but the audio encoder "
-                    "returned no hidden_states; ensure output_hidden_states=True is supported."
-                )
-            # (L, B, T, H)
-            stacked = torch.stack(hidden_states, dim=0)
-            w = F.softmax(self.wavlm_layer_logits, dim=0).view(
-                -1, 1, 1, 1
-            )
-            audio_features = (w * stacked).sum(dim=0)
-            audio_attn = getattr(audio_outputs, "attention_mask", None)
-            audio_pooled = self.pool_audio_features(
-                audio_features, attention_mask=audio_attn
-            )
+            audio_pooled = self.pool_audio_features(audio_features)
         else:
             audio_outputs = self.audio_encoder(audio)
             audio_features = audio_outputs.last_hidden_state  # (B, S, H_a)
@@ -290,7 +315,7 @@ class Ablation11Model(ConformerMultimodalModel):
 
         predictions = torch.argmax(logits, dim=-1)
 
-        return {
+        salida = {
             "logits": logits,
             "predictions": predictions,
             "loss": loss,
@@ -298,6 +323,16 @@ class Ablation11Model(ConformerMultimodalModel):
             "text_features": text_features,
             "vision_features": vision_features,
         }
+        # Logits de los clasificadores por rama que alimentan la deteccion de
+        # conflicto. Se sacan para que train_epoch pueda ponerles una perdida
+        # auxiliar: sin ella nunca reciben gradiente (los consume un argmax).
+        rama = getattr(self.fusion, "branch_logits", None)
+        if rama is not None:
+            salida["branch_logits"] = rama
+        conf = getattr(self.fusion, "branch_confidence", None)
+        if conf is not None:
+            salida["branch_confidence"] = conf
+        return salida
 
 
 

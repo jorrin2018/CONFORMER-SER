@@ -5,7 +5,7 @@
 # Batch size reduced to 2 (accum 16) to fit fully unfrozen ViT in 8GB VRAM.
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

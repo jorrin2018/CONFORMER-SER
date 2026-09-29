@@ -2,7 +2,7 @@
 
 Este documento resume las diferencias clave y el objetivo de cada configuración de experimentación ("ablation") en el proyecto.
 
-**Total**: estudios 1-50, 52-63 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34 | **Serie 55-57**: misma receta que **Ablation 45** (Conflict-Aware + MultiScaleTemporal), distinto encoder de audio (WavLM, HuBERT, Emotion2Vec)
+**Total**: estudios 1-50, 52-65 | **Mejor resultado**: Ablation 34 (77.98% UA, gap 2.68%) | **Base para 31-35**: Ablation 25 | **Base para 36-39**: Ablation 34 | **Serie 55-57**: misma receta que **Ablation 45** (Conflict-Aware + MultiScaleTemporal), distinto encoder de audio (WavLM, HuBERT, Emotion2Vec)
 
 ### Ejecución
 ```powershell
@@ -185,7 +185,7 @@ Ablación controlada respecto al **estudio 45** (*Conflict-Aware Cross-Attention
 | 62 | ablation_62_attention_pooling | Ablation34Model |
 | 63 | ablation_63_finetuned_45 | Ablation34Model |
 
-> **Rango válido: `1-50` y `52-63`.** No existe el estudio 51. La fuente de verdad es
+> **Rango válido: `1-50` y `52-65`.** No existe el estudio 51. La fuente de verdad es
 > `create_ablation_model()` en `scripts/run_ablation.py`.
 
 ### Configs sin ruta de código (no ejecutables)

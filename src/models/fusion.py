@@ -1675,6 +1675,7 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         num_layers: int = 3,
         dropout: float = 0.3,
         conflict_threshold: float = 0.3,
+        conflict_aware_enabled: bool = True,
         # One of: "prediction_divergence" (logits disagree), "feature_distance" (embedding cosine distance), "learned" (MLP)
         conflict_detection_method: str = "prediction_divergence",
     ):
@@ -1686,6 +1687,19 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         self.hidden_dim = hidden_dim
         self.conflict_threshold = conflict_threshold
         self.conflict_detection_method = conflict_detection_method
+        # Interruptor de la compuerta. Con False la deteccion se calcula igual pero la
+        # mascara se fuerza a 0, asi que final_weights == base_weights (uniforme 1/3):
+        # misma arquitectura, mismos parametros, mismas formas, la compuerta no dispara.
+        # Es la ablacion de UN SOLO FACTOR que decide si "Conflict-Aware" se sostiene.
+        self.conflict_aware_enabled = bool(conflict_aware_enabled)
+        # Proporcion de muestras del ultimo lote marcadas como conflicto, para el
+        # analisis de "cuando dispara la compuerta" (no participa en el grafo).
+        self.last_conflict_rate = 0.0
+        # Material para el diagnostico de POR QUE la compuerta no aporta. No participa
+        # en el grafo: son copias desprendidas del ultimo lote.
+        self.last_diag = None
+        self.branch_logits = None
+        self.branch_confidence = None
 
         # Projections to common hidden space
         self.audio_proj = nn.Linear(audio_dim, hidden_dim)
@@ -1944,11 +1958,14 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         text_logits = self.text_classifier(text_emb)     # (B, num_classes)
         vision_logits = self.vision_classifier(vision_emb)  # (B, num_classes)
 
-        # Detect conflicts
-        conflicts = self._detect_conflict(
+        # Detect conflicts. Se calcula SIEMPRE, tambien con la compuerta desactivada,
+        # para poder reportar cada cuanto habria disparado sin cambiar nada mas.
+        detected = self._detect_conflict(
             audio_emb, text_emb, vision_emb,
             audio_logits, text_logits, vision_logits,
         )  # (B,)
+        self.last_conflict_rate = float(detected.detach().mean().item())
+        conflicts = detected if self.conflict_aware_enabled else torch.zeros_like(detected)
 
         # Stack modalities for cross-attention
         tokens = torch.stack([audio_emb, text_emb, vision_emb], dim=1)  # (B, 3, H)
@@ -1962,6 +1979,14 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         tokens_flat = tokens.reshape(tokens.size(0), -1)  # (B, 3*H)
         confidence_scores = self.confidence_net(tokens_flat)  # (B, 3)
 
+        # Confianza ATADA AL GRAFO, para poder ponerle un objetivo de calibracion.
+        # Hoy la confidence_net solo recibe senal a traves de la perdida final de
+        # clasificacion: nada la empuja a predecir QUE RAMA ACIERTA. Medido el
+        # 22/09/2026 con el detector ya entrenado: elegir por confianza da 69.0 % y el
+        # voto uniforme 70.5 %, con un oraculo del 91.7 %. La confianza informa
+        # (+20.1 pp sobre el azar) pero no lo bastante para batir al promedio.
+        self.branch_confidence = confidence_scores
+
         # Apply conflict-aware weighting
         # When conflict detected, use confidence-based weighting
         # Otherwise, use uniform weighting
@@ -1971,6 +1996,27 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         # Interpolate based on conflict detection
         conflict_mask = conflicts.unsqueeze(-1)  # (B, 1)
         final_weights = (1 - conflict_mask) * base_weights + conflict_mask * conflict_weights  # (B, 3)
+
+        # Diagnostico: logits por rama, deteccion y confianza estimada. Permite
+        # responder SIN REENTRENAR dos preguntas: si hay algo que ganar en las muestras
+        # de conflicto (oraculo) y si la confianza esta calibrada (predice que rama
+        # acierta). Si el oraculo es bajo o la confianza no informa, ninguna variante
+        # de la compuerta puede funcionar y sabemos por que.
+        # Logits por rama ATADOS AL GRAFO. Sin esto, los tres clasificadores
+        # auxiliares solo se consumen via argmax -- que no es diferenciable -- y
+        # nunca reciben gradiente: se quedan en su init normal(0, 0.01) durante todo
+        # el entrenamiento, el "conflicto" se detecta entre tres predictores
+        # aleatorios y dispara en el 94.5 % de las muestras. Medido el 20/09/2026.
+        self.branch_logits = (audio_logits, text_logits, vision_logits)
+
+        self.last_diag = {
+            'audio_logits': audio_logits.detach(),
+            'text_logits': text_logits.detach(),
+            'vision_logits': vision_logits.detach(),
+            'conflict': detected.detach(),
+            'confidence': confidence_scores.detach(),
+            'weights': final_weights.detach(),
+        }
 
         # Conflict-aware weights apply to tokens before the fusion MLP (not only unused sum)
         weighted_tokens = tokens * final_weights.unsqueeze(-1)  # (B, 3, H)

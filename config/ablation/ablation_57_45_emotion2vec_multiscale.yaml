@@ -3,7 +3,7 @@
 # audio_unfreeze_last_n_layers: 0 alineado con estudio 50 (wrapper distinto a Wav2Vec2/WavLM).
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

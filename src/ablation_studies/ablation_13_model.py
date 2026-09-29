@@ -39,45 +39,14 @@ class Ablation13Model(Ablation11Model):
         # Descongelado parcial del Vision Transformer (ViT)
         # ---------------------------------------------------------
         #
-        # Idea análoga a Ablation 07 para audio/texto:
-        # - Mantener congeladas las capas bajas del ViT (features más genéricas).
-        # - Descongelar las capas medias y altas (últimas N capas) para adaptar mejor
-        #   la representación visual al dominio de SER.
+        # La politica de congelado del ViT vive en UN solo sitio:
+        # Ablation11Model -> apply_finetuning_policy(). Aqui habia un segundo bloque
+        # que descongelaba las ultimas N capas cuando freeze_vision_encoder era True,
+        # deshaciendo la decision anterior: un config podia declarar "ViT congelado"
+        # y acabar afinando sus bloques superiores. Eliminado.
         #
-        # Se controla con:
-        #   model.freeze_vision_encoder: bool (por defecto True)
-        #   model.vision_unfreeze_last_n_layers: int (por defecto 0 => todo congelado)
-        #
-        # Nota: `Ablation11Model` ya congela toda la rama visual cuando
-        # `freeze_vision_encoder` es True. Aquí revertimos parcialmente esa decisión.
-        freeze_vision = model_config.get("freeze_vision_encoder", True)
-        vision_unfreeze_last_n = int(model_config.get("vision_unfreeze_last_n_layers", 0) or 0)
-
-        if freeze_vision and vision_unfreeze_last_n > 0:
-            try:
-                encoder = getattr(self.vision_encoder, "encoder", None)
-                if encoder is not None and hasattr(encoder, "layer"):
-                    encoder_layers = encoder.layer
-                    # Descongelar las últimas N capas (capas medias/altas del ViT)
-                    for layer in encoder_layers[-vision_unfreeze_last_n:]:
-                        for p in layer.parameters():
-                            p.requires_grad = True
-
-                # También descongelamos las LayerNorm finales si existen, para
-                # permitir una ligera recalibración de las activaciones.
-                if hasattr(self.vision_encoder, "layernorm"):
-                    for p in self.vision_encoder.layernorm.parameters():
-                        p.requires_grad = True
-                if encoder is not None and hasattr(encoder, "layernorm"):
-                    for p in encoder.layernorm.parameters():
-                        p.requires_grad = True
-            except Exception as e:
-                # En caso de que la estructura interna del ViT difiera,
-                # mostramos un warning pero continuamos con entrenamiento.
-                print(
-                    f"Warning: could not partially unfreeze vision encoder layers "
-                    f"(vision_unfreeze_last_n_layers={vision_unfreeze_last_n}): {e}"
-                )
+        #   freeze_vision_encoder: true                      -> ViT completamente congelado
+        #   freeze_vision_encoder: false + unfreeze_last_n: N -> ultimas N capas entrenables
 
 
 

@@ -60,8 +60,12 @@ results/
 outputs/
 
 # --- Datos -----------------------------------------------------------------
-data/
-datasets/
+# Anclados a la raiz: sin la barra inicial, 'data/' tambien casaba con
+# src/data/, o sea el paquete que define QUE datos ve el modelo. Estuvo fuera
+# del control de versiones hasta el 22/09/2026. Justo el codigo donde este repo
+# ya tuvo un bug que tiraba 2,943 de 5,531 utterances en silencio.
+/data/
+/datasets/
 *.wav
 *.mp3
 *.flac
@@ -93,3 +97,6 @@ temp/
 script.py
 debug_*.py
 check_*.py
+# ...pero los verificadores del repo NO son scripts de depuracion: son la unica
+# prueba de que los arreglos hacen lo que dicen. Van al control de versiones.
+!scripts/check_*.py
