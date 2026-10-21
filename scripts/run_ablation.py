@@ -201,11 +201,11 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation34Model(config)
     elif study_number == 43:
         model = Ablation43Model(config)
-    elif study_number in (66, 67, 68, 69, 70, 71, 73):
+    elif study_number in (66, 67, 68, 69, 70, 71, 73, 78, 80, 82, 84, 86):
         # Lineas base unimodales con el mismo regimen que el 45.
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
-    elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77):
+    elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         model = Ablation34Model(config)
@@ -249,7 +249,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-65 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-86 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1321,13 +1321,28 @@ def run_ablation_study_kfold(
         if desconocidas:
             raise ValueError(f"--folds {desconocidas} no estan en all_sessions={all_sessions}")
 
-    for fold_idx, test_session in enumerate(all_sessions):
+    # 'fixed': el corpus trae un reparto fijo (MELD: train/dev/test) y NO hay nada
+    # que rotar. Se corre UN solo fold con el reparto que diga el config, y la
+    # variabilidad se mide con varias semillas en vez de entre folds. Se pasa por
+    # el mismo camino que el k-fold a proposito, para conservar el sello de semilla,
+    # la reanudacion y el formato del resumen.
+    if protocol == 'fixed':
+        fijos = dataset_cfg.get('test_sessions') or []
+        if len(fijos) != 1:
+            raise ValueError(
+                "--protocol fixed necesita exactamente una sesion en "
+                f"dataset.test_sessions; hay {fijos!r}.")
+        sesiones_a_rotar = [int(fijos[0])]
+    else:
+        sesiones_a_rotar = list(all_sessions)
+
+    for fold_idx, test_session in enumerate(sesiones_a_rotar):
         if requested and test_session not in requested:
-            print(f"\n[skip] fold {fold_idx + 1}/{len(all_sessions)} (test S{test_session}) "
+            print(f"\n[skip] fold {fold_idx + 1}/{len(sesiones_a_rotar)} (test S{test_session}) "
                   f"-- no esta en --folds")
             continue
         print(f"\n{'='*60}")
-        print(f"K-Fold Fold {fold_idx + 1}/{len(all_sessions)}")
+        print(f"K-Fold Fold {fold_idx + 1}/{len(sesiones_a_rotar)}")
         print(f"{'='*60}")
         
         # Clear cache before starting new fold
@@ -1346,7 +1361,22 @@ def run_ablation_study_kfold(
         val_speaker = None
         val_fraction = None
         random_folds = None
-        if protocol == 'random':
+        if protocol == 'fixed':
+            # Reparto fijo del corpus. No se infiere nada: lo que diga el YAML.
+            train_sessions = [int(s) for s in dataset_cfg.get('train_sessions', [])]
+            val_cfg = [int(s) for s in dataset_cfg.get('val_sessions', [])]
+            if not train_sessions or len(val_cfg) != 1:
+                raise ValueError(
+                    "--protocol fixed necesita dataset.train_sessions no vacio y "
+                    f"exactamente una dataset.val_sessions; hay {train_sessions!r} y "
+                    f"{val_cfg!r}.")
+            if test_session in train_sessions or test_session in val_cfg:
+                raise ValueError(
+                    f"--protocol fixed: la sesion de test {test_session} tambien "
+                    f"aparece en train={train_sessions} o val={val_cfg}. El reparto "
+                    f"fijo tiene que ser disjunto.")
+            val_session = val_cfg[0]
+        elif protocol == 'random':
             # Reparto ALEATORIO estratificado sobre las cinco sesiones (Yoon et al.
             # 2018). DEPENDIENTE DE HABLANTE a proposito: los mismos actores aparecen
             # en train y test. No es el numero honesto; existe para medir, con el mismo
@@ -1440,6 +1470,14 @@ def run_ablation_study_kfold(
             print(f"Error in fold {fold_idx + 1}: {e}")
             import traceback
             traceback.print_exc()
+            # Soltar el traceback ANTES de recolectar. El objeto de excepcion
+            # referencia todos los frames de la pila, y esos frames referencian el
+            # modelo, el optimizador y los tensores del fold que acaba de fallar: con
+            # `e` vivo, el gc.collect() de _clear_cuda_cache no libera nada y el fold
+            # muerto se arrastra al siguiente. El 29/09/2026 tres de cinco folds de la
+            # semilla 123 murieron con 'bad allocation' (memoria de HOST, no CUDA).
+            e.__traceback__ = None
+            del e
             _clear_cuda_cache(quiet=True)
             continue
         finally:
@@ -1498,11 +1536,22 @@ def run_ablation_study_kfold(
             fold_results = sorted(fold_results + recuperados,
                                   key=lambda fr: fr.get('test_session', 0))
 
-    if len(fold_results) < len(all_sessions):
-        faltan = sorted(set(int(s) for s in all_sessions)
-                        - {fr.get('test_session') for fr in fold_results})
-        print(f"\n[PARCIAL] {len(fold_results)}/{len(all_sessions)} folds. Faltan {faltan}. "
+    # Lo esperado son las sesiones que este protocolo ROTA, no todas las del corpus.
+    # Con --protocol fixed solo hay una, y comparar contra all_sessions hacia creer
+    # que faltaban dos folds y aconsejaba correr train y dev COMO TEST, que habria
+    # producido numeros sin sentido.
+    esperadas = set(int(s) for s in sesiones_a_rotar)
+    if len(fold_results) < len(esperadas):
+        faltan = sorted(esperadas - {fr.get('test_session') for fr in fold_results})
+        print(f"\n[PARCIAL] {len(fold_results)}/{len(esperadas)} folds. Faltan {faltan}. "
               f"Reanuda con:  --folds {' '.join(str(s) for s in faltan)} --protocol {protocol}")
+    if protocol == 'fixed':
+        print("\n[protocol fixed] UN solo fold con el reparto del config: la sigma que "
+              "sale abajo es 0 por construccion y NO mide nada.\n"
+              "                 La variabilidad se mide repitiendo con otra semilla "
+              "(--seed 123) y comparando\n"
+              "                 contra la banda de +-0.86 pp de la seccion 7 de "
+              "REWRITE_NOTES.")
 
     # Aggregate K-Fold results across folds
     best_val_uas = [fr['best_val_ua'] for fr in fold_results if fr.get('best_val_ua') is not None]
@@ -1513,8 +1562,12 @@ def run_ablation_study_kfold(
         'folds': fold_results,
         'protocol': protocol,
         'num_folds': len(fold_results),
-        'complete': len(fold_results) == len(all_sessions),
+        # 'complete' se juzga contra las sesiones que ESTE protocolo rota. Contra
+        # all_sessions, un resumen de --protocol fixed quedaria marcado incompleto
+        # para siempre aunque su unico fold haya terminado.
+        'complete': len(fold_results) == len(sesiones_a_rotar),
         'all_sessions': [int(s) for s in all_sessions],
+        'sesiones_rotadas': [int(s) for s in sesiones_a_rotar],
         'seed': int(seed) if seed is not None else None,
     }
     if best_val_uas:
@@ -1547,14 +1600,15 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-77; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-86; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
                         help='Experiment name prefix')
     parser.add_argument('--seed', type=int, default=None,
                         help='Random seed (overrides config seed)')
-    parser.add_argument('--protocol', choices=['standard', 'speaker', 'legacy', 'random'],
+    parser.add_argument('--protocol',
+                        choices=['standard', 'speaker', 'legacy', 'random', 'fixed'],
                         default='standard',
                         help="Reparto de sesiones en k-fold. 'standard': 4 sesiones de "
                              "entrenamiento y validacion estratificada del 12%% de ellas. "
@@ -1564,7 +1618,10 @@ def main():
                              "las cifras publicadas. 'random': folds aleatorios sobre las "
                              "cinco sesiones al estilo de Yoon et al. 2018, DEPENDIENTE DE "
                              "HABLANTE -- solo para medir cuanto vale el reparto; nunca "
-                             "como numero principal.")
+                             "como numero principal. 'fixed': UN solo fold con el "
+                             "reparto que diga el config, para corpus con split fijo "
+                             "como MELD (1=train, 2=dev, 3=test). Sin folds no hay sigma "
+                             "entre folds: la variabilidad se mide con varias semillas.")
     parser.add_argument('--resume', action='store_true',
                         help='Reanudar cada fold desde su ultimo checkpoint en vez de '
                              'empezar en la epoca 0. Usa last_model.pt (estado exacto de '
@@ -1577,11 +1634,14 @@ def main():
                              '--folds 4 5. Los demas se recuperan del resumen previo '
                              'si su protocolo coincide. Para reanudar tras un fallo de '
                              'GPU sin repetir folds ya terminados.')
-    parser.add_argument('--loso', action='store_true',
+    parser.add_argument('--loso', '--kfold', action='store_true', dest='loso',
                         help='Force 5-fold leave-one-session-out for the requested '
                              'study, regardless of its number. Required for any '
                              'result that goes in a paper: a single split on '
-                             'IEMOCAP has a between-fold sigma of 4-5 pp.')
+                             'IEMOCAP has a between-fold sigma of 4-5 pp. '
+                             '--kfold es un alias: el nombre de la bandera dice LOSO '
+                             'pero el camino que toma es el de k-fold con limpieza de '
+                             'cache entre folds, que es el que se usa desde el 12/09.')
     args = parser.parse_args()
     
     # Define all studies
@@ -1662,13 +1722,22 @@ def main():
         (75, "config/ablation/ablation_75_conflict_gate_trained.yaml"),  # 72 + perdida auxiliar: la compuerta con detector que SI entrena
         (76, "config/ablation/ablation_76_confidence_calibrated.yaml"),  # 75 + objetivo de calibracion sobre la confianza por rama
         (77, "config/ablation/ablation_77_cremad_trimodal.yaml"),  # el modelo del 74, sin cambios, sobre CREMA-D (segundo corpus)
+        (78, "config/ablation/ablation_78_cremad_audio_only.yaml"),  # solo audio sobre CREMA-D: el par del 77, replica del claim central
+        (79, "config/ablation/ablation_79_meld_trimodal.yaml"),  # el modelo del 74, sin cambios, sobre MELD 4 clases (tercer corpus; --protocol fixed)
+        (80, "config/ablation/ablation_80_meld_audio_only.yaml"),  # solo audio sobre MELD: el par del 79 en el regimen texto-dominante
+        (81, "config/ablation/ablation_81_meld_trimodal_7class.yaml"),  # el 79 a 7 clases: la fila comparable con la literatura de MELD (--protocol fixed)
+        (82, "config/ablation/ablation_82_meld_audio_only_7class.yaml"),  # el 80 a 7 clases: el par solo-audio de esa fila
+        (83, "config/ablation/ablation_83_iemocap_trimodal_7class.yaml"),  # el 74 con las SIETE clases propias de IEMOCAP, excited separado de happy (--loso)
+        (84, "config/ablation/ablation_84_iemocap_audio_only_7class.yaml"),  # el 71 a 7 clases: el par solo-audio del 83
+        (85, "config/ablation/ablation_85_ravdess_trimodal.yaml"),  # el modelo del 74 sobre RAVDESS: replica del extremo texto-nulo (2 frases fijas)
+        (86, "config/ablation/ablation_86_ravdess_audio_only.yaml"),  # solo audio sobre RAVDESS: el par del 85
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-77 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-86 (there is no study 51)")
             return
     
     # Run each study
@@ -1684,8 +1753,13 @@ def main():
                     experiment_name=experiment_name,
                     seed=args.seed
                 )
-            elif args.loso or study_number in (20, 29, 41):
-                # Special case: Ablation 20, 29 and 41 run K-Fold cross-validation with cache clearing
+            elif args.loso or args.protocol == 'fixed' or study_number in (20, 29, 41):
+                # Special case: Ablation 20, 29 and 41 run K-Fold cross-validation with cache clearing.
+                # --protocol fixed entra aqui SIN pedir --loso: pedir las dos cosas a
+                # la vez se lee como una contradiccion ("leave-one-session-out con
+                # reparto fijo") y es una trampa de uso. Con reparto fijo el camino
+                # correcto es este igualmente, porque es el que conserva el sello de
+                # semilla, la reanudacion y el formato del resumen.
                 run_ablation_study_kfold(
                     study_number=study_number,
                     config_path=config_path,

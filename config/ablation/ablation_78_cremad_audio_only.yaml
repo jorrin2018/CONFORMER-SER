@@ -1,0 +1,172 @@
+# Ablation Study 78: SOLO AUDIO sobre CREMA-D.
+#
+# QUE PREGUNTA RESPONDE. En IEMOCAP la fusion trimodal aporta +6.58 +- 1.97 pp sobre
+# solo audio (5/5 folds, 15 veces la sigma de re-ejecucion). Esa es la contribucion
+# central del articulo. Este estudio la pone a prueba en el SEGUNDO corpus: si el efecto
+# se replica, la contribucion esta demostrada en dos corpus, que es lo que un revisor de
+# revista JCR busca. Si no se replica, hay que saberlo ANTES de escribir.
+#
+# El par es 78 (solo audio) frente a 77 (trimodal), los dos sobre CREMA-D, con el mismo
+# reparto por grupos de actores y la misma semilla. Pareado por fold.
+#
+# POR QUE ESTE Y NO "EL 77 SIN RAMA DE TEXTO". Se descarto esa variante: en CREMA-D el
+# texto ya es no informativo —la identidad de la frase clasifica al 25.94 %, que es
+# exactamente la linea base de clase mayoritaria— asi que quitarla confirmaria lo que el
+# 77 ya demuestra por si solo. El 82.35 +- 2.78 del 77 ES el numero con la rama de texto
+# inutil, y que el modelo no se hunda es el resultado. El contraste que falta es contra
+# solo audio.
+#
+# LO QUE CAMBIA FRENTE AL 71: solo el corpus y su ruta. Ni una linea de modelo, ni de
+# optimizacion, ni de entrenamiento. `modality: audio` y las tasas por grupos de
+# parametros vienen del 71 tal cual.
+#
+# OJO AL COMPARAR: el delta 77-78 de CREMA-D y el delta 72/74-71 de IEMOCAP miden lo
+# mismo (cuanto aporta la fusion sobre solo audio) y SON comparables entre si como
+# efectos, aunque los niveles absolutos de los dos corpus no lo sean.
+#
+# ANTES DE LANZAR:  python scripts/check_cremad.py --data-path "<raiz de CREMA-D>"
+
+dataset:
+  corpus: "cremad"                      # <-- EL UNICO CAMBIO frente al 71
+  # Raiz del repositorio de CREMA-D: la carpeta con AudioWAV/ y VideoDemographics.csv.
+  data_path: "D:\\DOCTORADO\\DATASETS\\CREMA-D"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  # "session" = GRUPO DE ACTORES. Los 91 actores en 5 grupos disjuntos estratificados
+  # por sexo, semilla fija. El MISMO reparto que el estudio 77, asi que el par 77/78 es
+  # pareado fold a fold.
+  all_sessions: [1, 2, 3, 4, 5]
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: false   # sin prompt prosodico: es la linea base de audio puro
+
+model:
+  modality: audio
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: true
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  # Estas tres tasas, hasta ahora, eran letra muerta en este estudio.
+  use_param_groups: true   # <-- EL UNICO CAMBIO frente al 66
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_78"
+  checkpoint_dir: "./checkpoints/ablation_78"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-78"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

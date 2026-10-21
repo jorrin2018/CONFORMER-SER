@@ -140,6 +140,46 @@ def apply_finetuning_policy(encoder, freeze_all: bool, unfreeze_last_n: int,
     return total, trainable
 
 
+def _cargar_encoder_preentrenado(nombre: str, que: str):
+    """Carga un encoder de HuggingFace o FALLA. Nunca devuelve pesos aleatorios.
+
+    `que` es solo para el mensaje de error ("audio", "texto", "vision").
+
+    Pide safetensors primero a proposito. transformers >= 5 con torch < 2.6 se niega a
+    leer checkpoints .bin por CVE-2025-32434, y varios de los encoders que usamos
+    (wav2vec2-base, wavlm-base, hubert-base-ls960) tienen los dos formatos en cache:
+    sin este argumento, from_pretrained elige el .bin y revienta. Si el modelo SOLO
+    publica .bin (wavlm-base-plus), se reintenta sin el argumento y el error que salga
+    sera el de verdad.
+
+    POR QUE ESTO FALLA EN VEZ DE DEGRADAR. Antes habia un `except Exception` que
+    sustituia el encoder por Wav2Vec2Model(Wav2Vec2Config()) -- pesos aleatorios -- y
+    seguia entrenando con un aviso por print(). El 20/10/2026 eso produjo un estudio
+    completo con la rama de audio en ruido y UA por debajo del azar, y el unico rastro
+    era una linea de aviso que no llega al fichero de log. Un encoder que no carga tiene
+    que parar la corrida.
+    """
+    errores = []
+    for kwargs in ({"use_safetensors": True}, {}):
+        try:
+            return AutoModel.from_pretrained(nombre, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            errores.append(f"  from_pretrained({nombre!r}, {kwargs}) -> "
+                           f"{type(e).__name__}: {e}")
+    raise RuntimeError(
+        f"No se pudo cargar el encoder de {que} {nombre!r} con pesos preentrenados.\n"
+        + "\n".join(errores)
+        + "\n\nNO se sigue con pesos aleatorios: el resultado seria un numero inventado.\n"
+        "Si el error habla de CVE-2025-32434 o de torch < 2.6, el modelo solo tiene\n"
+        "checkpoint .bin en cache. Opciones, de menos a mas invasiva:\n"
+        "  1. Borrar el .bin de la cache para forzar la descarga de model.safetensors.\n"
+        "  2. Descargar los safetensors a mano:\n"
+        "       huggingface-cli download " + nombre + " model.safetensors\n"
+        "  3. Actualizar torch a >= 2.6 (CAMBIA EL ENTORNO: rehacer las corridas que\n"
+        "     se quieran comparar entre si).\n"
+    )
+
+
 class ConformerMultimodalModel(nn.Module):
     """Multimodal emotion recognition model (audio + text, or placeholder for trimodal).
 
@@ -194,15 +234,11 @@ class ConformerMultimodalModel(nn.Module):
                     "Install with: pip install funasr"
                 ) from e
         else:
-            try:
-                self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name)
-                audio_hidden_size = self.audio_encoder.config.hidden_size
-            except Exception as e:
-                print(f"Warning: Could not load audio encoder {audio_encoder_name}: {e}")
-                print("Using default Wav2Vec2 configuration")
-                config = Wav2Vec2Config()
-                self.audio_encoder = Wav2Vec2Model(config)
-                audio_hidden_size = config.hidden_size
+            # Falla si no carga. Ver _cargar_encoder_preentrenado: el fallback a
+            # pesos aleatorios que habia aqui produjo un estudio entero invalido.
+            self.audio_encoder = _cargar_encoder_preentrenado(
+                audio_encoder_name, "audio")
+            audio_hidden_size = self.audio_encoder.config.hidden_size
         
         # Freezing strategy for audio encoder (see apply_finetuning_policy)
         apply_finetuning_policy(
@@ -214,15 +250,10 @@ class ConformerMultimodalModel(nn.Module):
         )
 
         # Text encoder (BERT/DistilBERT)
-        try:
-            self.text_encoder = AutoModel.from_pretrained(text_encoder_name)
-            text_hidden_size = self.text_encoder.config.hidden_size
-        except Exception as e:
-            print(f"Warning: Could not load text encoder {text_encoder_name}: {e}")
-            print("Using default BERT configuration")
-            config = AutoConfig.from_pretrained("bert-base-uncased")
-            self.text_encoder = AutoModel.from_config(config)
-            text_hidden_size = config.hidden_size
+        # Falla si no carga, por el mismo motivo que el de audio. Antes caia a un
+        # bert-base-uncased SIN pesos, que ademas no es el encoder que dice el config.
+        self.text_encoder = _cargar_encoder_preentrenado(text_encoder_name, "texto")
+        text_hidden_size = self.text_encoder.config.hidden_size
         
         apply_finetuning_policy(
             self.text_encoder,
@@ -450,7 +481,12 @@ class AudioOnlyModel(nn.Module):
         super().__init__()
 
         # Audio encoder
-        self.audio_encoder = Wav2Vec2Model.from_pretrained(audio_encoder_name)
+        # safetensors primero: ver _cargar_encoder_preentrenado.
+        try:
+            self.audio_encoder = Wav2Vec2Model.from_pretrained(
+                audio_encoder_name, use_safetensors=True)
+        except Exception:
+            self.audio_encoder = Wav2Vec2Model.from_pretrained(audio_encoder_name)
         audio_hidden_size = self.audio_encoder.config.hidden_size
         
         # Freezing strategy (similar to ConformerMultimodalModel)

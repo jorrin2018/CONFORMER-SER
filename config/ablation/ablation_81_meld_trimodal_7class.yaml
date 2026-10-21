@@ -1,0 +1,212 @@
+# Ablation Study 81: el MISMO modelo del 74, sobre MELD, SIETE clases.
+#
+# QUE ES ESTE ESTUDIO. Es el 79 con el conjunto completo de etiquetas. El 79 corre a 4
+# clases por consistencia con IEMOCAP y CREMA-D, que es lo que necesita el argumento de
+# la disociacion lexica; pero un numero de 4 clases NO es comparable con la literatura
+# de MELD, que reporta weighted F1 sobre las 7. Este estudio produce esa fila, y nada
+# mas: no cambia el argumento del articulo, lo hace comparable.
+#
+# LO QUE CAMBIA FRENTE AL 79: las siete emociones y num_classes. Ni una linea de modelo,
+# de optimizacion ni de entrenamiento. El par comparable es el 82 (solo audio).
+#
+# COMO SE CORRE -- NO ES LOSO:
+#   python scripts/run_ablation.py --study 81 --protocol fixed --seed 42
+#   python scripts/run_ablation.py --study 81 --protocol fixed --seed 123
+# MELD trae reparto FIJO train/dev/test: no hay nada que rotar ni sigma entre folds. La
+# variabilidad se mide con DOS semillas sobre el mismo split (las mismas que IEMOCAP),
+# con la banda de +-0.86 pp de la seccion 7 como criterio.
+#
+# CONTRATO DE 7 CLASES, verificado contra el disco (REWRITE_NOTES 12.2):
+#   train 9,988 / dev 1,108 / test 2,610 = 13,706 utilizables.
+#   Son las filas del CSV menos las dos utterances sin medio. Coincide EXACTAMENTE con
+#   el dataset derivado ajyy/MELD_audio, que es confirmacion independiente de nuestra
+#   auditoria. _assert_integrity del cargador lo comprueba en cada construccion contra
+#   REF_7CLASS_POR_SPLIT: si no cuadra, revienta.
+#
+# LA METRICA, Y ES EL PUNTO DE ESTE ESTUDIO (REWRITE_NOTES 12.2):
+#   neutral es el ~48 % del test, asi que la EXACTITUD es casi inutil: la linea base de
+#   clase mayoritaria ya da ~48 %. El paper original ni la reporta. La metrica de la
+#   literatura es WEIGHTED F1. Reportar ademas MACRO-F1 y F1 POR CLASE -- es lo que
+#   refleja las clases minoritarias (disgust 361, fear 358 en total) y pocos papers de
+#   MELD lo hacen.
+#   Y ojo con WA: en MELD su sigma entre semillas es de 2.75 pp frente a 0.86 de UA,
+#   porque esta dominada por una sola clase (12.7). No usarla para decidir nada.
+#
+# TRAMPA QUE HA ROTO MATRICES DE CONFUSION PUBLICADAS: el orden one-hot oficial de MELD
+# NO es alfabetico, es {neutral:0, surprise:1, fear:2, sadness:3, joy:4, disgust:5,
+# anger:6}. Aqui el orden lo fija la lista emotions de abajo y el cargador mapea por
+# NOMBRE (MAPA_EMOCION), no por indice, asi que no hay riesgo de desalineacion -- pero
+# al comparar nuestra matriz con una publicada hay que reordenar.
+#
+# LO QUE HAY QUE DECLARAR EN EL ARTICULO (igual que en el 79; detalle en 12.1 y 12.3):
+#   1. EL SPLIT OFICIAL NO ES INDEPENDIENTE DE HABLANTE. Los seis protagonistas de
+#      Friends son el 82-86 % de cada split y 69 de los 100 hablantes de test estan
+#      tambien en train. Se usa igual porque 81 vs 82 es PAREADO sobre el mismo split:
+#      el confound es compartido y se cancela en la diferencia. Lo que NO se puede
+#      afirmar es que el numero absoluto generalice a hablantes nuevos.
+#   2. Se descartan 2 utterances: train/dia125_utt3 (mp4 corrupto, issue #39) y
+#      dev/dia110_utt7 (clip ausente del release, no identificado por ninguna fuente
+#      antes de nuestra auditoria).
+#   3. En test, para 131 utterances el fichero correcto NO es el que dice el nombre
+#      (hallazgo propio). El extractor lee el prefijado; todo pipeline publicado lee el
+#      corte equivocado en el 5.0 % del test. Esto afecta a la comparabilidad de la
+#      fila: nuestro test es el CORRECTO, el de la literatura no.
+#   4. Transcripciones de ORO (subtitulos humanos, no ASR). Es una ventaja que no
+#      existiria en despliegue: en MELD, DeBERTa saca 60.9 WF1 con texto manual y 51.5
+#      con Whisper.
+#   5. Las 169 filas de hablante no individual (All, Both, Ross and Rachel...) NO se
+#      descartan, para no romper la comparabilidad con la tabla publicada. Se reporta
+#      el conteo.
+#
+# ANTES DE LANZAR, en este orden:
+#   python scripts/check_meld.py        --data-path "D:/DOCTORADO/DATASETS/MELD" --fase todo
+#   python scripts/extract_meld_audio.py --data-path "D:/DOCTORADO/DATASETS/MELD"
+
+dataset:
+  corpus: "meld"                        # <-- EL UNICO CAMBIO de corpus
+  # Carpeta MELD: la que contiene MELD-RAW/MELD.Raw/ y, tras correr el extractor,
+  # audio_16k/. AJUSTAR A TU RUTA.
+  data_path: "D:\\DOCTORADO\\DATASETS\\MELD"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+    - disgusted
+    - fearful
+    - surprised
+  # "session" = SPLIT OFICIAL, no sesion ni grupo de actores: 1=train, 2=dev, 3=test.
+  # MELD trae un reparto fijo, asi que esto NO rota: hay que correr con
+  # --protocol fixed, que usa estas tres listas tal cual y hace UN solo fold.
+  # El reparto NO es independiente de hablante (los seis protagonistas estan en los
+  # tres splits); ver el encabezado y REWRITE_NOTES seccion 12.
+  all_sessions: [1, 2, 3]
+  train_sessions: [1]
+  val_sessions: [2]
+  test_sessions: [3]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 7
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: false   # <-- EL UNICO CAMBIO frente al 72
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true   # <-- EL UNICO CAMBIO
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_81"
+  checkpoint_dir: "./checkpoints/ablation_81"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-81"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

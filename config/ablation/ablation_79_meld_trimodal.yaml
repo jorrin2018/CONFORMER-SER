@@ -1,0 +1,198 @@
+# Ablation Study 79: el MISMO modelo del 74, sobre MELD, 4 clases.
+#
+# QUE ES ESTE ESTUDIO. El 74 (trimodal sin compuerta) es el modelo del articulo.
+# Aqui corre sin un solo cambio de arquitectura sobre el TERCER corpus. Con los tres
+# el eje de la fusion queda cerrado:
+#
+#   CREMA-D  texto nulo por construccion, audio suficiente  -> la fusion NO aporta
+#            (77: 82.35 +- 2.78 ; 78 solo audio: 83.54 +- 2.02 ; pareado -1.19 +- 1.97)
+#   IEMOCAP  texto informativo, audio insuficiente          -> la fusion aporta +6.49
+#   MELD     texto DOMINANTE, audio con techo duro          -> este estudio
+#
+# POR QUE MELD CIERRA EL CONFOUND DE LA SECCION 11. Con IEMOCAP + CREMA-D no se podia
+# separar "el texto no es informativo" de "CREMA-D es actuado y facil". MELD es el
+# regimen opuesto y esta medido por cinco fuentes independientes: audio-only 38-55 WF1
+# frente a texto 56-64 (brecha de 12 a 26 puntos), y en la clase `joy` (2,308 ejemplos)
+# audio F1 15.74 frente a 54.31 del texto. Si la fusion aporta aqui y no en CREMA-D,
+# el aporte es LEXICO y no "el corpus era difícil".
+#
+# LO QUE CAMBIA FRENTE AL 74: solo el corpus, su ruta y el reparto. Ni una linea de
+# modelo, ni de optimizacion, ni de entrenamiento.
+#
+# COMO SE CORRE -- IMPORTANTE, NO ES LOSO:
+#   python scripts/run_ablation.py --study 79 --protocol fixed --seed 42
+# MELD trae un reparto FIJO train/dev/test, asi que no hay nada que rotar y no hay
+# sigma entre folds. La variabilidad se mide con VARIAS SEMILLAS sobre el mismo split,
+# con la banda de +-0.86 pp de la seccion 7 como criterio de decision. Minimo dos
+# semillas, igual que en IEMOCAP.
+#
+# LO QUE HAY QUE DECLARAR EN EL ARTICULO (detalle en REWRITE_NOTES seccion 12):
+#   1. EL SPLIT OFICIAL NO ES INDEPENDIENTE DE HABLANTE. Los seis protagonistas de
+#      Friends estan en los tres splits y son el 82-86 % de cada uno; 69 de los 100
+#      hablantes de test tambien estan en train. Se usa igual porque la comparacion
+#      79 vs 80 es PAREADA sobre el mismo split: el confound es compartido y se
+#      cancela en la diferencia. Lo que no se puede afirmar es que el numero absoluto
+#      generalice a hablantes nuevos.
+#   2. 4 CLASES NO ES COMPARABLE con la literatura de MELD, que reporta weighted F1
+#      sobre 7. La fila comparable de 7 clases se corre aparte.
+#   3. `neutral` es el 48 % del test: reportar weighted F1, macro-F1 y F1 por clase,
+#      no exactitud (la clase mayoritaria ya da ~48 %).
+#   4. Se descartan 2 utterances de 13,708: train/dia125_utt3 (mp4 corrupto, issue
+#      #39) y dev/dia110_utt7 (clip ausente del release, no identificado por ninguna
+#      fuente antes de nuestra auditoria). Quedan 13,706; en 4 clases, 11,351.
+#   5. En test, para 131 utterances el fichero correcto NO es el que dice el nombre
+#      (hallazgo propio). El extractor lee el prefijado; todo pipeline publicado lee
+#      el corte equivocado en el 5.0 % del test.
+#   6. Transcripciones de ORO (subtitulos humanos, no ASR). Eso es una ventaja que no
+#      existiria en despliegue: en MELD, DeBERTa saca 60.9 WF1 con texto manual y
+#      51.5 con Whisper.
+#
+# ANTES DE LANZAR, en este orden:
+#   python scripts/check_meld.py        --data-path "D:/DOCTORADO/DATASETS/MELD" --fase todo
+#   python scripts/extract_meld_audio.py --data-path "D:/DOCTORADO/DATASETS/MELD"
+
+dataset:
+  corpus: "meld"                        # <-- EL UNICO CAMBIO de corpus
+  # Carpeta MELD: la que contiene MELD-RAW/MELD.Raw/ y, tras correr el extractor,
+  # audio_16k/. AJUSTAR A TU RUTA.
+  data_path: "D:\\DOCTORADO\\DATASETS\\MELD"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  # "session" = SPLIT OFICIAL, no sesion ni grupo de actores: 1=train, 2=dev, 3=test.
+  # MELD trae un reparto fijo, asi que esto NO rota: hay que correr con
+  # --protocol fixed, que usa estas tres listas tal cual y hace UN solo fold.
+  # El reparto NO es independiente de hablante (los seis protagonistas estan en los
+  # tres splits); ver el encabezado y REWRITE_NOTES seccion 12.
+  all_sessions: [1, 2, 3]
+  train_sessions: [1]
+  val_sessions: [2]
+  test_sessions: [3]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: false   # <-- EL UNICO CAMBIO frente al 72
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true   # <-- EL UNICO CAMBIO
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_79"
+  checkpoint_dir: "./checkpoints/ablation_79"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-79"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

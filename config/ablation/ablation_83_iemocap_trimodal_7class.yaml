@@ -1,0 +1,195 @@
+# Ablation Study 83: el MISMO modelo del 74, sobre IEMOCAP, SIETE clases propias.
+#
+# QUE ES ESTE ESTUDIO. El 74 es el modelo del articulo y corre a 4 clases
+# (angry / happy+excited / sad / neutral), que es la convencion de IEMOCAP. Aqui corre
+# con las SIETE clases propias del corpus y `excited` SEPARADO de `happy`. Mismo
+# protocolo que el baseline: LOSO de 5 folds con --loso.
+#
+# POR QUE NO SON LAS 7 CLASES DE MELD, y es un hallazgo que hay que declarar.
+# Contado el 2026-10-20 directo de los ficheros de EmoEvaluation de las cinco sesiones:
+#
+#   clase        total   min/sesion
+#   neutral       1708      258
+#   angry         1103      137
+#   sad           1084      143
+#   happy          595       65
+#   surprised      107       17
+#   fearful         40        2   <-- INVIABLE
+#   disgusted        2        0   <-- INVIABLE (3 sesiones a cero)
+#
+# `disgusted` tiene DOS utterances en todo IEMOCAP y `fearful` cuarenta. Con LOSO, tres
+# de cinco folds no tendrian ni un ejemplo de disgusted en test, y un macro-F1 sobre una
+# clase con 2 ejemplos no significa nada. Asi que la condicion de 7 clases de IEMOCAP usa
+# LAS SUYAS: frustrated, neutral, angry, sad, excited, happy, surprised (7,487 utterances).
+#
+# ESTO NO ES UNA FILA COMPARABLE CON MELD. El par 81/82 da la fila de 7 clases de MELD
+# para comparar con la literatura de MELD; este par da la de IEMOCAP para comparar con
+# el baseline de IEMOCAP. Las etiquetas son distintas: no se ponen en la misma tabla sin
+# decir que miden conjuntos de clases diferentes.
+#
+# QUE APORTA, Y ES LO INTERESANTE. Responde dos preguntas que un revisor hara:
+#   1. El numero de 4 clases, ¿se apoya en haber fusionado excited con happy? Esa fusion
+#      infla happy de 595 a 1,636, casi el triple. Aqui las dos clases van separadas.
+#   2. `frustrated` es la clase MAS poblada de IEMOCAP (1,849, mas que neutral) y la que
+#      mas se confunde con angry. El protocolo de 4 clases la descarta entera. Incluirla
+#      es la condicion mas dura del corpus y la mas honesta.
+# Esperar un numero MUCHO mas bajo que el de 4 clases: son 7 clases, dos de ellas
+# (happy/excited, angry/frustrated) con solape acustico conocido. Eso no es un fallo.
+#
+# LO QUE CAMBIA FRENTE AL 74: la lista de emociones y num_classes. Ni una linea de
+# modelo, de optimizacion ni de entrenamiento. El par comparable es el 84 (solo audio).
+#
+# CONTRATO, verificado: REF_7CLASS_PER_SESSION del cargador
+# {1: 1390, 2: 1365, 3: 1561, 4: 1531, 5: 1640} = 7,487. Cuadra con el contrato de 4
+# clases en su subconjunto (1103+595+1041+1084+1708 = 5,531), que es la confirmacion de
+# que el conteo es el que ve el cargador. `_assert_integrity` lo comprueba en cada
+# construccion y la comprobacion de improvisados sigue activa.
+#
+# COMO SE CORRE -- MISMO PROTOCOLO QUE EL BASELINE:
+#   python scripts/run_ablation.py --study 83 --loso
+# LOSO de 5 folds, media +- sigma. La sigma entre folds de este codigo es de 4-5 pp
+# (seccion 8): un solo split no sostiene nada.
+#
+# NOTA SOBRE EL CARGADOR: `excited` solo existe como clase cuando el config lo pide en
+# `emotions`. Si no, 'exc' se fusiona en 'happy' como siempre. Por eso este config no
+# cambia el comportamiento de ningun otro. Ver _emotion_from_code() en src/data/dataset.py.
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - excited
+    - sad
+    - neutral
+    - frustrated
+    - surprised
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 7
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: false   # <-- EL UNICO CAMBIO frente al 72
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true   # <-- EL UNICO CAMBIO
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_83"
+  checkpoint_dir: "./checkpoints/ablation_83"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-83"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

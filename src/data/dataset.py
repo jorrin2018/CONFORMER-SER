@@ -45,9 +45,10 @@ class IEMOCAPDataset(BaseSERDataset):
     EMOTION_MAP = {
         'ang': 'angry',
         'hap': 'happy',
-        # Merge excitement into happy for the common 4-class setup
-        # (angry, happy, sad, neutral). Other emotions can be filtered
-        # out via the `emotions` list in the config.
+        # 'exc' NO se resuelve aqui: lo hace _emotion_from_code(), porque depende de
+        # si el config pide `excited` como clase propia. Ver ese metodo. Se deja la
+        # entrada con el valor historico para que cualquier lector de EMOTION_MAP
+        # suelto vea el comportamiento por defecto (4 clases, exc fusionado en happy).
         'exc': 'happy',
         'sad': 'sad',
         'fru': 'frustrated',
@@ -109,6 +110,39 @@ class IEMOCAPDataset(BaseSERDataset):
     # Verificado el 2026-09-10 con scripts/verify_iemocap.py.
     REF_4CLASS_PER_SESSION = {1: 1085, 2: 1023, 3: 1151, 4: 1031, 5: 1241}
 
+    #: IEMOCAP con sus SIETE clases propias, `excited` SEPARADO de `happy`:
+    #: frustrated, neutral, angry, sad, excited, happy, surprised. Total 7,487.
+    #: Contado el 2026-10-20 directo de los ficheros de EmoEvaluation de las cinco
+    #: sesiones. Cuadra con REF_4CLASS_PER_SESSION en el subconjunto de 4 clases
+    #: (1103 ang + 595 hap + 1041 exc + 1084 sad + 1708 neu = 5,531), que es la
+    #: confirmacion de que el conteo es el mismo que ve el cargador.
+    #: NO son las 7 clases de MELD: `disgusted` tiene 2 utterances en todo IEMOCAP y
+    #: `fearful` 40, con tres sesiones a cero en disgusted. Un macro-F1 sobre eso no
+    #: significa nada, asi que la condicion de 7 clases de IEMOCAP usa SUS clases.
+    REF_7CLASS_PER_SESSION = {1: 1390, 2: 1365, 3: 1561, 4: 1531, 5: 1640}
+
+    #: Los dos conjuntos de clases con contrato duro.
+    SET_4CLASS = frozenset({'angry', 'happy', 'sad', 'neutral'})
+    SET_7CLASS = frozenset({'frustrated', 'neutral', 'angry', 'sad',
+                            'excited', 'happy', 'surprised'})
+
+    def _emotion_from_code(self, emotion_code: str) -> str:
+        """Codigo de EmoEvaluation -> nombre de emocion del proyecto.
+
+        El unico codigo con resolucion condicional es `exc`. El protocolo de 4 clases
+        de IEMOCAP fusiona excitement en happy, y esa fusion es la que produce el
+        contrato de 5,531 utterances; pero es tambien una decision que un revisor
+        cuestiona con razon, porque infla `happy` de 595 a 1,636.
+
+        Regla: si el config pide `excited` en su lista `emotions`, se devuelve
+        `excited` y las dos clases quedan separadas. Si no lo pide -- y ningun config
+        anterior al 2026-10-20 lo hace --, se devuelve `happy`, que es el
+        comportamiento historico sin un solo cambio.
+        """
+        if emotion_code == 'exc':
+            return 'excited' if 'excited' in self.emotions else 'happy'
+        return self.EMOTION_MAP.get(emotion_code, 'other')
+
     def _assert_integrity(self, data: List[Dict]) -> None:
         """Fail loudly when the corpus is not what the protocol expects.
 
@@ -128,8 +162,17 @@ class IEMOCAPDataset(BaseSERDataset):
         if not self.strict_integrity:
             return
 
-        expected = sum(self.REF_4CLASS_PER_SESSION[s] for s in self.sessions
-                       if s in self.REF_4CLASS_PER_SESSION)
+        # El contrato de total depende del conjunto de clases pedido. La comprobacion
+        # de improvisados de mas abajo NO: vale para cualquier conjunto y es la que
+        # atrapa el bug que una vez descarto 2,943 de 5,531 utterances.
+        pedidas = frozenset(self.emotions)
+        if pedidas == self.SET_4CLASS:
+            ref, etiqueta = self.REF_4CLASS_PER_SESSION, '4-class'
+        elif pedidas == self.SET_7CLASS:
+            ref, etiqueta = self.REF_7CLASS_PER_SESSION, '7-class'
+        else:
+            ref, etiqueta = {}, 'custom'
+        expected = sum(ref[s] for s in self.sessions if s in ref)
         if n_impro == 0:
             raise RuntimeError(
                 f"IEMOCAP integrity: 0 improvised dialogs loaded for sessions "
@@ -139,11 +182,15 @@ class IEMOCAPDataset(BaseSERDataset):
             )
         if expected and abs(len(data) - expected) > 0.02 * expected:
             raise RuntimeError(
-                f"IEMOCAP integrity: loaded {len(data)} 4-class utterances, "
+                f"IEMOCAP integrity: loaded {len(data)} {etiqueta} utterances, "
                 f"expected ~{expected} for sessions {self.sessions} "
                 f"(impro={n_impro}, script={n_script}). "
                 f"Run scripts/verify_iemocap.py. data_path={self.data_path}"
             )
+        if not expected:
+            print(f"[IEMOCAP] conjunto de clases '{etiqueta}' sin contrato de total "
+                  f"tabulado: se comprueban los improvisados pero NO el conteo. "
+                  f"clases={sorted(pedidas)}")
     
     def _parse_emotion_labels(self, session_path: Path) -> Dict[str, str]:
         """Parse emotion labels from evaluation files."""
@@ -177,7 +224,7 @@ class IEMOCAPDataset(BaseSERDataset):
                         emotion_code = match.group(2).lower()
                         
                         # Map emotion code to emotion name
-                        emotion = self.EMOTION_MAP.get(emotion_code, 'other')
+                        emotion = self._emotion_from_code(emotion_code)
                         emotion_labels[utterance_id] = emotion
         
         return emotion_labels

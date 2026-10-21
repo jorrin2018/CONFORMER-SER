@@ -22,6 +22,7 @@ Postmortem completo con la evidencia: artefacto «Postmortem CAMF».
 | Régimen de congelado parcial | corregido | `apply_finetuning_policy()` |
 | Determinismo (cuDNN, semillas, DataLoader) | añadido | `src/train.py` |
 | LOSO para cualquier estudio | añadido | `--loso` en `run_ablation.py` |
+| Encoder de audio cargado con pesos reales | corregido | `use_safetensors`; el fallback a pesos aleatorios **eliminado** (sección 13) |
 
 
 ---
@@ -1229,6 +1230,80 @@ tres cosas: subconjunto (7,798 vs 3,819), partición (6 sesiones vs 12 hablantes
 métrica (UAR / WAR / F1 ponderada). Es exactamente el mismo error que auditamos en la
 tabla de estado del arte de IEMOCAP: no repetirlo en el corpus nuevo.
 
+### Estructura de MSP-IMPROV en disco: QUE SE SABE Y QUE NO (10 oct 2026)
+
+**Lo verificado** sale del articulo (Busso et al., IEEE TAFFC 8(1):377-390, 2017) y de la
+pagina del corpus. **Lo no verificado NO se da por bueno**: es la disposicion de los
+ficheros, y solo se puede confirmar con los datos en la mano. Dado lo que paso con
+CREMA-D —dos afirmaciones «medidas sobre el arbol de git» resultaron falsas y las cazo el
+contrato del cargador, no una lectura mas atenta— aqui se escribe el contrato primero y
+se deja fallar ruidosamente.
+
+**Jerarquia logica del corpus (verificada):**
+
+- **6 sesiones diadicas**, cada una una pareja de actores distinta → 6 folds LOSO
+  nativos. Mejor que CREMA-D: no hay que inventar grupos, las sesiones ya existen.
+- **12 actores** (6M/6F), 2 por sesion.
+- **8,438 turnos de habla** en total, repartidos en **cuatro condiciones de elicitacion**:
+
+  | condicion | turnos | que es |
+  |---|---|---|
+  | target improvisada (P) | 652 | la frase objetivo dentro de la improvisacion |
+  | other-improvisada (S) | 4,381 | el resto de la improvisacion |
+  | natural (N) | 2,785 | habla espontanea entre grabaciones |
+  | target leida (R) | 620 | lecturas de la frase objetivo |
+
+- **15 frases objetivo** efectivamente grabadas (la pagina dice 20 disenadas; el articulo
+  dice que la Tabla 1 lista las 15 usadas). Citarlo con cuidado.
+- **Video** 1440x1080 a 29.97 fps + audio. **Nosotros no lo necesitamos**: nuestra rama de
+  «vision» es una imagen log-mel calculada DENTRO del modelo a partir del audio. Solo
+  hace falta el audio.
+- **Etiquetas**: categorica primaria de eleccion unica (H/A/S/N/**Other**), categorica
+  secundaria multiple, y atributos V/A/D en escalas SAM 1-5 **mas Naturalidad** (1 muy
+  actuado → 5 muy natural). Esa cuarta dimension es poco habitual y podria dar material
+  propio de analisis.
+- Anotacion por crowdsourcing en MTurk: >=5 evaluadores para la mayoria, ~28 de media para
+  los 652 turnos de target improvisada.
+
+**Contrato de 4 clases a asertar en el cargador: 7,798 utterances**, angry 792,
+happy 2,644, neutral 3,477, sad 885. Sin fusion excited→happy (el esquema primario no
+tiene excited). Desbalance severo: neutral 44.6 %, angry 10.2 %.
+
+**LO QUE NO ESTA VERIFICADO y hay que confirmar al recibir los datos:**
+
+1. **La disposicion de carpetas.** Ni la pagina ni el articulo la documentan.
+2. **El formato de nombre de fichero.** Inferido de un derivado de terceros en
+   HuggingFace (`cairocode/MSPI_Emotion2Vec_Text`) como
+   `MSP-IMPROV-S01A-F01-P-FM01.wav`: sesion (S01A), id de frase objetivo (F01), **letra
+   de condicion** (P) y pareja de genero + indice de turno (FM01). El mapeo de letras
+   (P = target improvisada, R = leida, S = other-improvisada, N = natural) es
+   **coherente con el diseno pero NO confirmado por fuente autorizada**.
+3. **El nombre del fichero de anotaciones.** El codigo de la comunidad se refiere a
+   `Evalution.txt` (con la errata). **Sin confirmar.**
+
+**Checklist al recibir el corpus, antes de escribir una linea de `_collect_records`:**
+
+- [ ] Contar los `.wav`: deben ser 8,438.
+- [ ] Verificar el patron de nombre contra TODOS los ficheros, y que el guardarrail
+      **nombre** los que no casen (la leccion de `1040_ITH_SAD_X`).
+- [ ] Confirmar las letras de condicion contando: P=652, R=620, S=4,381, N=2,785. Si los
+      conteos cuadran, el mapeo es correcto; si no, hay que rehacerlo.
+- [ ] Localizar el fichero de anotaciones y leer sus columnas de verdad, sin asumir.
+- [ ] Filtrar a 4 clases y comprobar **7,798** con la distribucion exacta.
+- [ ] Comprobar que las 6 sesiones dan 12 actores y que `speaker_of()` los separa bien
+      (hay que sobrescribirlo: el de IEMOCAP no sirve).
+- [ ] Decidir y DECLARAR si se usan las cuatro condiciones o solo un subconjunto. La
+      literatura comparable (7,798) usa las cuatro.
+
+**Transcripciones: no hay para el 92 % del subconjunto de 4 clases** (verificado en Feng,
+Kuhn & Provost, NAACL-HLT 2019). Solo los ~1,272 turnos de target tienen contenido lexico
+conocido, por ser lecturas de las 15 frases fijas. El resto va por ASR (Whisper).
+
+**Y esto es ahora lo importante del experimento, no un detalle de implementacion.** Tras
+el estudio 78, MSP-IMPROV es el corpus que separa «el aporte es lexico» de «CREMA-D era
+actuado y facil» (seccion 11). El texto por ASR es justo lo que hace falta: espontaneo
+como IEMOCAP, con texto real aunque ruidoso.
+
 ### CREMA-D: el corpus que se puede empezar HOY, y que además dice algo
 
 Descarga abierta, sin licencia ni espera. 7,442 clips, 91 actores (diversidad real de
@@ -1294,7 +1369,10 @@ Comprobado que no se cuela ningun `.wav` ni checkpoint.
    el corpus equivocado. `check_dataset_refactor.py` ya avisa cuando las rutas no
    coinciden y acepta `--data-path`. **Unificar las dos copias es trabajo pendiente**,
    y conviene hacerlo antes de meter un segundo corpus en la mezcla.
-2. **CREMA-D.** Cargador **escrito el 23/09/2026** (`src/data/cremad_dataset.py`),
+2. ~~**CREMA-D**~~ — **descargado y verificado el 02/10/2026**: 4,899 clips de 4 clases
+   (1,271 / 1,271 / 1,270 / 1,087), 91 actores en 5 grupos disjuntos balanceados por
+   sexo, 16 kHz mono, las doce frases en las cuatro emociones. Listo para el estudio 77.
+   Cargador escrito el 23/09/2026 (`src/data/cremad_dataset.py`),
    registrado como `cremad`, con config del estudio 77 y `scripts/check_cremad.py`.
    Falta descargarlo (606 MB de audio con sparse-checkout, no los 3.67 GB del repo
    entero), verificarlo y lanzar. Y falta el estudio 78, sin rama de texto.
@@ -1339,6 +1417,28 @@ hablante). Lo único publicado de 4 clases verificable es SELM (Interspeech 2024
 **fuera de dominio**, 42.79 UA. **Fijamos línea base propia y lo decimos**; no
 insinuamos comparabilidad. Es el mismo criterio que aplicamos a la tabla de IEMOCAP.
 
+**4b. CORRECCIÓN al informe de investigación (02 oct 2026).** La investigación afirmó
+que los 7,442 nombres de fichero casan el patrón `ACTOR_FRASE_EMOCION_INTENSIDAD` «sin
+excepción», medido sobre el árbol de git. **Es falso, y el guardarraíl del cargador lo
+cazó en la primera ejecución sobre los datos reales:** existe
+`1040_ITH_SAD_X.wav`, con **una X** en el código de intensidad en vez de dos. Es un
+error de nombre del propio repositorio, no de la descarga.
+
+Y explica algo que la investigación había declarado «obsoleto» por error: el cargador de
+TensorFlow Datasets lleva `1040_ITH_SAD_XX` en su lista `bad_files` con el comentario
+«file names which do not exist in the github». **Tenía razón** — con ese nombre no
+existe. TFDS lo descarta; nosotros lo **aceptamos** y normalizamos la intensidad a `XX`,
+porque es un clip legítimo de SAD del actor 1040 y no hay motivo para tirarlo.
+
+Con eso las cifras cuadran exactamente con el contrato —sad 1,270, total 4,899—, que es
+la confirmación de que ésta es la lectura correcta. **Hay que declarar la diferencia en
+el artículo:** nuestro subconjunto tiene un clip más que el de TFDS.
+
+La lección de método: la investigación bibliográfica fue buena pero no sustituye a
+ejecutar el cargador contra los bytes reales. Dos afirmaciones medidas «sobre el árbol de
+git» resultaron equivocadas, y las dos las detectó un contrato verificable en el código,
+no una lectura más atenta del README.
+
 **5. El diseño no está completo:** faltan 20 clips por problemas de extracción (los
 actores 1008/WSI, 1009/MTI y 1019/ITH enteros, más 1002/TIE_NEU y 1076/ITS_NEU). Por
 eso el cargador no afirma 82 clips por actor en ningún sitio.
@@ -1350,6 +1450,26 @@ verdad importa— que **las doce frases aparecen en las cuatro emociones**: si a
 faltara en alguna clase, el texto dejaría de ser ortogonal a la emoción y la rama de
 texto podría acertar por el motivo equivocado, que es justo lo que este corpus viene a
 descartar.
+
+**MATIZ IMPORTANTE sobre la ortogonalidad, medido el 02/10/2026 al verificar el
+corpus.** La frase IEO («It's eleven o'clock») sale **tres veces mas** que las demas en
+las clases no neutras, porque es la unica con tres niveles de intensidad (LO/MD/HI)
+mientras neutral solo tiene XX: 273 clips por emocion frente a 91, y 91 en neutral. Eso
+significa que la identidad de la frase **no es estrictamente independiente de la
+etiqueta**: P(neutral | IEO) = 10.0 % frente a P(neutral) = 22.2 %.
+
+Pero el efecto es inofensivo donde importa, y conviene decirlo con el numero exacto:
+**un clasificador que SOLO vea la frase acierta 25.94 %, que es exactamente la linea
+base de clase mayoritaria.** Cero ganancia. El sesgo de IEO solo desplaza la
+probabilidad de «neutral vs resto», no distingue entre angry/happy/sad (ahi los 273
+estan empatados a tres bandas).
+
+Asi que la afirmacion correcta para el articulo **no** es «el texto es independiente de
+la emocion», sino: **la identidad de la frase no aporta poder discriminativo —clasifica
+al nivel de la clase mayoritaria— aunque la frase IEO este sobrerrepresentada en las
+clases no neutras.** Declararlo asi y dar el 25.94 %. Si se dijera «independiente» sin
+mas, un revisor que mire la tabla de frases encontraria el 273 vs 91 y con razon
+desconfiaria del resto.
 
 **Estudio 77** = el modelo del 74 sin un solo cambio de arquitectura, sobre CREMA-D.
 Un factor: el corpus. **Estudio 78 (pendiente)** = el mismo sin rama de texto; la caída
@@ -1434,6 +1554,54 @@ trabajo sin confirmar, asi que no hay forma de preguntarle a git que codigo corr
 volver a correr el mismo fold mueve el numero ~1.3 pp es presentar una precision que no
 tenemos. Un revisor que pida una re-ejecucion lo ve al primer intento.
 
+### CONFIRMADO Y CUANTIFICADO con una tercera corrida (28 sep 2026)
+
+Tercera ejecucion del fold S1 del estudio 74, misma config, misma semilla, mismo fold:
+
+| corrida | test UA | val UA | epocas |
+|---|---|---|---|
+| 18 sep | 76.11 | 78.71 | 20 |
+| 22 sep | 74.77 | 79.56 | 29 |
+| 28 sep | 75.66 | 79.88 | 20 |
+| **media ± σ** | **75.51 ± 0.68** | | |
+
+**Tres valores distintos. La hipotesis del cambio de codigo queda descartada**: el
+codigo del 28 es el mismo que el del 22 y no reprodujo su 74.77. Es no determinismo.
+
+**CORRECCION IMPORTANTE a lo que se escribio el 23/09.** Alli se dijo "la banda es
+~1.3 pp" y que la media del articulo se mueve esa cantidad. **Es falso, y el error fue
+confundir el RANGO de dos muestras con la desviacion tipica.** Con tres corridas:
+
+| cantidad | σ |
+|---|---|
+| un fold, al re-ejecutarlo | **0.68 pp** |
+| la media de 5 folds | **0.30 pp** |
+| una diferencia pareada entre dos estudios | **0.43 pp** |
+| banda de ±2σ en una diferencia pareada | **±0.86 pp** |
+
+Y se comprueba con las tres medias del estudio 74 medidas hasta hoy —75.57, 75.30,
+75.48— cuya σ es 0.14, del orden de la prediccion de 0.30 con n=3.
+
+**La media del articulo es mucho mas estable de lo que dije.** 75.5 es solido a una
+decimal. Lo que se mueve es el fold individual, no la media.
+
+### Que sobrevive, ahora con la regla cuantitativa
+
+La regla es: **una diferencia pareada por debajo de ±0.86 pp (2σ) no es atribuible al
+modelo.**
+
+| comparacion | efecto | veredicto |
+|---|---|---|
+| Fusion vs solo audio | +6.58 pp | **15σ. Inamovible.** |
+| Tasas de aprendizaje (71 vs 68) | +5.06 pp | **12σ. Inamovible.** |
+| 74 vs 72 (quitar la compuerta rota) | +0.86 pp | **justo en el limite de 2σ.** Ya se reportaba como no significativo (t=1.68, IC incluye 0); ahora ademas se sabe que es indistinguible del ruido. Ninguna conclusion dependia de el. |
+| 75 vs 74 | −0.18 pp | dentro del ruido. El nulo se refuerza. |
+| 76 vs 74 | −0.39 pp | dentro del ruido. El nulo se refuerza. |
+| 76 vs 75 | −0.21 pp | dentro del ruido. |
+
+σ con n=3 es una estimacion cruda; la multi-semilla dara una mejor. Pero el orden de
+magnitud ya esta fijado y basta para decidir que se puede afirmar.
+
 ### Que hacer, y cambia el orden de trabajo
 
 1. **Commitear el arbol YA.** Sin historial no se puede diagnosticar nada de esto.
@@ -1478,6 +1646,340 @@ no coincida, igual que ya hacia con el protocolo.
 **Esto no invalida el trabajo: lo calibra.** La conclusion del articulo —la fusion
 trimodal aporta mucho, la compuerta de conflicto no aporta nada, y sabemos por que— es
 robusta al ruido medido. Lo que hay que corregir es cuantos decimales nos permitimos.
+
+## 8. MULTI-SEMILLA DEL ESTUDIO 74 (2 oct 2026) — y la sigma de 3 pp no es inestabilidad
+
+Dos semillas completas, cinco folds cada una, protocolo `standard`:
+
+| fold | semilla 42 | semilla 123 | 123−42 |
+|---|---|---|---|
+| S1 | 75.66 | 75.82 | +0.15 |
+| S2 | 80.25 | 80.89 | +0.64 |
+| S3 | 71.96 | 74.50 | **+2.54** |
+| S4 | 75.49 | 72.71 | **−2.78** |
+| S5 | 74.05 | 73.55 | −0.50 |
+| **media ± σ** | **75.48 ± 3.05** | **75.49 ± 3.23** | **+0.01** |
+
+**Las dos medias coinciden en 0.01 pp.** Diferencia pareada por fold +0.01 ± 1.93,
+t(4) = 0.01, p de permutacion = 1.00. Combinando las 10 observaciones: **75.49 pp**,
+σ entre observaciones 2.96, error tipico de la media 0.94.
+
+### Y esto reinterpreta la σ que reportamos
+
+Descomponiendo la varianza con las dos semillas:
+
+| componente | σ | que es |
+|---|---|---|
+| **entre folds** | **2.99 pp** | la dificultad real de cada sesion de IEMOCAP |
+| dentro del fold (semilla + ruido) | 1.29 pp | |
+| de los cuales, re-ejecucion con la MISMA semilla | 0.68 pp | medido con 3 corridas del fold S1 |
+| luego, atribuible a la semilla | ≈1.10 pp | √(1.29² − 0.68²) |
+
+**La σ de ~3 pp que reportamos es casi toda diferencia de dificultad entre sesiones, no
+inestabilidad del metodo.** Eso cambia como se escribe: la σ entre folds en LOSO mide
+cuanto varia el problema de hablante a hablante, que es informacion sobre el corpus, no
+ruido de nuestra implementacion. Hay que decirlo, porque un revisor que vea ±3 pp puede
+leerlo como falta de control.
+
+**La regla operativa se mantiene**, y ahora con dos vias de calculo:
+- comparaciones pareadas DENTRO de la misma semilla (que es como se hizo toda la tabla
+  de ablacion): σ de la diferencia = √2 × 0.68/√5 = **0.43 pp**, banda 2σ = **±0.86 pp**.
+- comparaciones entre semillas distintas: σ = √2 × 1.29/√5 = **0.82 pp**, banda ±1.63 pp.
+
+Todas las conclusiones aguantan: fusion vs solo audio +6.58 pp (15σ), tasas de
+aprendizaje +5.06 pp (12σ), y la compuerta de conflicto dentro del ruido en sus tres
+variantes.
+
+### Para el articulo, en una frase
+
+«El modelo alcanza 75.49 % UA en LOSO de cinco folds sobre IEMOCAP. Dos semillas
+independientes dan 75.48 y 75.49, y la variabilidad de re-ejecucion con semilla fija es
+de 0.68 pp por fold; la desviacion de ±3 pp entre folds refleja diferencias de
+dificultad entre sesiones, no inestabilidad del entrenamiento.»
+
+Eso es mas de lo que reporta casi cualquier articulo de SER, y responde por adelantado
+la pregunta de reproducibilidad.
+
+### Se para aqui: no se corre la semilla 456
+
+Con las medias coincidiendo en 0.01 pp, una tercera semilla no cambia ninguna conclusion.
+**Limitacion que hay que declarar:** con n = 2 semillas no se puede poner un ± a la
+variabilidad entre semillas; lo que se puede decir, y basta, es que dos semillas
+independientes dieron 75.48 y 75.49. La GPU vale mas en CREMA-D.
+
+### Coste operativo, para que quede escrito
+
+La semilla 123 costo tres dias y seis intentos. Tres de cinco folds murieron con
+`bad allocation` (memoria de host) y uno despues con `CUDNN_STATUS_INTERNAL_ERROR` en el
+LSTM de la cabeza. Se saco adelante con un proceso por fold y `--resume`; los folds S1 y
+S5 quedan marcados `resumed: true`. Ese marcado importa: un fold reanudado no es
+bit-identico a uno corrido de un tiron, y conviene no esconderlo.
+
+### PRIMER FOLD DE CREMA-D (3 oct 2026): 84.27 UA — y por que NO es «mejor que IEMOCAP»
+
+Estudio 77, fold S1 (grupo de actores 1, 1,026 clips de test): **UA 84.27, WA 84.11,
+macro-F1 83.95.** Por clase: angry 92.1, neutral 88.6, sad 83.8, happy 72.6.
+
+**Comprobacion de fuga, hecha antes de interpretar nada.** El `config.json` del fold
+confirma `corpus: cremad`, test = grupo 1, train = grupos 2-5, y
+`val_fraction: 0.12` con `val_speaker` ausente. Es decir: el protocolo `standard` NO
+toco la ruta especifica de IEMOCAP que construye el nombre del hablante de validacion
+(`Ses0X_F`), que es lo que podria haber fallado en silencio. Train y test son grupos de
+actores **disjuntos**. La validacion sale de un 12 % estratificado de los grupos de
+entrenamiento, o sea comparte actores con train —igual que en IEMOCAP— y solo se usa
+para elegir checkpoint. No hay fuga hacia test.
+
+**Y AHORA LO IMPORTANTE, que es como NO escribirlo.** 84.27 frente a 75.49 de IEMOCAP
+**no significa que el modelo sea mejor en CREMA-D**. Es otra tarea, mas facil, y decir
+«generaliza y ademas mejora» seria exactamente el tipo de comparacion inflada que
+llevamos semanas quitando de la tabla de estado del arte.
+
+Las razones, concretas:
+
+1. **La etiqueta es la INTENCIONADA, no la percibida.** En CREMA-D el actor recibio la
+   instruccion de que emocion representar. Los oyentes humanos de solo audio coinciden
+   con esa etiqueta el **41.6 %** de las veces (en el esquema de 6 clases). O sea: la
+   etiqueta intencionada no es «lo que se oye», es el objetivo de produccion. Un modelo
+   puede aprender la firma de produccion del actor, que es sistematica y aprendible, sin
+   resolver el problema perceptual que plantea IEMOCAP.
+2. **Emocion actuada y prompteada frente a improvisada.** IEMOCAP es interaccion diadica
+   improvisada, con emocion sutil y a veces ambigua; CREMA-D son clips de 1.3-5 s
+   (mediana 2.5) con la emocion presente de principio a fin.
+3. **Clases casi balanceadas** (25.9 / 25.9 / 25.9 / 22.2) frente al desbalance de
+   IEMOCAP (19.9 / 29.6 / 19.6 / 30.9).
+
+**Como se escribe, entonces:** el modelo **no se rompe** al cambiar de corpus —que es lo
+que la seccion de generalizacion tiene que demostrar— y los numeros absolutos de los dos
+corpus **no son comparables entre si** porque la semantica de la etiqueta y la
+dificultad de la tarea difieren. Las dos frases van juntas o ninguna.
+
+**ES UN SOLO FOLD.** Sin sigma no se afirma nada. Faltan los folds 2-5.
+
+## 9. CREMA-D COMPLETO — estudio 77 (7 oct 2026)
+
+Cinco folds, protocolo `standard`, el modelo del 74 sin un solo cambio de arquitectura:
+
+| grupo de actores | UA | WA | epocas |
+|---|---|---|---|
+| 1 | 84.27 | 84.11 | 29 |
+| 2 | 80.46 | 80.00 | 22 |
+| 3 | 79.49 | 79.45 | 19 |
+| 4 | 86.17 | 86.42 | 28 |
+| 5 | 81.36 | 80.94 | 21 |
+| **media ± σ** | **82.35 ± 2.78** | 82.18 | |
+
+Ningun fold reanudado: los cinco corrieron de un tiron.
+
+### Recall por clase
+
+| grupo | angry | happy | sad | neutral |
+|---|---|---|---|---|
+| 1 | 92.11 | 72.56 | 83.83 | 88.60 |
+| 2 | 83.40 | 79.25 | 66.29 | 92.92 |
+| 3 | 89.06 | 69.43 | 78.87 | 80.62 |
+| 4 | 89.87 | 85.23 | 89.87 | 79.70 |
+| 5 | 92.86 | 69.75 | 70.17 | 92.65 |
+| **media ± σ** | **89.46 ± 3.73** | **75.24 ± 6.84** | **77.81 ± 9.67** | **86.90 ± 6.39** |
+
+Tres afirmaciones que aguantan los cinco folds:
+
+- **`angry` es la clase facil**: 89.46 de media, la mas alta o empatada en 5/5. Coherente
+  con arousal alto y actuacion prototipica.
+- **`happy` es la mas dificil de media** (75.24) y la mas baja en 3/5 folds, con precision
+  alta: el modelo es conservador, cuando dice happy acierta pero se le escapan muchos.
+- **`sad` es la mas inestable** (σ 9.67, rango 66.3–89.9). Depende mucho del grupo de
+  actores, lo cual tiene sentido: la tristeza actuada con arousal bajo se parece al habla
+  neutra, y cuanto la confunde el modelo depende de como la interprete cada actor.
+
+### La σ entre folds refuerza la seccion 8
+
+σ = 2.78 en CREMA-D frente a 3.05 en IEMOCAP. **Dos corpus distintos, con numeros
+absolutos muy distintos, dan la misma magnitud de dispersion entre folds.** Eso respalda
+la interpretacion de la seccion 8: ese ±3 pp mide dificultad entre grupos de hablantes,
+no inestabilidad del metodo. Es un argumento que se puede hacer explicito en el texto.
+
+### Y la comparacion que NO se hace
+
+82.35 frente a 75.49 de IEMOCAP son **+6.87 pp**, y eso **no es una mejora**. Las razones
+estan en la seccion de CREMA-D: etiqueta intencionada (los oyentes humanos solo coinciden
+con ella el 41.6 % de las veces en 6 clases), emocion actuada y prompteada frente a
+improvisada, clips de 1.3–5 s, clases casi balanceadas. Son tareas de dificultad
+distinta.
+
+**Lo que SI se afirma, y es lo que la seccion de generalizacion necesita:** la
+arquitectura **no se degrada** al cambiar de corpus, y lo hace sobre un corpus donde el
+texto no puede aportar informacion emocional. Las dos frases van juntas o ninguna.
+
+## 10. HyCon: por que NO se implementa tal cual (7 oct 2026)
+
+Idea de Jorge: aplicar la perdida contrastiva de HyCon (Mai, Zeng, Zheng, Hu; IEEE TAFFC
+14(3):2276-2289, 2022; DOI 10.1109/TAFFC.2022.3172360) para ver si mejora los resultados.
+Linea legitima —el repo ya tiene `SupConLoss`, `loss_contrastive` enchufado en las DOS
+ramas de `train_epoch`, y los modelos 43/47/48— pero la investigacion dio cuatro motivos
+para no portarla como esta, y uno de ellos es decisivo.
+
+### El decisivo: batch 4 rompe justo los dos terminos que aportan
+
+HyCon tiene tres terminos. Los negativos salen **exclusivamente del mini-batch actual**:
+no hay memory bank, ni cola, ni encoder de momento, ni estudio de sensibilidad al tamano
+de batch en el articulo. Con `batch_size: 4`, K = 4 y por tanto N + M = 3: como maximo
+**3 pares por ancla**.
+
+**La acumulacion de gradiente NO ayuda.** El conjunto de negativos lo define lo que esta
+en el MISMO forward. Acumular 8 pasos da ocho problemas contrastivos diminutos, no uno de
+batch 32. Nuestro batch efectivo de 32 es real para la perdida de tarea y ficticio para
+la contrastiva.
+
+Peor con 4 clases: en un batch de 4, **la mayoria de las anclas no tiene ningun positivo
+de su clase**, asi que IAMCL e IEMCL quedan indefinidos. Y con muestreo balanceado por
+clase es aun mas claro: 4 clases en 4 muestras = una por clase = cero positivos.
+
+Y los propios autores avisan del modo de fallo: la solucion degenerada aparece *"especially
+when sufficient amount of negative pairs is unavailable"*. Con M <= 3 la suma de negativos
+cae a ~0, el cociente se satura y el gradiente muere. Lo unico que lo sostiene es el
+termino de refinamiento, que es un L2 hacia 1 y hacia alfa — es decir, a batch 4 estariamos
+entrenando una perdida de centro/margen, no una contrastiva.
+
+**Y subir el batch no es una opcion en esta maquina**: ya se cae con `bad allocation` y
+`CUDNN_STATUS_INTERNAL_ERROR` a batch 4 (seccion 7).
+
+### El segundo, y es nuestro: el efecto seria inmedible
+
+La ablacion de HyCon (Tabla 6, MOSI) compara su formulacion contra una perdida
+contrastiva clasica: **+0.3 en Acc7**, +1.5 en Acc2. Y en MOSEI —el dataset grande— la
+ganancia frente al mejor baseline es +0.9 Acc7 con **cero** mejora en MAE y correlacion.
+
+Nuestra banda de ruido para una diferencia pareada con la misma semilla es **±0.86 pp
+(2σ)** (seccion 8). Un efecto de 0.3-0.9 pp **no se puede medir** con cinco folds y una
+semilla. Afirmarlo seria exactamente el error que llevamos un mes quitando del articulo.
+
+### El tercero: el articulo publicado no es el de arXiv
+
+arXiv:2109.01797 es una version **anterior y distinta**: la publicada anade un
+"pair selection mechanism" para ponderar pares informativos y experimentos de
+reconocimiento de emociones que arXiv no tiene. IEEE y ACM DL no fueron accesibles, asi
+que implementar desde arXiv seria implementar otro metodo y llamarlo HyCon.
+
+### El cuarto: regimen distinto y sin precedente en SER
+
+- Tarea: **regresion de sentimiento** en [-3,+3] con perdida MAE, no emocion categorica.
+- Las ganancias se concentran en **datos pocos** (MOSI, 1,284 de entrenamiento) y se
+  desvanecen con datos abundantes (MOSEI, 16,265). Nosotros tenemos 5,531 y 4,899.
+- Modalidades con **texto fuerte** (BERT 768-d) y audio/vision de caracteristicas
+  artesanales (COVAREP/Facet) fundidas por **suma elemento a elemento**.
+- **No existe implementacion oficial** (ni en el articulo ni en paperswithcode).
+- **Ningun trabajo aplica HyCon a SER categorico speech-only.** El unico numero de
+  HyCon sobre IEMOCAP que se encontro (MMCL, arXiv:2501.12424, Tabla III) usa el
+  protocolo binario por emocion de MulT y es trimodal con GloVe: NO comparable con UA de
+  4 clases.
+
+### Lo que SI transporta, y conecta con nuestro propio diagnostico
+
+Dos piezas sobreviven a batch 4 y valen la pena:
+
+1. **El margen de modalidad (SCL con alfa = 0.8).** No usa negativos: es un L2 que acerca
+   las representaciones cross-modales del MISMO enunciado hasta similitud 0.8, **no 1**.
+   La idea es reducir la brecha entre modalidades SIN colapsar la informacion propia de
+   cada una. En su ablacion vale 2.4 Acc7 frente a forzar alineacion total — mas que el
+   termino de refinamiento. Funciona identico a batch 4.
+   **OJO:** su ablacion tambien muestra que quitar SCL *mejora* Acc7 en +0.4 mientras
+   empeora Acc2/F1/MAE. Su valor neto es ambiguo. No venderlo como seguro.
+2. **Contrastivo supervisado por prototipos**, en lugar de IAMCL/IEMCL: una media movil
+   por clase y por modalidad, y se contrasta contra prototipos en vez de contra muestras
+   del batch. Elimina la dependencia del tamano de batch y captura la estructura
+   inter-clase que su ablacion atribuye a IEMCL (el termino que mas aporta: quitarlo
+   cuesta mas que quitar los tres).
+
+**Y aqui esta la conexion honesta con lo nuestro, que es lo que le daria sentido en el
+articulo y no seria un anadido oportunista.** El diagnostico de la compuerta (seccion 6)
+midio que seleccionar por confianza pierde contra promediar **a pesar de un margen de
+oraculo de 21 pp**: las ramas no estan alineadas ni calibradas de forma que una regla de
+seleccion pueda explotarlo. Un termino de alineacion cross-modal ataca **ese mismo
+problema diagnosticado** desde el otro lado. Eso es una motivacion medida, no una cita
+de moda.
+
+### Precondicion antes de gastar GPU, decidida de antemano
+
+Si el objetivo es **afirmar** una mejora de metodo, hace falta multi-semilla desde el
+principio: con una semilla no se puede defender nada por debajo de ±0.86 pp. La semilla
+123 costo tres dias y seis intentos. Hay que decidir el umbral ANTES de correr: si el
+efecto esperado es ~1 pp, el experimento necesita 3 semillas x 5 folds, y hay que querer
+pagarlo.
+
+## 11. EL HALLAZGO QUE CAMBIA EL ARTICULO — estudio 78 (10 oct 2026)
+
+Solo audio sobre CREMA-D, cinco folds, el par exacto del 77. **La fusion NO aporta nada
+en CREMA-D.**
+
+| | trimodal | solo audio | delta |
+|---|---|---|---|
+| grupo 1 | 84.27 | 84.85 | −0.58 |
+| grupo 2 | 80.46 | 83.60 | −3.14 |
+| grupo 3 | 79.49 | 80.03 | −0.53 |
+| grupo 4 | 86.17 | 84.71 | **+1.46** |
+| grupo 5 | 81.36 | 84.52 | −3.17 |
+| **media ± σ** | **82.35 ± 2.78** | **83.54 ± 2.02** | **−1.19 ± 1.97** |
+
+Pareado: **−1.19 ± 1.97 pp, t(4) = −1.35, 1/5 folds, IC 95 % [−3.64, +1.26]**, p de
+permutacion 0.3125.
+
+Frente a IEMOCAP, donde el mismo contraste da **+6.49 ± 2.06 pp, t(4) = 7.04, 5/5 folds**:
+
+| corpus | aporte de la fusion sobre solo audio |
+|---|---|
+| IEMOCAP | **+6.49 ± 2.06** (5/5, ~15σ de la banda de ruido) |
+| CREMA-D | **−1.19 ± 1.97** (1/5, el IC incluye el cero) |
+
+**Lectura correcta: en CREMA-D no hay ganancia. NO se afirma que haya perdida** — el IC
+incluye el cero y p = 0.31. Lo que queda establecido es que **el +6.49 no se replica.**
+
+### Lo que esto significa, y es mejor articulo que «generaliza»
+
+Esto es una **disociacion controlada entre corpus**, y la predijimos antes de medirla:
+
+- En CREMA-D el texto **no puede** llevar informacion emocional. Lo medimos: las doce
+  frases son fijas y la identidad de la frase clasifica al **25.94 %**, que es exactamente
+  la linea base de clase mayoritaria (seccion de CREMA-D).
+- La rama de vision es una imagen log-mel **derivada del audio**: tampoco anade
+  informacion que el audio no tenga ya.
+- Luego en CREMA-D «trimodal» = audio + vision redundante + texto vacio. Y rinde igual
+  (o un pelo peor) que solo audio.
+
+**La conclusion mecanica: el aporte de la fusion es especificamente LEXICO.** No es que el
+modelo sea «mejor reconociendo emociones»; es que usa **lo que se dice** junto con **como
+se dice**, y cuando lo que se dice no lleva informacion, no hay nada que sumar.
+
+Eso convierte el claim central de «nuestra fusion trimodal mejora +6.58 pp» en algo mas
+fuerte y mas falsable: **mejora +6.49 pp cuando el texto es informativo, y 0 cuando no lo
+es, y tenemos los dos lados medidos con el mismo modelo y el mismo protocolo.**
+
+### EL CONFUSOR QUE HAY QUE DECLARAR, y no esconder
+
+CREMA-D no solo difiere en el texto: es **actuado, prompteado y de clips cortos**, frente
+a IEMOCAP que es improvisado y espontaneo. Una explicacion alternativa de la no
+replicacion es «CREMA-D es mas facil y el audio solo ya satura» (83.54 frente a 68.99 en
+IEMOCAP: hay mucho menos margen que recuperar).
+
+**Con estos dos corpus NO se puede separar «texto no informativo» de «actuado y facil».**
+Hay que decirlo en el texto. Lo honesto es presentar la explicacion lexica como la mas
+parsimoniosa dado que medimos que el texto no informa, y nombrar el confusor.
+
+**Y esto le da un proposito preciso a MSP-IMPROV**: espontaneo (como IEMOCAP) pero con
+texto por ASR. Si alli la fusion aporta, la explicacion es lexica; si no aporta, el factor
+es espontaneo-vs-actuado. Ese es el experimento que cierra la pregunta, y ahora se sabe
+exactamente que decidiria.
+
+### Que se reescribe
+
+1. El claim central pasa de «la fusion aporta» a «la fusion aporta **contenido lexico**,
+   y aqui esta medido cuando si y cuando no».
+2. La seccion de generalizacion deja de ser «funciona en otro corpus» y pasa a ser **el
+   experimento que identifica la fuente del aporte**. Es mas interesante y mas defendible.
+3. En Limitaciones: el confusor actuado/espontaneo, y MSP-IMPROV como el experimento que
+   lo resolveria.
+4. **Audio solo en CREMA-D (83.54 ± 2.02) es el mejor numero de este corpus.** Reportarlo
+   como tal, sin maquillarlo. Un revisor que vea trimodal 82.35 presentado como «nuestro
+   modelo» y encuentre en la tabla que el unimodal da mas, deja de creerse el resto.
 
 ### El experimento de transferencia de protocolo (`--protocol random`)
 
@@ -1527,8 +2029,8 @@ dependiente de hablante — si saliera independiente, no estaríamos midiendo lo
    t=1.68, IC 95 % incluye 0). Confirmado con el detector arreglado (estudio 75:
    −0.18 ± 1.14, IC 95 % [−1.59, +1.23]). **El título cambia** y el modelo es el 74.
 2. Estudio 73 (texto con tasas corregidas) — cierra la tabla de ablación.
-3. Multi-semilla 42/123/456 → 15 observaciones pareadas; el test de signos deja de topar en
-   p = 0.0625.
+3. ~~Multi-semilla~~ — **hecha con 2 semillas el 02/10/2026**: 42 → 75.48, 123 → 75.49.
+   Se para ahi; la tercera no aporta (ver seccion 8).
 4. ~~Estudio 75~~ — **hecho**: la compuerta con el detector arreglado no aporta
    (−0.18 ± 1.14, IC 95 % [−1.59, +1.23]). «Conflict-Aware» sale del título.
 4b. ~~Estudio 76~~ — **hecho y diagnosticado**: la confianza con objetivo de calibración
@@ -1541,3 +2043,826 @@ dependiente de hablante — si saliera independiente, no estaríamos midiendo lo
 6. Verificar los candidatos de la tabla comparativa con la revisión sistemática propia.
 7. Escribir.
 
+
+---
+
+## 12. MELD: corpus evaluado, auditado y con defectos nuevos (10 oct 2026)
+
+### 12.0 Por qué MELD y no MOSI ni MOSEI
+
+La sección 11 dejó un confound declarado: en CREMA-D la fusión no aporta, y con
+IEMOCAP + CREMA-D **no se puede separar «el texto no es informativo» de
+«CREMA-D es actuado y fácil»**. Se evaluaron tres candidatos para cerrarlo.
+
+**CMU-MOSI — descartado.** 2,199 clips de opinión, **sentimiento continuo en
+[−3,+3]**, sin etiquetas categóricas de emoción. Métricas Acc7 / Acc2 / F1 /
+MAE / correlación: ninguna entra en la misma tabla que nuestra UA de 4 clases.
+Split fijo por vídeo, no LOSO. Y es el corpus **dominado por texto** por
+excelencia (ICCN 39.0 y MAG-BERT 42.9 Acc7 contra MulT 33.6), así que
+confirmaría lo que ya sabemos sin resolver el confound. Además la mitad de la
+literatura usa Facet (expresión facial real) y nuestra rama de visión es mel
+derivado del audio: reportar «trimodal» ahí se leería como que nos falta una
+modalidad que el corpus sí tiene.
+
+**CMU-MOSEI — descartado, pero por poco.** A favor: ~23,500 segmentos de ~1,000
+hablantes (independencia de hablante genuina, dos órdenes de magnitud más que
+IEMOCAP) y **sí tiene etiquetas categóricas**. En contra, y decide: (a) **no hay
+clase neutral** — solapa en tres de nuestras cuatro y le falta justo la que más
+confusión genera en IEMOCAP; (b) es **multi-etiqueta**, la métrica estándar es
+WAcc y F1 **binarios por emoción**, no UA multiclase; (c) desbalance extremo que
+obliga a BCE ponderada, es decir otro objetivo de pérdida en el código; (d) la
+versión preprocesada estándar trae muestras desalineadas (los papers se quedan
+con 20,477 de 23,259) y no coincide del todo con el split oficial — no hay una
+única definición del corpus, que es exactamente lo que nos criticaron en
+IEMOCAP; (e) el audio es YouTube y hay un resultado conocido de que la modalidad
+acústica aporta muy poco. Eso último lo invalida para nuestra pregunta: MOSEI es
+el régimen **texto-dominante con audio débil**, así que añade un segundo
+confound (calidad de audio) en el extremo opuesto en vez de quitar el primero.
+Uso legítimo: otro artículo, con el marco «¿bajo qué condiciones aporta la
+fusión?».
+
+**MELD — elegido.** Diálogo de sitcom, 7 clases **con neutral**, transcripciones
+humanas de subtítulos (no ASR), descarga libre, y es estándar en SER/ERC.
+Cierra el eje con tres puntos medidos:
+
+| corpus | texto | audio | ¿aporta la fusión? |
+|---|---|---|---|
+| CREMA-D | nulo (12 frases fijas) | suficiente (83.54 solo) | **no** (−1.19 ± 1.97, 1/5 folds) |
+| IEMOCAP | informativo | insuficiente | **sí** (+6.49 ± 2.06, 5/5 folds) |
+| MELD | **domina** | techo duro | según la literatura, ~+3 WF1 sobre texto solo |
+
+La brecha audio-vs-texto en MELD, en cinco fuentes independientes: bcLSTM
+39.08 / 56.44 (−17.4) · DialogueRNN 41.79 / 57.03 (−15.2) · EMART 38.05 / 64.27
+(−26.2) · wav2vec2-XLS-R-2B vs DeBERTa 49.3 / 60.9 (−11.6) · speech-LLM vs
+text-LLM ~−12 en el mejor caso. El dato más contundente es la clase `joy`
+(2,308 ejemplos): audio-only F1 **15.74**, texto **54.31**. El modelo audio-only
+de MELD es casi un detector de neutral con ruido alrededor. Escalar el encoder
+acústico de openSMILE a un SSL de 2B parámetros compra ~10 puntos y se satura
+muy lejos del texto.
+
+### 12.1 El asterisco: el split oficial NO es independiente de hablante
+
+**Verificado contando la columna `Speaker` de los CSVs liberados** (no es una
+cita, es nuestra medición):
+
+| hablante | train | dev | test |
+|---|---|---|---|
+| Joey | 1,509 | 149 | 411 |
+| Ross | 1,459 | 217 | 373 |
+| Rachel | 1,435 | 164 | 356 |
+| Phoebe | 1,321 | 185 | 291 |
+| Monica | 1,299 | 137 | 346 |
+| Chandler | 1,283 | 101 | 379 |
+| **% de los 6 líderes** | **83.2 %** | **85.9 %** | **82.6 %** |
+
+69 de los 100 hablantes de test están también en train. El paper **nunca usa el
+término «speaker-independent»**: el split lo heredó de EmotionLines, que dividió
+por diálogos sin ninguna restricción de hablante, y todos los diálogos de los
+dos corpus salen de *Friends*, así que un split por diálogos **no puede** ser
+independiente de hablante.
+
+**Decisión y argumento.** Se usa el split oficial, se declara explícitamente que
+es dependiente de hablante, y se defiende así: nuestra comparación es
+**pareada** — trimodal vs audio-only sobre el mismo split —, de modo que la
+dependencia de hablante es un confound **compartido** por las dos condiciones y
+se cancela en la diferencia. Lo que queda inválido es cualquier afirmación sobre
+el número absoluto como generalización a hablantes nuevos. Si un revisor
+pregunta si el número es independiente de hablante, la respuesta es **no, y es
+una propiedad del benchmark, no de nuestro método**. Un split propio
+disjunto por hablante es posible, pero entonces el número deja de ser comparable
+con toda la literatura: no se hace salvo que un revisor lo exija.
+
+`Speaker` tampoco es un ID limpio: **169 filas** tienen hablante no individual
+(`All`, `Both`, `Woman`, `Man`, `Director` y `The Director` sin normalizar, y
+conjunciones como `Ross and Rachel`). Esas filas contienen más de una voz y no
+son ejemplos válidos de un solo hablante.
+
+### 12.2 Contrato del corpus — verificado contra el disco
+
+Estructura real de la descarga (los nombres de los directorios de medios **no
+están documentados**: el README oficial dice literalmente `XXX.tar.gz`):
+
+```
+MELD/MELD-RAW/MELD.Raw/
+  train/train_sent_emo.csv      train/train_splits/
+  dev_sent_emo.csv              dev/dev_splits_complete/
+  test_sent_emo.csv             test/output_repeated_splits_test/
+```
+
+Encabezado de los tres CSVs, byte-idéntico:
+`Sr No.,Utterance,Speaker,Emotion,Sentiment,Dialogue_ID,Utterance_ID,Season,Episode,StartTime,EndTime`
+
+- **`Sr No.` NO es clave**: en train hay 9,989 filas pero solo 9,932 valores
+  únicos (57 duplicados) y el máximo es 10,478. La clave es
+  **`(Dialogue_ID, Utterance_ID)`**, única en los tres splits.
+- `StartTime`/`EndTime` en formato `hh:mm:ss,ms` — **coma antes de los
+  milisegundos**, estilo SRT. Un `float()` ingenuo falla.
+- Emociones en el CSV en **minúsculas**: `anger, disgust, fear, joy, neutral,
+  sadness, surprise`. El README las capitaliza; no escribir el match contra el
+  README.
+- El orden de índices one-hot oficial **no es alfabético**:
+  `{neutral:0, surprise:1, fear:2, sadness:3, joy:4, disgust:5, anger:6}`.
+  Fuente frecuente de matrices de confusión silenciosamente mal.
+- **El sentimiento es función casi determinista de la emoción** (anger, disgust,
+  fear, sadness → 100 % negative; joy → 100 % positive; neutral → 100 % neutral;
+  solo `surprise` se reparte). **No presentar emoción y sentimiento como
+  evidencia independiente.**
+- Conteos y distribución de etiquetas: **cuadran exactamente** con la tabla
+  publicada (9,989 / 1,109 / 2,610 filas; las 7 clases celda por celda).
+  Verificado por `scripts/check_meld.py --fase estructura`.
+
+**Contrato de 4 clases** (`anger→angry, joy→happy, sadness→sad, neutral`), ya
+descontadas las dos utterances sin medio —ambas `neutral`— del punto 12.3:
+
+| split | total | angry | happy | sad | neutral |
+|---|---|---|---|---|---|
+| train | **8,244** | 1,109 | 1,743 | 683 | 4,709 |
+| dev | **896** | 153 | 163 | 111 | 469 |
+| test | **2,211** | 345 | 402 | 208 | 1,256 |
+| **TOTAL** | **11,351** | 1,607 | 2,308 | 1,002 | 6,434 |
+
+Se descartan 2,355 utterances (disgust 361, fear 358, surprise 1,636). El contrato
+de 7 clases utilizables es **9,988 / 1,108 / 2,610 = 13,706**, que es exactamente
+lo que contiene el dataset derivado `ajyy/MELD_audio` — confirmación independiente
+de la auditoría. Los dos contratos están codificados en
+`src/data/meld_dataset.py` (`REF_4CLASS_POR_SPLIT`, `REF_4CLASS_POR_EMOCION`,
+`REF_7CLASS_POR_SPLIT`) y los verifica `_assert_integrity` en cada construcción.
+
+**Un resultado de 4 clases NO es comparable con la literatura de MELD**, que
+reporta weighted F1 sobre 7 clases; hay que decirlo en el pie de tabla.
+**Decidido el 10/10/2026: primero 4 clases** (consistencia con IEMOCAP y CREMA-D,
+que es lo que necesita el argumento de la disociación), **y después 7** para tener
+la fila comparable.
+
+**Métrica.** `neutral` es el **48 % del test**, así que la accuracy es casi
+inútil (una línea base de clase mayoritaria da ~48 %). La métrica de la
+literatura es **weighted F1**; el paper original no reporta accuracy. Reportar
+además **macro-F1 y F1 por clase** — es lo que refleja las clases minoritarias y
+pocos papers de MELD lo hacen.
+
+### 12.3 Defectos — lo publicado y lo que encontramos nosotros
+
+**Ya documentados en el issue tracker oficial, nunca corregidos:**
+
+- `train_splits/dia125_utt3.mp4` **corrupto** (issue #39; confirmado
+  independientemente en TelME issue #6). La fila del CSV existe normal. **Está
+  en train, no en test** — en test hay otro `dia125_utt3` distinto y sin
+  defecto, porque `Dialogue_ID` reinicia en 0 en cada split.
+- Clips mal cortados (issue #20): `dia38_utt4` y `dia220_utt0` en test,
+  `dia309_utt0` en train.
+- Desincronización transcripción-vídeo (issue #9) atribuida por el propio
+  mantenedor al alineador **Gentle**; dijo que lo arreglarían «en un futuro
+  cercano» y sigue abierto.
+- Audio degradado en ~200 clips de train, según el reporter identificables por
+  tamaño > 2.5 MB. **No verificado por nosotros.**
+
+**Hallazgos nuestros, no publicados en ninguna parte** (todos reproducibles con
+`scripts/check_meld.py`):
+
+1. **El archivo que lee todo el mundo es el incorrecto para 131 utterances de
+   test.** El directorio de test contiene **132 archivos con el nombre
+   prefijado** `final_videos_testdiaX_uttY.mp4` **además** del `diaX_uttY.mp4`
+   correspondiente. No son copias: tienen tamaños y duraciones distintas.
+   Arbitrando con la duración del CSV (`EndTime − StartTime`), de las 131
+   anotadas **131 coinciden con el archivo prefijado y 0 con el de nombre
+   normal** — y coinciden *al milisegundo*, mientras el de nombre normal es más
+   largo y **compartido entre utterances vecinas** (p. ej. `dia100_utt5`,
+   `utt6` y `utt7` apuntan al mismo archivo de 4.233 s y el mismo tamaño en
+   bytes). El nombre del directorio lo dice: *output_repeated_splits_test*.
+   Como el `read_meld.py` oficial **construye el nombre desde el CSV**, todo
+   pipeline que haga lo mismo está leyendo el corte equivocado en **131 de
+   2,610 utterances de test (5.0 %)**. La 132.ª (`dia93_utt6`) no es arbitrable:
+   no tiene fila en el CSV.
+   **Consecuencia para el loader: en test, si existe el prefijado, se lee el
+   prefijado.**
+2. **El archivo de dev que falta es `dia110_utt7`.** Hay una fila en
+   `dev_sent_emo.csv` sin clip correspondiente. Varias fuentes derivadas
+   reportan «un clip de train corrupto y uno de dev ausente» (el dataset de HF
+   `ajyy/MELD_audio` ships 9,988 / 1,108 / 2,610) pero **ninguna lo identifica**.
+   Es este.
+3. **Clips sin anotación**: dev tiene 4 (`dia49_utt4`, `dia49_utt5`,
+   `dia66_utt9`, `dia66_utt10`) y test 5 (`dia93_utt5/6/7`, `dia108_utt1/2`).
+   Coinciden exactamente con los huecos de `Utterance_ID` del CSV: el clip se
+   cortó y la anotación se descartó. **El loader debe iterar sobre las filas del
+   CSV, nunca sobre `range(n_utts)` ni sobre el listado de archivos.**
+4. **2,060 archivos AppleDouble `._*.mp4`** en el directorio de test, basura de
+   compresión en macOS. Inflan cualquier conteo ingenuo de 2,747 a 4,807.
+   Hay que filtrarlos.
+5. **El audio es AAC a 48 kHz, y el número de canales NO es uniforme**: de los
+   13,847 clips legibles, **12,230 son 6 canales (5.1) y 1,617 son estéreo
+   (2 canales)**. Nadie lo ha publicado — el paper solo dice que ellos lo
+   pasaron a «16-bit PCM WAV» y no libera los WAV. El pipeline de extracción
+   tiene que manejar las dos configuraciones, hacer downmix a mono y resample a
+   16 kHz explícitamente, y **declararlo**. Un `ffmpeg` que asuma 5.1 falla en
+   1,617 clips.
+5b. **Todos los clips tienen pista de audio.** `ffprobe` sobre los 13,848
+   archivos: **0 sin pista de audio** en los tres splits, y **un solo archivo
+   ilegible en todo el corpus** (`train/dia125_utt3.mp4`, el del issue #39).
+   Esto **cierra los issues #47 y #49**, abiertos por gente que creyó que el
+   split de test no tenía audio: lo tiene, y lo tiene completo. Es un dato
+   verificado que no está publicado.
+5c. **Desalineación archivo-vs-anotación en todo el corpus.** Comparando la
+   duración real de cada `.mp4` con `EndTime − StartTime`, con tolerancia de
+   60 ms (el contenedor mp4 redondea 22–42 ms): **train 6, dev 1, test 136**.
+   Los 136 de test son exactamente los 131 con gemelo prefijado (punto 1) más
+   5 nuevos. Lista completa de los que no están explicados por el punto 1:
+   - train: `dia556_utt6` **−8.443 s** (el archivo es 8.4 s *más corto* que su
+     anotación — defecto nuevo, no reportado en ningún sitio), `dia338_utt3`
+     **+2.516 s** (aquí el roto es el CSV: dice 6 ms y el archivo son 2.52 s),
+     `dia437_utt2` +0.274, `dia981_utt3` −0.147, `dia23_utt4` +0.127,
+     `dia23_utt5` −0.127.
+   - dev: `dia72_utt13` −0.167.
+   - test: `dia242_utt2` +1.756, `dia155_utt3` +1.632, `dia151_utt2` +0.847,
+     `dia187_utt2` +0.771, `dia233_utt8` +0.409.
+   **Matiz importante**: los dos clips largos de test (`dia38_utt4` 304.94 s y
+   `dia220_utt0` 235.07 s) **no** aparecen desalineados, porque el archivo sí
+   mide lo que dice su anotación. Ahí lo mal cortado es el par
+   (timestamp, medio) conjuntamente, no el corte respecto a la anotación: el
+   issue #20 reporta que el *contenido* no corresponde a la transcripción. Son
+   dos defectos de naturaleza distinta y hay que describirlos por separado.
+6. **Duraciones.** El paper reporta media 3.59 / 3.59 / 3.58 s. Medido sobre los
+   timestamps liberados: **3.139 / 3.117 / 3.309 s**, mediana 2.46 s en los tres.
+   Formulación segura: *«Poria et al. reportan una duración media de 3.59 s; la
+   media de `EndTime − StartTime` sobre las anotaciones liberadas es 3.14 s en
+   train, con mediana 2.46 s.»* Para los clips sin gemelo prefijado, la duración
+   del archivo coincide con la del CSV dentro de **22–42 ms** (redondeo del
+   contenedor), así que el corpus está bien cortado en general: la discrepancia
+   está en cómo se calculó la cifra publicada, no en los medios.
+7. **Duraciones patológicas.** `< 1.5 s`: 2,249 / 255 / 629 (**22.5 % / 23.0 % /
+   24.1 %**). `< 1.0 s`: 912 / 105 / 269 (~9–10 %). `< 0.5 s`: 283 / 34 / 89.
+   Casos concretos: `train/dia338_utt3` («What?», surprise) con **6 ms**, y
+   `test/dia155_utt3` («Oh my God.», surprise) con `StartTime == EndTime`, es
+   decir **duración cero**. Hay un suelo de cuantización visible en 0.084 s:
+   no son duraciones reales, son fallos del alineador clampados a un mínimo.
+   **Si se aplica un filtro de duración mínima hay que declarar el umbral y
+   cuántas utterances quita, por split y por clase** — los clips cortos son
+   desproporcionadamente interjecciones etiquetadas `surprise`/`neutral`, así
+   que el filtro sesga la distribución.
+8. **Solapes de timestamps.** Utterances que empiezan antes de que acabe la
+   anterior del mismo diálogo: **651 en train (6.5 %), 66 en dev (6.0 %),
+   105 en test (4.0 %)**. Su audio extraído comparte contenido con el vecino.
+9. **La risa grabada del público no está cuantificada por nadie.** MELD es una
+   sitcom con audiencia en estudio y el paper **no menciona «laughter», «music»,
+   «noise», «background» ni «overlap» ni una sola vez**. Está casi con seguridad
+   correlacionada con los límites de las utterances `joy`/`surprise`. Medirla
+   (actividad de un detector de risa por clase, o rendimiento con y sin
+   utterances solapadas con risa) sería contribución novedosa. **No afirmarlo
+   sin medirlo.**
+
+10. **Los CSV traen mojibake de cp1252 en el 27–28 % de las transcripciones, y
+    eso sesga el resultado en la dirección equivocada.** Hallazgo propio, detectado
+    el 10/10/2026 al mirar la muestra del smoke test. `Utterance` contiene U+0092
+    donde debería haber un apóstrofo tipográfico, más U+0085 (…), U+0097 (—),
+    U+0091, U+0093, U+0094 y U+0096: **5,386 ocurrencias en 3,741 utterances**,
+    repartidas por igual entre los tres splits (train 26.94 %, dev 27.77 %, test
+    28.43 %). El patrón es el clásico: el original estaba en cp1252, alguien lo
+    decodificó como latin-1 y lo re-codificó como UTF-8, así que el UTF-8 **es
+    válido** y contiene caracteres de control C1 — ninguna comprobación de
+    codificación lo detecta.
+
+    **Por qué no es cosmético.** El `BasicTokenizer` de BERT *borra* los caracteres
+    de categoría C antes de segmentar. Sin arreglarlo, `company’s` llega al modelo
+    como `companys`, `must’ve` como `mustve` y `don’t` como `dont`: en una cuarta
+    parte del corpus, **todas las contracciones quedan deformadas**. Como la rama
+    de texto es exactamente lo que este artículo mide, el sesgo va en la dirección
+    de **subestimar el aporte de la fusión en MELD** — es decir, justo hacia la
+    conclusión equivocada sobre la disociación de la sección 11. Un experimento que
+    midiera «la fusión aporta poco en MELD» con el texto roto no estaría midiendo
+    lo que dice.
+
+    Arreglado en `src/data/meld_dataset.py` con `normalizar_texto()`, que remapea
+    solo el rango U+0080–U+009F a través de cp1252 (los cinco bytes que cp1252 no
+    define se dejan intactos, y cualquier otro carácter no se toca, así que no puede
+    romper puntuación legítima). El conteo se **reporta** en cada construcción.
+
+    **Verificado que esto NO afecta a IEMOCAP ni a CREMA-D.** Los 151 ficheros de
+    transcripción de IEMOCAP son UTF-8 válido, usan el apóstrofo ASCII (8,160 en
+    una muestra de 200 ficheros) y tienen **un** solo carácter de control en 10,239
+    líneas (un tabulador). CREMA-D tampoco, porque su texto sale de la tabla
+    `FRASES`. El defecto es exclusivo de MELD, así que ninguna cifra ya publicada
+    de este proyecto está contaminada.
+
+Nota negativa útil (arXiv 2509.05634): **el denoising con DEMUCS degrada** el
+rendimiento acústico en MELD en todos los modelos, porque elimina
+vocalizaciones no verbales que llevan emoción. Si se plantea un front-end de
+denoising, hay que citar esto y justificarlo. El mismo trabajo da el coste del
+ASR en MELD: DeBERTa saca **60.9 WF1 con transcripción manual y 51.5 con
+Whisper** — 9.4 puntos. Argumento fuerte para un artículo centrado en audio: la
+ventaja de la rama de texto es en parte un artefacto de disponer de
+transcripciones de oro en test, que no existirían en despliegue.
+
+**Advertencia de fuente.** No citar MDPI *Information* 16(7):518 («Speech
+Emotion Recognition on MELD and RAVDESS Datasets Using CNN») para ningún
+resultado de MELD: reporta **94.0 % de accuracy audio-only**, implausible
+(el mejor audio-only publicado ronda 49–55 WF1 y la clase mayoritaria da 48 %),
+no usó el split oficial («stratified sampling» propio, con fuga de hablante y de
+diálogo), y es internamente inconsistente (intercambia las cifras de MELD y
+RAVDESS entre abstract y conclusiones; omite `disgust` de su lista de etiquetas
+pero discute conteos de disgust). Si un revisor lo trae como resultado
+competidor, estos son los argumentos para descartarlo.
+
+### 12.4 La auditoría como contribución
+
+**Nadie ha publicado una auditoría a nivel de archivo de MELD.** Los diez
+puntos de 12.3 son reproducibles desde los CSVs y los medios con un solo script
+(`scripts/check_meld.py`, fases `estructura` y `audio`), y cuatro de ellos
+—el archivo equivocado en 131 utterances de test, la identidad del clip de dev
+ausente, los parámetros reales del audio y el mojibake de cp1252 en el 27 % de
+las transcripciones— **no están en ninguna fuente**. Es
+exactamente el tipo de rigor cuya ausencia nos criticaron en IEMOCAP, y entra
+bien en una subsección de datos y protocolo.
+
+### 12.4.bis Lo que ya está implementado (10 oct 2026)
+
+- **`scripts/check_meld.py`** — auditoría en dos fases. `estructura`: CSVs, conteos,
+  diff CSV↔medios, arbitraje de los 131 duplicados, etiquetas contra la tabla
+  publicada, hablantes, duraciones y solapes. `audio`: `ffprobe` por clip, paralelo
+  y reanudable con checkpoint. Informe en `logs/meld_audit.json`.
+- **`scripts/extract_meld_audio.py`** — extracción a `<raiz>/audio_16k/{train,dev,
+  test}/diaX_uttY.wav`, 16 kHz mono, `-ac 1` para que el downmix funcione tanto en
+  5.1 como en estéreo. **Lee el fichero prefijado cuando existe** (los 131 de test)
+  y descarta los dos sin medio. Paralelo y reanudable: salta los wav ya escritos.
+- **`src/data/meld_dataset.py`** — `MELDDataset(BaseSERDataset)` con las nueve
+  decisiones de 12.3 documentadas en el docstring. Itera siempre sobre las filas del
+  CSV (nunca sobre `range(n_utts)` ni sobre el listado de ficheros), `speaker_of()`
+  sobrescrito al personaje, `utterance_id` **con prefijo de split** porque
+  `dia125_utt3` existe en train y en test siendo utterances distintas, y
+  `_assert_integrity()` contra los dos contratos. Registrado en
+  `src/data/registry.py` como `meld`.
+- **`--protocol fixed`** en `scripts/run_ablation.py` — MELD no tiene LOSO. Corre UN
+  solo fold con el reparto del YAML, validando que sea disjunto, y pasa por el mismo
+  camino que el k-fold para conservar el sello de semilla, la reanudación y el
+  formato del resumen.
+- **Estudios 79 y 80** — `ablation_79_meld_trimodal.yaml` (clon del 77) y
+  `ablation_80_meld_audio_only.yaml` (clon del 78). Verificados por diff de YAML
+  aplanado: difieren **solo** en `dataset.corpus`, `data_path`, las cuatro listas de
+  sesiones y las rutas de logging. Registrados en el dispatch y en la lista de
+  estudios.
+- **`scripts/smoke_dataset.py`** — generalizado a cualquier corpus registrado. El
+  guardarraíl de utterances improvisadas se conserva solo para IEMOCAP, que es donde
+  detectó el bug de troceado.
+
+Orden de ejecución:
+
+```
+python scripts/check_meld.py        --data-path "D:/DOCTORADO/DATASETS/MELD" --fase todo
+python scripts/extract_meld_audio.py --data-path "D:/DOCTORADO/DATASETS/MELD"
+python scripts/smoke_dataset.py --config config/ablation/ablation_79_meld_trimodal.yaml
+python scripts/run_ablation.py --study 79 --protocol fixed --seed 42
+python scripts/run_ablation.py --study 80 --protocol fixed --seed 42
+```
+
+### 12.6 ESTUDIO 79 — MELD trimodal, 4 clases, semilla 42 (10 oct 2026)
+
+Primer número de MELD. Split oficial fijo (`--protocol fixed`), un solo fold,
+parada temprana en la época 14 (mejor val UA 58.61).
+
+| métrica | valor |
+|---|---|
+| **UA (recall macro)** | **59.41** |
+| WA / exactitud | 65.40 |
+| F1 ponderada | 66.98 |
+| F1 macro | 57.16 |
+
+Por clase (recall / F1):
+
+| clase | recall | F1 | % del test |
+|---|---|---|---|
+| neutral | 72.29 | 77.41 | 56.8 |
+| angry | 62.03 | 55.87 | 15.6 |
+| happy | 56.22 | 60.59 | 18.2 |
+| sad | **47.12** | **34.75** | 9.4 |
+
+**El modelo NO se colapsó a la clase mayoritaria**, que era el riesgo con neutral al
+57 % del train: las cuatro clases están muy por encima del azar (25 %) y `sad`, la
+más escasa, se queda en 47.12 de recall. El resultado es interpretable. `sad` es la
+clase débil, igual que en la literatura de MELD (sadness F1 24–34 en los baselines
+originales).
+
+**OJO CON LA F1 PONDERADA DE 66.98.** Cae dentro del rango del SOTA de 7 clases
+(64–70 WF1) y la tentación de leerlo como «estamos en el estado del arte» es
+inmediata. **No lo es**: nuestra tarea es de 4 clases y hemos quitado justo las tres
+más difíciles y escasas (disgust 361, fear 358, surprise 1,636 en el corpus), que
+son las que hunden la F1 de todo el mundo. Comparar esos dos números es la misma
+clase de error que ya nos costó la tabla comparativa de IEMOCAP. La fila comparable
+sale solo de la condición de 7 clases, y hay que decirlo en el pie de tabla.
+
+**Dos bugs míos corregidos a raíz de esta corrida** (los dos en el camino nuevo de
+`--protocol fixed`, ninguno afecta a resultados anteriores):
+
+1. El aviso `[PARCIAL]` comparaba los folds corridos contra `all_sessions` (3) en
+   vez de contra las sesiones que el protocolo **rota** (1), así que declaraba
+   «1/3 folds, faltan [1, 2]» y aconsejaba `--folds 1 2` — es decir, **entrenar
+   usando train y dev como conjuntos de test**. Habría producido números sin
+   sentido con aspecto de legítimos. Mismo arreglo en la clave `complete` del
+   resumen, que marcaba todo resumen de `fixed` como incompleto para siempre.
+2. Al añadir `sesiones_rotadas` al resumen, la clave cayó primero en
+   `run_ablation_study_loso`, donde esa variable no existe: habría sido un
+   `NameError` en la siguiente corrida LOSO. Detectado con una comprobación de que
+   el símbolo solo aparece dentro de `run_ablation_study_kfold`.
+
+**LA BANDA DE DECISIÓN NO ES ±0.86 pp AQUÍ.** Ese valor es 2σ de una *diferencia
+pareada de medias de 5 folds* en IEMOCAP. Con un split fijo y una sola semilla por
+condición no hay nada pareado: la diferencia 79−80 es la resta de dos estimaciones
+puntuales. Tomando la σ de un fold individual de IEMOCAP (0.68 pp), la σ de esa
+resta es ≈0.96 pp y la banda a 2σ ≈ **±1.9 pp**. Con dos semillas por condición se
+puede estrechar, pero **nunca llega a ±0.86**: esa cifra no se transporta a MELD y
+usarla aquí sería inflar la precisión. Declararlo en el artículo.
+
+### 12.7 EL PAR 79/80 CIERRA LA PREDICCIÓN — y da el eje de tres puntos (12 oct 2026)
+
+Estudio 80, MELD solo audio, 4 clases, semilla 42: **UA 46.06**, WA 55.86,
+F1 ponderada 55.59, F1 macro 44.49. Parada en la época 13, mejor val UA 49.26.
+
+**Delta 79 − 80 = +13.36 pp de UA.** La predicción, escrita en el encabezado del
+config del 80 ANTES de correrlo, era que este delta debía ser **mayor** que el
++6.49 de IEMOCAP. Es más del doble, y unas 7 veces la banda de ±1.9 pp de 12.6.
+
+| métrica | 79 trimodal | 80 solo audio | delta |
+|---|---|---|---|
+| **UA** | 59.41 | 46.06 | **+13.36** |
+| WA | 65.40 | 55.86 | +9.54 |
+| F1 ponderada | 66.98 | 55.59 | +11.39 |
+| F1 macro | 57.16 | 44.49 | +12.67 |
+
+**El eje de tres puntos, con la misma arquitectura y sin tocar un
+hiperparámetro:**
+
+| corpus | el texto es… | delta fusión − solo audio |
+|---|---|---|
+| CREMA-D | nulo por construcción (12 frases fijas) | **−1.19 ± 1.97** (1/5 folds) |
+| IEMOCAP | informativo | **+6.49 ± 2.06** (5/5 folds) |
+| MELD | dominante | **+12.80 ± 1.23** (2 semillas, 20.9 σ) |
+
+Es monótono y es la novedad del artículo: no es «la fusión ayuda», es que el
+aporte de la fusión **escala con cuánto informa el canal léxico**, medido en tres
+corpus que van de texto ortogonal por diseño a texto dominante.
+
+#### La evidencia más fuerte es por clase, no agregada
+
+| clase | 79 recall | 80 recall | delta |
+|---|---|---|---|
+| **happy** | 56.22 | **23.13** | **+33.08** |
+| sad | 47.12 | 37.98 | +9.13 |
+| angry | 62.03 | 53.04 | +8.99 |
+| neutral | 72.29 | 70.06 | +2.23 |
+
+Todo el delta se concentra en `happy`: +33.08 pp de recall, +30.20 de F1. Las
+otras tres clases ganan entre 2 y 9. Y esto **replica de forma independiente el
+número más llamativo de la tabla de Poria et al. 2019**: en su propio baseline,
+`joy` saca F1 **15.74 con solo audio** y **54.31 con solo texto** — una brecha de
+38 puntos, la mayor de su tabla. Nosotros medimos 30.39 → 60.59 en la misma clase,
+con otra arquitectura, otro conjunto de etiquetas y otra métrica. Mismo fenómeno.
+Un revisor puede discutir nuestra interpretación, pero no que el efecto exista:
+está publicado desde 2019 y lo reproducimos sin buscarlo.
+
+Interpretación plausible, y hay que presentarla como tal: la alegría es la clase
+cuya marca acústica se confunde más con el habla neutra en una sitcom —
+precisamente donde la risa grabada del público solapa (12.3 punto 9) — mientras
+que en el texto es trivial. `neutral` casi no gana porque el audio ya la detecta.
+
+#### LA EXPLICACIÓN ALTERNATIVA QUE HAY QUE NOMBRAR, no esconder
+
+El delta grande de MELD admite **dos** lecturas y MELD solo **no puede**
+separarlas:
+
+1. el canal léxico es muy informativo, o
+2. el canal acústico está degradado — YouTube de sitcom, risa grabada, 22.5 % de
+   los clips por debajo de 1.5 s, 6 % con solapamiento de timestamps (12.3).
+
+La literatura apoya la segunda además de la primera: el audio-only de MELD tiene
+techo duro en 38–55 WF1 y DEMUCS lo empeora (arXiv 2509.05634).
+
+**Lo que sí separa las dos lecturas es el par CREMA-D / IEMOCAP**, donde el audio
+es limpio y elicitado en los dos y lo único que cambia de verdad es si el texto
+informa: +0 frente a +6.49. **Ese es el contraste controlado; MELD es el tercer
+punto consistente con él, no la prueba.** El artículo tiene que decirlo en ese
+orden, o el revisor lo dirá por nosotros.
+
+Y hay que declarar que los tres corpus difieren además en espontaneidad,
+dependencia de hablante, balance de clases y protocolo. **«Dosis-respuesta» es una
+interpretación, no una manipulación controlada.** La celda que falta —espontáneo,
+audio limpio de estudio, texto por ASR— es exactamente MSP-IMPROV.
+
+#### MULTI-SEMILLA DEL 79 — y una advertencia que cambia cómo se reporta (12 oct 2026)
+
+Estudio 79 con semilla 123: UA 58.19, WA 69.29, F1 ponderada 69.34, F1 macro 58.39.
+
+| métrica | semilla 42 | semilla 123 | media | rango |
+|---|---|---|---|---|
+| **UA** | 59.41 | 58.19 | **58.80** | 1.22 |
+| F1 macro | 57.16 | 58.39 | 57.77 | 1.23 |
+| F1 ponderada | 66.98 | 69.34 | 68.16 | 2.36 |
+| **WA** | 65.40 | 69.29 | 67.35 | **3.89** |
+
+**1. UA es estable en MELD; WA NO lo es.** σ de UA ≈ 1.22/√2 ≈ **0.86 pp**; σ de WA
+≈ 3.89/√2 ≈ **2.75 pp**, más de tres veces peor. El motivo es mecánico: `neutral`
+es el 56.8 % del test, así que WA está dominada por una sola clase y cualquier
+desplazamiento del umbral de decisión la mueve mucho, mientras UA promedia los
+cuatro recalls y los desplazamientos se cancelan. **Reportar UA y macro-F1; no usar
+WA como cifra principal en MELD.** Coincide con la postura de la propia literatura:
+el paper original de MELD no reporta exactitud.
+
+**2. CORRECCIÓN A MI PROPIA ESTIMACIÓN DE LA BANDA.** En 12.6 estimé σ de una
+corrida única de MELD a partir de la σ de un fold de IEMOCAP (0.68 pp) y di
+±1.9 pp. Medida de verdad sobre MELD, σ de una corrida es **0.86 pp**, así que:
+- diferencia de **una** semilla por condición: σ ≈ 1.2 pp → banda 2σ ≈ **±2.4 pp**
+- diferencia de **dos** semillas por condición: σ ≈ 0.86 pp → banda 2σ ≈ **±1.7 pp**
+
+Usar la cifra medida, no la prestada de IEMOCAP.
+
+**3. EL RECALL POR CLASE NO ES ESTABLE ENTRE SEMILLAS, y esto obliga a matizar lo
+que escribí arriba.** Las dos semillas del 79 se intercambian errores entre clases
+de forma masiva:
+
+| clase | semilla 42 | semilla 123 | media | rango |
+|---|---|---|---|---|
+| neutral | 72.29 | 81.85 | 77.07 | **9.55** |
+| sad | 47.12 | 37.02 | 42.07 | **10.10** |
+| angry | 62.03 | 54.20 | 58.12 | **7.83** |
+| happy | 56.22 | 59.70 | 57.96 | 3.48 |
+
+La semilla 123 desplaza la frontera hacia `neutral` (+9.55 de recall) y lo paga en
+`sad` (−10.10) y `angry` (−7.83). UA apenas se mueve porque se cancelan.
+
+**Consecuencia directa: un valor de recall por clase de UNA sola semilla no puede
+sostener ningún argumento.** El +33.08 pp de `happy` que anoté arriba viene de la
+semilla 42 y hay que recalcularlo con medias: trimodal 57.96 (media de dos
+semillas) frente a audio-only 23.13 (una semilla todavía) da ≈ **+34.8 pp**. Con
+oscilaciones de ±10 pp por semilla en cada lado, una brecha de ~35 pp sigue siendo
+robusta — pero **el número del artículo tiene que ser la media de dos semillas con
+su rango**, y las tablas por clase tienen que llevar el rango, no un valor pelado.
+`sad` con un rango de 10.10 pp es el ejemplo de por qué: cualquier afirmación sobre
+`sad` basada en una corrida es ruido.
+
+#### CERRADO: el par completo con dos semillas por condicion (13 oct 2026)
+
+Estudio 80 con semilla 123: UA 45.94. Con la 42 daba 46.06. **Rango de 0.11 pp.**
+
+| | 79 trimodal | rango | 80 solo audio | rango | **delta** |
+|---|---|---|---|---|---|
+| **UA** | **58.80** | 1.22 | **46.00** | 0.11 | **+12.80** |
+| F1 macro | 57.77 | 1.23 | 43.93 | 1.12 | +13.85 |
+| F1 ponderada | 68.16 | 2.36 | 55.06 | 1.05 | +13.10 |
+
+σ de una corrida: 79 = 0.86 pp, 80 = **0.08 pp**. σ de la media de dos semillas:
+0.61 y 0.06. σ de la diferencia = 0.61 → **banda 2σ = ±1.23 pp**. El delta de
++12.80 pp es **20.9 σ**. No hay ninguna lectura en la que esto sea ruido.
+
+**Observación lateral que merece una frase:** el modelo solo-audio es **diez veces
+más reproducible** que el trimodal (σ 0.08 frente a 0.86). Plausiblemente la fusión
+añade varianza de optimización. Es una observación, no una conclusión: habría que
+medirlo en los tres corpus antes de afirmarlo.
+
+#### LA CAUTELA DE LA MULTI-SEMILLA SE CONFIRMÓ, Y CAMBIA EL HALLAZGO POR CLASE
+
+| clase | 79 trimodal | 80 solo audio | delta | rango de la clase |
+|---|---|---|---|---|
+| **happy** | 57.96 | **20.40** | **+37.56** | 3.48 / 5.47 |
+| neutral | 77.07 | 69.63 | +7.44 | 9.55 / 0.88 |
+| sad | 42.07 | 37.02 | +5.05 | 10.10 / 1.92 |
+| **angry** | 58.12 | 56.96 | **+1.16** | **7.83 / 7.83** |
+
+**El +8.99 pp de `angry` que anoté con la semilla 42 era ruido.** Con dos semillas
+baja a **+1.16 pp**, muy por debajo de su propio rango entre semillas (7.83 pp en
+las dos condiciones). No se puede atribuir al modelo. Esta es exactamente la razón
+por la que se escribió la cautela antes de tener el dato, y conviene decirlo así en
+el artículo: la disciplina de multi-semilla no es decorativa, aquí eliminó un
+hallazgo falso.
+
+**El hallazgo real, ya estable:** en MELD el aporte de la fusión es
+**esencialmente `happy` (+37.56 pp)**, con ganancias modestas en `neutral` y `sad`
+y **ninguna en `angry`**. Lectura plausible, y hay que presentarla como tal: la ira
+tiene una marca acústica fuerte (intensidad, F0) que el audio ya captura, mientras
+que la alegría no la tiene — menos aún en una sitcom donde la risa grabada solapa
+justo en esas utterances. Es coherente con Poria et al. 2019, cuya mayor brecha
+audio-vs-texto también es `joy` (F1 15.74 frente a 54.31).
+
+#### Lo que falta antes de escribir esto
+
+1. **Semilla 123 para 79 y 80.** Con una sola semilla por condición no hay ninguna
+   medida de variabilidad. El delta es ~7× la banda, así que no va a desaparecer,
+   pero la magnitud puede moverse uno o dos puntos y el número del artículo tiene
+   que ser la media de dos semillas, como en IEMOCAP.
+2. La condición de **7 clases** para la fila comparable con la literatura.
+3. No presentar la F1 ponderada de 66.98 como cercana al SOTA (ver 12.6).
+
+### 12.5 Pendiente en MELD
+
+1. ~~Fase audio del script~~ — **hecha el 10/10/2026** sobre los 13,848 clips.
+   Resultados en 12.3 puntos 5, 5b y 5c; informe en `logs/meld_audit.json`.
+2. Extraer audio de los 13,847 clips legibles con `ffmpeg` — downmix a mono
+   (manejando 5.1 **y** estéreo) y resample a 16 kHz —, leyendo el archivo
+   **prefijado** cuando exista. Descartar `train/dia125_utt3`.
+3. ~~Decidir 4 clases vs 7~~ — **decidido**: 4 primero, 7 después (ver 12.2).
+4. ~~`MELDDataset`~~ — **hecho** (ver 12.4.bis). Nota sobre las 169 filas de
+   hablante no individual: **NO se descartan por defecto**, porque descartarlas
+   rompe la comparabilidad con la tabla publicada. Se reporta el conteo y existe
+   `descartar_hablante_grupal` para la variante. Declararlo en el artículo.
+5. Correr 79 y 80 con **dos semillas** (42 y 123, las mismas que IEMOCAP), porque
+   con un solo split no hay σ entre folds. Criterio de decisión: la banda de
+   ±0.86 pp de la sección 7.
+6. Después, la condición de **7 clases** con weighted F1 y macro-F1, para la fila
+   comparable con la literatura. Requiere su propio par de configs.
+7. Medir la risa grabada (12.3 punto 9) si se quiere convertir en contribución.
+
+---
+
+## 13. EL ENCODER DE AUDIO SE CARGÓ ALEATORIO, Y EL CÓDIGO LO OCULTÓ (20 oct 2026)
+
+**Es el segundo fallo silencioso del repositorio, del mismo tipo que el de
+`_find_audio_file`, y la segunda vez que un número plausible salía de un pipeline
+roto.** Hay que leerlo junto con la sección 7: ahí el problema era que una corrida
+no se reproduce; aquí es que una corrida puede ser **íntegramente ficticia** y
+parecer normal.
+
+### Qué pasó
+
+El estudio 85 (RAVDESS trimodal) dio, en su primer fold, **UA 0.2344 — por debajo
+del azar** (0.25 con cuatro clases), con colapso de clase detectado en siete de
+nueve épocas y parada temprana. En el arranque, entre el ruido del log, una línea:
+
+```
+Warning: Could not load audio encoder facebook/wav2vec2-base: Due to a serious
+vulnerability issue in `torch.load` ... we now require users to upgrade torch to
+at least v2.6 ...
+Using default Wav2Vec2 configuration
+```
+
+`transformers` 5.8.0 con `torch` 2.5.1 se niega a leer checkpoints `.bin`
+([CVE-2025-32434](https://nvd.nist.gov/vuln/detail/CVE-2025-32434)) y exige torch
+≥ 2.6. `facebook/wav2vec2-base` tiene **los dos** formatos en caché, pero
+`from_pretrained()` sin argumentos elegía el `.bin` y lanzaba `ValueError`.
+
+### El bug es nuestro, no de transformers
+
+En `src/models/conformer.py` había esto:
+
+```python
+try:
+    self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name)
+except Exception as e:
+    print(f"Warning: Could not load audio encoder {audio_encoder_name}: {e}")
+    print("Using default Wav2Vec2 configuration")
+    config = Wav2Vec2Config()
+    self.audio_encoder = Wav2Vec2Model(config)   # <-- PESOS ALEATORIOS
+```
+
+El `except Exception` se tragaba el error y **sustituía el encoder preentrenado por
+uno inicializado al azar**, avisando con `print()` —no con el logger, así que no
+entra en el fichero de log— y siguiendo a entrenar. Lo mismo en la rama de texto,
+donde además caía a un `bert-base-uncased` sin pesos, que ni es el encoder que pide
+el config.
+
+**Y todo lo demás salía normal.** El resumen decía 263 427 987 parámetros totales y
+87 184 403 entrenables, las cifras exactas de la sección 1. El informe de congelado
+decía `partial: last 6/12 blocks trainable (conv extractor frozen) --
+42,528,768/94,371,712 (45.1%)`. El contrato de pérdida, la acumulación de gradiente
+y el scheduler, todo correcto. Nada delataba que la rama de audio fuera ruido.
+
+### Por qué se detectó, y es pura suerte
+
+**RAVDESS es el único corpus del eje donde el audio es el único canal informativo**:
+dos frases fijas (texto nulo por construcción) y una rama de visión que es un
+log-mel derivado del propio audio. Con el encoder en ruido no queda ninguna señal,
+así que el modelo se fue por debajo del azar y el detector de colapso gritó.
+
+En IEMOCAP el texto informa y en MELD domina: allí la rama de texto —que sí
+cargaba— habría sostenido un número **plausible pero falso**, y no habría salido
+ningún aviso. Si el fallo hubiera aparecido una semana antes, con los estudios 79 y
+80, habríamos escrito el delta de 13.36 pp del par MELD sobre una rama de audio
+aleatoria. **El corpus que montamos como control del eje acabó funcionando como
+detector de un fallo de infraestructura.**
+
+### Los resultados anteriores NO están afectados
+
+Comprobado contra los `final_results.json` guardados:
+
+| estudio | UA guardada |
+|---|---|
+| 77 CREMA-D trimodal | 0.8427 |
+| **78 CREMA-D solo audio** | **0.8485** |
+| 79 MELD trimodal | 0.5941 |
+| 80 MELD solo audio | 0.4606 |
+
+El 78 es **solo audio al 84.85 %**. Con un Wav2Vec2 aleatorio eso es imposible:
+estaría en el azar. El 80, solo audio sobre MELD, da 46.06 UA, también muy por
+encima. **El fallo es nuevo y no retroactivo**, así que el eje de tres puntos y la
+tabla de ablación siguen en pie. Nada que rehacer salvo el 85/86.
+
+### Qué se cambió
+
+1. `use_safetensors=True` en los tres encoders, con reintento sin el argumento para
+   los modelos que solo publican `.bin` (`microsoft/wavlm-base-plus` es uno;
+   `wav2vec2-base`, `wavlm-base`, `wavlm-large` y `hubert-base-ls960` tienen los dos).
+2. **El fallback a pesos aleatorios se eliminó.** `_cargar_encoder_preentrenado()`
+   levanta `RuntimeError` con el diagnóstico y las tres salidas posibles (borrar el
+   `.bin` de la caché, bajar los safetensors a mano, o subir torch a ≥ 2.6 sabiendo
+   que eso cambia el entorno y obliga a rehacer las corridas comparables).
+
+Verificado: `|W_conv0|_fro = 12.8552` con los pesos reales, frente a ~1–2 de una
+inicialización aleatoria. Y la ruta de fallo levanta la excepción en vez de devolver
+ruido.
+
+### La regla que sale de aquí, y vale para el artículo y para el repo
+
+**Un componente que no carga tiene que parar la corrida, no degradarla.** Un
+experimento con el encoder aleatorio no es un experimento peor: es un número
+inventado, y eso es estrictamente peor que un fallo, porque un fallo se ve.
+
+Los dos fallos silenciosos del repositorio comparten la forma exacta: algo se
+rompía, el código lo absorbía sin avisar de verdad, y el resultado seguía siendo
+publicable a la vista. `_find_audio_file` tiró 2 943 de 5 531 utterances durante
+meses; esto habría metido una rama aleatoria en la contribución central. **Conviene
+decir esto en la sección de limitaciones o de reproducibilidad**: no como anécdota,
+sino como la razón de que el repo tenga ahora aserciones de integridad por corpus,
+verificadores por corpus y cero fallbacks silenciosos.
+
+**Y revisar si queda algún `except` del mismo patrón.** Este se encontró de rebote.
+
+
+### 13.1 EL POOLER DEL ViT TAMPOCO TIENE PESOS — pero aquí la conclusión es la contraria
+
+Encontrado de rebote al revisar el arranque del estudio 85 ya arreglado. El informe de
+carga del ViT dice:
+
+```
+[transformers] ViTModel LOAD REPORT from: google/vit-base-patch16-224
+pooler.dense.weight | MISSING
+pooler.dense.bias   | MISSING
+```
+
+Y la rama visual, en `src/ablation_studies/ablation_11_model.py`, **prefiere** esa
+salida:
+
+```python
+vision_outputs = self.vision_encoder(pixel_values=vit_images)
+if hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
+    vision_features = vision_outputs.pooler_output      # <-- esta rama
+else:
+    vision_features = vision_outputs.last_hidden_state[:, 0, :]   # CLS
+```
+
+`google/vit-base-patch16-224` es un checkpoint de **clasificación**: trae `classifier.*`
+y no trae pooler. `ViTModel` añade uno y lo inicializa de cero. Y como el ViT va
+**congelado** (`0/86,389,248 params trainable`), ese `Linear(768,768) + tanh` **nunca se
+entrena**. O sea: la representación visual que llega a la fusión pasa por una proyección
+aleatoria que no aprende nada. Afecta a **todos** los estudios trimodales: 11, 13, 34,
+45, 74, 77, 79, 85.
+
+#### Pero medido, no destruye la señal — y esto es lo que lo distingue del caso del audio
+
+| medida | valor | lectura |
+|---|---|---|
+| rango de `W` | **767 de 768** | la parte lineal no pierde información |
+| sesgo `b` | exactamente **0** | no hay desplazamiento |
+| saturación del tanh | **0.0 %** de unidades con \|pre\| > 2; máx 1.734 | opera en régimen cuasi-lineal |
+| correlación de distancias por pares, CLS vs pooled | **0.9857** | la fusión ve la misma estructura |
+
+Es una **rotación aleatoria casi isométrica** con un reescalado suave, no ruido.
+
+**La diferencia conceptual con el encoder aleatorio de la sección 13 es la que importa, y
+conviene tenerla clara para responder a un revisor:** un *encoder* aleatorio produce
+features que son ruido, así que no hay nada que recuperar aguas abajo. Una *proyección*
+aleatoria de features buenas conserva la información si es de rango completo, y la
+fusión —que sí entrena— puede deshacerla. Lo único que destruiría información sería la
+saturación del tanh, y está al 0 %.
+
+#### DECISIÓN: no se cambia. Y el motivo es de comparabilidad, no de elegancia
+
+Pasarlo a `last_hidden_state[:, 0, :]` alteraría **todos** los números trimodales ya
+medidos —45, 74, 77, 79, 85— y rompería la comparabilidad del eje de tres puntos
+entero, a cambio de recuperar ~1.4 % de estructura geométrica. No compensa.
+
+Si alguna vez se cambia, tiene que ser con una tanda nueva completa, **nunca a mitad del
+eje**. El sitio natural sería junto al par 83/84, que todavía no se ha corrido.
+
+#### Lo que SÍ hay que hacer
+
+1. **Declararlo en los detalles de implementación del artículo.** No como anécdota: la
+   frase correcta es que la representación del ViT se proyecta con una capa lineal
+   **no entrenada** antes de la fusión. Nadie lo asumiría leyendo «ViT congelado».
+2. **Corolario para la sección 8, y refina la interpretación de la σ.** `torch.manual_seed`
+   se fija en `run_ablation.py` (línea 282) ANTES de construir el modelo (línea 316), así
+   que el pooler es **reproducible dentro de una semilla** pero **distinto entre
+   semillas**. Luego parte de la σ de 3 pp entre semillas viene de una **proyección
+   visual distinta cada vez**, no solo del orden de los datos ni de la no determinación
+   del cuDNN. No cambia la banda de ±0.86 pp —se midió empíricamente y ya incluye este
+   efecto—, pero sí la explicación de de dónde sale.
+3. **No "arreglarlo" en silencio.** Si aparece en un diff sin una tanda nueva detrás, es
+   un cambio de resultados disfrazado de limpieza.
+
+#### Por qué esto no entra en la lista de «lo que hay que rehacer»
+
+Porque no es un fallo: es una decisión de implementación que nadie tomó explícitamente y
+que resulta ser casi inocua. Queda documentada para que la próxima persona que lea
+`pooler_output` en el código no piense que viene del checkpoint. El contraste con la
+sección 13 es la lección: **el mismo síntoma —pesos que no están en el checkpoint— puede
+ser catastrófico o irrelevante, y lo que decide es si lo aleatorio está antes o después
+de donde se extrae la información.** Medirlo cuesta diez minutos; suponerlo, un artículo.
+
+### Pendiente
+
+- Relanzar 85 y 86 desde cero (los checkpoints y logs del 20/10 no sirven).
+- Barrer el resto del código buscando `except Exception` que degraden en silencio.
+- Declarar el pooler no entrenado del ViT en los detalles de implementación (13.1).

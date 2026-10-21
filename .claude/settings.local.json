@@ -3,7 +3,9 @@
     "allow": [
       "Bash(awk -F/ '{print $1}')",
       "Bash(grep -E '^[0-9]+$')",
-      "Bash(python -)"
+      "Bash(python -)",
+      "Bash(git fetch *)",
+      "Bash(git rev-list *)"
     ]
   }
 }

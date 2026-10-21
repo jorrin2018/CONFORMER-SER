@@ -112,7 +112,19 @@ MAPA_EMOCION = {
 #: Silencio digital verificado. Ver decision 5 en el docstring.
 DESCARTADOS = {"1076_MTI_SAD_XX"}
 
-PATRON = re.compile(r"^(\d{4})_([A-Z]{3})_([A-Z]{3})_(LO|MD|HI|XX)$")
+#: Codigos de intensidad legitimos. "X" NO es un error de descarga: el repositorio trae
+#: un fichero con la intensidad mal escrita, `1040_ITH_SAD_X.wav` (una X en vez de dos).
+#: Verificado el 02/10/2026 sobre la copia descargada. Explica, de paso, por que el
+#: cargador de TensorFlow Datasets lleva `1040_ITH_SAD_XX` en su lista `bad_files` con el
+#: comentario "file names which do not exist in the github": no existe con ese nombre,
+#: existe con uno menos. TFDS lo DESCARTA; aqui se ACEPTA y se normaliza a XX, porque es
+#: un clip legitimo de SAD del actor 1040 y no hay razon para tirarlo. Con eso las cifras
+#: cuadran exactamente con el contrato (sad 1270, total 4899), que es la confirmacion de
+#: que la lectura correcta es esta. DECLARAR LA DIFERENCIA: nuestro subconjunto tiene un
+#: clip mas que el de TFDS.
+INTENSIDAD_NORMALIZADA = {"LO": "LO", "MD": "MD", "HI": "HI", "XX": "XX", "X": "XX"}
+
+PATRON = re.compile(r"^(\d{4})_([A-Z]{3})_([A-Z]{3})_(LO|MD|HI|XX|X)$")
 
 N_GRUPOS = 5
 #: Semilla del reparto de actores en grupos. FIJA y ajena a config['seed'], para que
@@ -180,13 +192,24 @@ class CremaDDataset(BaseSERDataset):
         data: List[Dict] = []
         self._descartados_silencio = 0
         self._descartados_patron = 0
+        #: Nombres que no casan el patron. Un guardarrail que dice "hay 1 fichero mal"
+        #: sin decir CUAL cuesta una ida y vuelta entera; que los nombre.
+        self._nombres_raros: List[str] = []
+        #: Ficheros cuya intensidad venia mal escrita y se normalizo. Se reporta, no se
+        #: esconde: una rareza del corpus que se acepta tiene que quedar a la vista.
+        self._intensidad_corregida: List[str] = []
         for wav in sorted(audio_dir.glob("*.wav")):
             uid = wav.stem
             m = PATRON.match(uid)
             if not m:
                 self._descartados_patron += 1
+                if len(self._nombres_raros) < 10:
+                    self._nombres_raros.append(wav.name)
                 continue
-            actor, cod_frase, cod_emo, _intensidad = m.groups()
+            actor, cod_frase, cod_emo, intensidad_cruda = m.groups()
+            intensidad = INTENSIDAD_NORMALIZADA[intensidad_cruda]
+            if intensidad != intensidad_cruda:
+                self._intensidad_corregida.append(wav.name)
 
             if uid in DESCARTADOS:
                 self._descartados_silencio += 1
@@ -232,6 +255,9 @@ class CremaDDataset(BaseSERDataset):
               f"actores={len(actores)} frases={len(frases)} "
               f"descartados(silencio={self._descartados_silencio}, "
               f"patron={self._descartados_patron})")
+        if self._intensidad_corregida:
+            print(f"[{self.CORPUS}] intensidad mal escrita en el corpus, normalizada a "
+                  f"XX: {self._intensidad_corregida}")
         print(f"[{self.CORPUS}] por emocion: "
               f"{ {k: por_emocion[k] for k in sorted(por_emocion)} }")
 
@@ -246,8 +272,13 @@ class CremaDDataset(BaseSERDataset):
         if self._descartados_patron:
             raise RuntimeError(
                 f"CREMA-D: {self._descartados_patron} ficheros no casan con el patron "
-                f"ACTOR_FRASE_EMOCION_INTENSIDAD. Los 7,442 del repositorio lo casan "
-                f"sin excepcion, asi que la carpeta tiene algo que no es CREMA-D."
+                f"ACTOR_FRASE_EMOCION_INTENSIDAD. Los 7,442 del repositorio lo casan, "
+                f"con la UNICA excepcion ya contemplada de 1040_ITH_SAD_X (una X en "
+                f"vez de dos). Si aparece otro, la carpeta tiene algo que no es CREMA-D.\n"
+                f"  Nombres: {self._nombres_raros}\n"
+                f"  Si es una copia con sufijo (' (1).wav', '.wav.bak') o un fichero "
+                f"ajeno, sacalo de AudioWAV/. Si es un nombre legitimo del corpus que "
+                f"el patron no contempla, hay que corregir el patron, no el corpus."
             )
         if len(frases) != len(FRASES):
             raise RuntimeError(

@@ -1,0 +1,212 @@
+# Ablation Study 85: el MISMO modelo del 74, sobre RAVDESS, 4 clases.
+#
+# QUE ES ESTE ESTUDIO, Y POR QUE IMPORTA. El eje del articulo dice que el aporte de la
+# fusion escala con cuanto informa el canal lexico. Hoy el extremo "texto nulo" descansa
+# en UN solo corpus: CREMA-D, con -1.19 +- 1.97, 1/5 folds y un IC que incluye el cero.
+# Un punto suelto con el IC cruzando el cero no es una replica. RAVDESS lo convierte en
+# una: si aqui tambien sale cero, el +6.49 de IEMOCAP no se explica por una peculiaridad
+# de CREMA-D.
+#
+# Y RAVDESS ES LA VERSION EXTREMA. CREMA-D tiene doce frases fijas; RAVDESS tiene DOS:
+# "Kids are talking by the door" y "Dogs are sitting by the door". Con dos frases no hay
+# variacion lexica que pueda correlacionar con la emocion ni por accidente. En CREMA-D
+# medimos que la identidad de la frase clasifica al 25.94 %, justo la linea base de clase
+# mayoritaria; en RAVDESS la pregunta ni se plantea.
+#
+#   CREMA-D  12 frases fijas  -> la fusion NO aporta (-1.19 +- 1.97, IC incluye 0)
+#   RAVDESS   2 frases fijas  -> este estudio. Prediccion: cero, y mas limpio.
+#   IEMOCAP  texto informativo-> +6.49 +- 2.06 (5/5 folds)
+#   MELD     texto dominante  -> +12.80 +- 1.23 (2 semillas)
+#
+# LA PREDICCION, escrita ANTES de correrlo: el delta 85-86 debe ser indistinguible de
+# cero, con un IC 95 % que lo incluya. Si saliera POSITIVO y grande, el eje se cae y hay
+# que replantear la explicacion lexica -- eso es lo que hace al experimento util.
+#
+# LO QUE CAMBIA FRENTE AL 74: solo el corpus, su ruta y el reparto. Ni una linea de
+# modelo, de optimizacion ni de entrenamiento. El par comparable es el 86 (solo audio).
+#
+# COMO SE CORRE -- 5 folds por grupo de actores, igual que CREMA-D:
+#   python scripts/run_ablation.py --study 85 --loso
+#
+# ANTES DE LANZAR, OBLIGATORIO. El corpus NO estaba en disco el 20/10/2026 y su contrato
+# esta DERIVADO del diseno publicado, no medido:
+#   1. Descargar Audio_Speech_Actors_01-24.zip de https://zenodo.org/records/1188976
+#      (~215 MB) y descomprimir en D:/DOCTORADO/DATASETS/RAVDESS/.
+#      NO hace falta el zip de canto: no se usa (ver decision 1 del cargador).
+#   2. python scripts/check_ravdess.py --data-path "D:/DOCTORADO/DATASETS/RAVDESS" --fase todo
+#      Si sale en verde, actualizar el docstring de src/data/ravdess_dataset.py de
+#      DERIVADO a VERIFICADO con la fecha. Si sale en rojo, el desajuste puede ser del
+#      contrato y no del corpus: arreglarlo antes de entrenar.
+#
+# LO QUE HAY QUE DECLARAR EN EL ARTICULO (detalle en src/data/ravdess_dataset.py):
+#   1. SOLO HABLA, NO CANTO. RAVDESS trae los dos canales; el canto es otro modo de
+#      produccion, solo cubre seis emociones y al actor 18 le falta entero. Mezclarlos
+#      meteria un confusor dentro del propio corpus.
+#   2. ETIQUETA INTENCIONADA, y aqui no se puede hacer lo de CREMA-D. RAVDESS publica
+#      validacion perceptual agregada, no una etiqueta percibida por clip, asi que no se
+#      puede repetir el analisis del 41.6 % de acuerdo. Es una LIMITACION, no una
+#      ventaja: no presentar la etiqueta como mas fiable.
+#   3. `calm` SE EXCLUYE. Es propia de RAVDESS y no tiene equivalente en los otros tres
+#      corpus; incluirla rompe la comparabilidad del eje.
+#   4. `neutral` ES LA MITAD QUE LAS OTRAS: 96 frente a 192, porque RAVDESS no grabo
+#      neutral en intensidad strong. Desbalance de 14.3 % frente a 28.6 %, mas marcado
+#      que el de CREMA-D. Reportar UA y macro-F1, nunca exactitud sola.
+#   5. EL CORPUS ES PEQUENO: 672 utterances de 4 clases, una octava parte de CREMA-D
+#      (4,899) y de IEMOCAP (5,531). Con cinco folds son ~134 de test por fold, asi que
+#      la sigma entre folds sera mayor por puro tamano de muestra. RAVDESS sirve para
+#      CONFIRMAR UN CERO, no para medir un efecto pequeno. Decirlo en ese orden.
+#   6. LA PARTICION EN GRUPOS DE ACTORES ES NUESTRA. No hay particion canonica de
+#      RAVDESS en la literatura. 24 actores en 5 grupos estratificados por sexo salen
+#      6/6/4/4/4: los folds NO pesan lo mismo. Declararlo.
+#   7. AUDIO A 48 kHz, remuestreado a 16 kHz en el cargador. Los otros corpus ya vienen
+#      a 16 kHz. No cambia nada del modelo, pero es una diferencia de procesado.
+#   8. LICENCIA CC BY-NC-SA 4.0: NO comercial y compartir-igual, mas restrictiva que la
+#      ODbL de CREMA-D. No redistribuir derivados sin la misma licencia.
+
+dataset:
+  corpus: "ravdess"                     # <-- EL UNICO CAMBIO de corpus
+  # Raiz de RAVDESS: la carpeta que contiene Actor_01/ ... Actor_24/, o bien
+  # Audio_Speech_Actors_01-24/Actor_01/... (el cargador acepta las dos).
+  # NO esta en disco a 2026-10-20: ver "ANTES DE LANZAR" en el encabezado.
+  data_path: "D:\\DOCTORADO\\DATASETS\\RAVDESS"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  # "session" aqui significa GRUPO DE ACTORES, no sesion diadica: RAVDESS no las tiene.
+  # Los 24 actores se reparten en 5 grupos disjuntos estratificados por sexo, con
+  # semilla fija (src/data/ravdess_dataset.py). Sigue siendo independiente de hablante.
+  # 24 no es divisible por 5: los grupos salen 6/6/4/4/4, asi que los folds NO pesan lo
+  # mismo. El sexo se deduce del identificador (impar=hombre, par=mujer), que es parte
+  # del diseno publicado: no hace falta CSV de demografia como en CREMA-D.
+  all_sessions: [1, 2, 3, 4, 5]
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: false   # <-- EL UNICO CAMBIO frente al 72
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true   # <-- EL UNICO CAMBIO
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_85"
+  checkpoint_dir: "./checkpoints/ablation_85"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-85"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

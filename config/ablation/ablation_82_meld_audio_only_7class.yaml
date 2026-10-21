@@ -1,0 +1,186 @@
+# Ablation Study 82: SOLO AUDIO sobre MELD, SIETE clases.
+#
+# QUE PREGUNTA RESPONDE. Es el par del 81 y la version comparable con la literatura del
+# contraste 79-80. Dos cosas distintas, no confundirlas:
+#   - 79-80 (4 clases) es el punto del EJE del articulo, comparable con IEMOCAP y
+#     CREMA-D porque las tres condiciones usan el mismo conjunto de etiquetas.
+#   - 81-82 (7 clases) es la fila comparable con la LITERATURA de MELD, que reporta
+#     weighted F1 sobre 7. No entra en el eje: ningun otro corpus del eje tiene estas
+#     siete clases.
+#
+# LO QUE CAMBIA FRENTE AL 80: las siete emociones y num_classes. Nada mas.
+#
+# QUE ESPERAR, y se escribe ANTES de correrlo. El delta 81-82 deberia ser del mismo
+# signo y orden que el +13.36 pp de UA del par 79-80, porque el mecanismo es el mismo:
+# el canal lexico domina en MELD. Pero NO tiene por que coincidir en magnitud, y hay un
+# motivo concreto: las tres clases que se anaden (disgust, fear, surprise) son
+# minoritarias -- 361, 358 y 1,636 ejemplos en total -- y surprise es la unica cuyo
+# sentimiento no es determinista, asi que es donde el texto deberia ayudar menos. Si el
+# delta en 7 clases sale MUCHO menor que en 4, eso es un hallazgo sobre que clases se
+# benefician del texto, no un fallo de la prediccion.
+#
+# COMO SE CORRE -- NO ES LOSO:
+#   python scripts/run_ablation.py --study 82 --protocol fixed --seed 42
+#   python scripts/run_ablation.py --study 82 --protocol fixed --seed 123
+#
+# METRICA: weighted F1 (la de la literatura), mas macro-F1 y F1 por clase. NO exactitud
+# (neutral ~48 % del test) y NO WA para decidir (sigma 2.75 pp entre semillas, 12.7).
+#
+# El resto de advertencias del corpus son las del 81: split dependiente de hablante,
+# 2 utterances descartadas, 131 ficheros equivocados en test, transcripciones de oro,
+# 169 filas de hablante no individual. Ver el encabezado del 81 y REWRITE_NOTES 12.
+#
+# ANTES DE LANZAR:
+#   python scripts/check_meld.py        --data-path "D:/DOCTORADO/DATASETS/MELD" --fase todo
+#   python scripts/extract_meld_audio.py --data-path "D:/DOCTORADO/DATASETS/MELD"
+
+dataset:
+  corpus: "meld"                        # <-- EL UNICO CAMBIO de corpus
+  # Carpeta MELD: la que contiene MELD-RAW/MELD.Raw/ y, tras correr el extractor,
+  # audio_16k/. AJUSTAR A TU RUTA.
+  data_path: "D:\\DOCTORADO\\DATASETS\\MELD"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+    - disgusted
+    - fearful
+    - surprised
+  # "session" = SPLIT OFICIAL, no sesion ni grupo de actores: 1=train, 2=dev, 3=test.
+  # MELD trae un reparto fijo, asi que esto NO rota: hay que correr con
+  # --protocol fixed, que usa estas tres listas tal cual y hace UN solo fold.
+  # El reparto NO es independiente de hablante (los seis protagonistas estan en los
+  # tres splits); ver el encabezado y REWRITE_NOTES seccion 12.
+  all_sessions: [1, 2, 3]
+  train_sessions: [1]
+  val_sessions: [2]
+  test_sessions: [3]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: false   # sin prompt prosodico: es la linea base de audio puro
+
+model:
+  modality: audio
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 7
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: true
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  # Estas tres tasas, hasta ahora, eran letra muerta en este estudio.
+  use_param_groups: true   # <-- EL UNICO CAMBIO frente al 66
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_82"
+  checkpoint_dir: "./checkpoints/ablation_82"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-82"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+

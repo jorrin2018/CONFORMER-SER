@@ -26,12 +26,16 @@ from typing import Dict, Type
 from src.data.base_dataset import BaseSERDataset
 from src.data.cremad_dataset import CremaDDataset
 from src.data.dataset import IEMOCAPDataset
+from src.data.meld_dataset import MELDDataset
+from src.data.ravdess_dataset import RavdessDataset
 
 #: nombre en el YAML -> clase. Las claves se comparan en minusculas.
 CORPORA: Dict[str, Type[BaseSERDataset]] = {
     'iemocap': IEMOCAPDataset,
     'cremad': CremaDDataset,
     'crema-d': CremaDDataset,
+    'meld': MELDDataset,
+    'ravdess': RavdessDataset,
 }
 
 DEFAULT_CORPUS = 'iemocap'

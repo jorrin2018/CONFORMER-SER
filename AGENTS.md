@@ -359,3 +359,73 @@ Consecuencia practica: antes de afirmar que un cambio mejora algo, comprobar que
 efecto es mayor que esa banda, o correr multi-semilla. Y **commitear**: el ultimo commit
 era del 10/09 mientras dos semanas de cambios vivian sin confirmar, asi que no hubo
 forma de preguntarle a git si ademas del ruido habia cambiado el codigo.
+
+**NO correr git en este repo desde el puente de Claude.** Ese shell no puede borrar
+archivos en las carpetas conectadas, asi que git crea sus `.lock` con normalidad pero
+falla al eliminarlos al terminar: cada comando deja un candado que bloquea al
+siguiente, y el repositorio acaba inutilizable desde Windows ("cannot lock ref 'HEAD'")
+hasta que alguien los borra a mano. Paso el 29/09/2026 al hacer los dos commits de la
+auditoria; los commits salieron bien, pero dejaron seis `.lock` y 226 `tmp_obj_*`
+sueltos que tuvo que limpiar Jorge.
+
+Los commits se preparan aqui y se le pasan a Jorge como comando para que los corra el,
+igual que los entrenamientos. Y ojo: **Jorge usa CMD, no PowerShell** — `del /f /q`,
+no `Remove-Item`.
+
+**`save_top_k` del YAML no hace nada.** Aparece en todos los configs de ablacion y NO
+se lee en ningun sitio del codigo (comprobado el 01/10/2026 con un grep en src y
+scripts). Solo se guardan dos checkpoints por fold: `best_model.pt` y `last_model.pt`,
+los dos con el estado del optimizador dentro, **1.75 GB cada uno**. O sea 3.5 GB por
+fold. No recomendar bajar `save_top_k` para ahorrar memoria: es una clave muerta.
+
+**Los fallos de entrenamiento que REVIENTAN en esta maquina son de recursos, no de
+codigo** -- pero ojo, eso vale para los que revientan. El del 20/10/2026 no reventaba:
+entrenaba entero con la rama de audio en ruido (ver la trampa del encoder, mas abajo).
+No usar este diagnostico para descartar un resultado raro que termino bien.
+
+Tres errores distintos en el mismo estudio 74 con el mismo codigo que ya completo cinco
+folds dos veces: `CUDA error: unknown error` (15/09), `bad allocation` -- memoria de HOST, no
+CUDA -- (29/09, tres folds de cinco), y `CUDNN_STATUS_INTERNAL_ERROR` dentro del LSTM de
+la cabeza (01/10). cuDNN reporta la falta de memoria como INTERNAL_ERROR, asi que los
+tres apuntan al mismo sitio.
+
+Lo que NO arregla esto: tocar la retencion de checkpoints (clave muerta) ni el tamano de
+`best_model.pt`, porque los fallos ocurren en el forward y el backward, no al guardar.
+Lo que si: agrandar el archivo de paginacion de Windows, cerrar lo demas, y **un proceso
+por fold** con `--folds N --resume`. Reducir memoria de GPU de verdad exigiria tocar
+batch size o modelo, y eso SI cambia el experimento.
+
+**UN ENCODER QUE NO CARGA TIENE QUE PARAR LA CORRIDA, NO DEGRADARLA.** El 20/10/2026 el
+estudio 85 entreno cinco folds enteros con `facebook/wav2vec2-base` inicializado AL AZAR.
+`transformers` 5.8.0 con `torch` 2.5.1 se niega a leer checkpoints `.bin`
+(CVE-2025-32434) y `from_pretrained()` sin argumentos elegia el `.bin` aunque el
+`model.safetensors` estuviera en la cache. Hasta aqui es un problema de entorno; el bug
+era nuestro: un `except Exception` en `src/models/conformer.py` sustituia el encoder por
+`Wav2Vec2Model(Wav2Vec2Config())` y seguia, avisando con `print()` -- que NO llega al
+fichero de log.
+
+Lo que hace esto peligroso es que **todo lo demas sale normal**: 263,427,987 parametros
+totales y 87,184,403 entrenables (las cifras correctas), el informe de congelado
+correcto, el contrato de perdida correcto. Solo se detecto porque RAVDESS es el unico
+corpus donde el audio es el UNICO canal informativo, asi que el modelo cayo por debajo
+del azar y el detector de colapso grito. En IEMOCAP o MELD la rama de texto habria
+sostenido un numero plausible y falso.
+
+Ya esta arreglado -- `use_safetensors=True` y el fallback eliminado, asi que ahora
+levanta `RuntimeError` --, pero la regla se queda:
+
+- Al revisar un resultado raro, mirar el ARRANQUE del log, no solo las metricas. Si
+  aparece `Using default ... configuration` o `Could not load ... encoder`, la corrida
+  no vale. En las corridas nuevas eso ya no puede pasar sin fallar.
+- `Loading weights: 100%` y un `LOAD REPORT` por encoder es la senal de que cargo de
+  verdad. Tres encoders, tres informes.
+- **No anadir `except` que degraden en silencio.** Un numero inventado es peor que un
+  fallo, porque un fallo se ve. Es el segundo caso de esta forma en el repo: el primero
+  fue `_find_audio_file`, que tiro 2,943 de 5,531 utterances durante meses.
+- Detalle de los encoders en cache: `wav2vec2-base`, `wavlm-base`, `wavlm-large` y
+  `hubert-base-ls960` tienen `.bin` Y safetensors; `wavlm-base-plus` SOLO `.bin`, asi
+  que para ese la carga reintenta sin `use_safetensors`. Si algun dia hace falta, la
+  salida limpia es bajar los safetensors, no subir torch: subir torch cambia el entorno
+  y obliga a rehacer las corridas que se quieran comparar entre si.
+
+Postmortem completo: `docs/REWRITE_NOTES.md` seccion 13.
