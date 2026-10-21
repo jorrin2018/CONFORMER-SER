@@ -3,7 +3,7 @@
 # Wav2Vec2-base + DistilBERT + ViT + Conflict-Aware Cross-Attention
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "F:\\DOCTORADO\\DATASETS\\EMOTION\\IEMOCAP\\archive\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

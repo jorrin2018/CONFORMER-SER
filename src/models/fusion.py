@@ -138,6 +138,7 @@ class CrossAttentionFusion(nn.Module):
         # Projection layers to common dimension
         self.audio_proj = nn.Linear(audio_dim, hidden_dim)
         self.text_proj = nn.Linear(text_dim, hidden_dim)
+        self.proj_dropout = nn.Dropout(dropout * 0.5)
         
         # Cross-attention: audio attends to text and vice versa
         self.audio_to_text_attn = nn.MultiheadAttention(
@@ -199,8 +200,8 @@ class CrossAttentionFusion(nn.Module):
             Logits (batch_size, num_classes)
         """
         # Project to common dimension
-        audio_emb = self.audio_proj(audio_features)
-        text_emb = self.text_proj(text_features)
+        audio_emb = self.proj_dropout(self.audio_proj(audio_features))
+        text_emb = self.proj_dropout(self.text_proj(text_features))
         
         # Add sequence dimension for attention
         audio_seq = audio_emb.unsqueeze(1)  # (B, 1, H)
@@ -1980,3 +1981,121 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         # Classification
         logits = self.classifier(final_fused)
         return logits
+
+
+class BimodalConflictAwareFusion(nn.Module):
+    """Conflict-Aware Cross-Attention Fusion for TWO modalities (audio + text)."""
+
+    def __init__(self, audio_dim, text_dim, hidden_dim, num_classes, num_heads=8, num_layers=3, dropout=0.3, conflict_threshold=0.3, conflict_detection_method="prediction_divergence"):
+        super().__init__()
+        self.audio_dim = audio_dim
+        self.text_dim = text_dim
+        self.hidden_dim = hidden_dim
+        self.conflict_threshold = conflict_threshold
+        self.conflict_detection_method = conflict_detection_method
+
+        self.audio_proj = nn.Linear(audio_dim, hidden_dim)
+        self.text_proj = nn.Linear(text_dim, hidden_dim)
+        self.audio_classifier = nn.Linear(hidden_dim, num_classes)
+        self.text_classifier = nn.Linear(hidden_dim, num_classes)
+        for c in [self.audio_classifier, self.text_classifier]:
+            nn.init.normal_(c.weight, mean=0.0, std=0.01)
+            if c.bias is not None:
+                nn.init.normal_(c.bias, mean=0.0, std=0.01)
+
+        self.cross_attn_layers = nn.ModuleList([
+            nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads, dropout=dropout, batch_first=True)
+            for _ in range(num_layers)
+        ])
+        self.layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(num_layers)])
+
+        self.confidence_net = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 2), nn.Sigmoid(),
+        )
+
+        if conflict_detection_method == "learned":
+            self.conflict_detector_net = nn.Sequential(
+                nn.Linear(hidden_dim * 2, hidden_dim),
+                nn.LayerNorm(hidden_dim), nn.GELU(), nn.Dropout(dropout),
+                nn.Linear(hidden_dim, 1), nn.Sigmoid(),
+            )
+            for m in self.conflict_detector_net.modules():
+                if isinstance(m, nn.Linear):
+                    if m is list(self.conflict_detector_net.modules())[-2]:
+                        nn.init.normal_(m.weight, 0.0, 0.01)
+                        if m.bias is not None:
+                            nn.init.normal_(m.bias, 0.0, 0.01)
+                    else:
+                        nn.init.xavier_uniform_(m.weight, 1.0)
+                        if m.bias is not None:
+                            nn.init.constant_(m.bias, 0.0)
+        else:
+            self.conflict_detector_net = None
+
+        self.fusion = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LayerNorm(hidden_dim), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim), nn.GELU(), nn.Dropout(dropout * 0.8),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2), nn.GELU(), nn.Dropout(dropout * 0.6),
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.GELU(), nn.Dropout(dropout * 0.4),
+            nn.Linear(hidden_dim // 4, num_classes),
+        )
+        self._init_classifier()
+
+    def _init_classifier(self):
+        for m in self.classifier.modules():
+            if isinstance(m, nn.Linear):
+                if m is list(self.classifier.modules())[-1]:
+                    nn.init.normal_(m.weight, 0.0, 0.01)
+                    if m.bias is not None:
+                        nn.init.normal_(m.bias, 0.0, 0.01)
+                else:
+                    nn.init.xavier_uniform_(m.weight, 1.0)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0.0)
+
+    def _detect_conflict_prediction_divergence(self, audio_logits, text_logits):
+        return (audio_logits.argmax(-1) != text_logits.argmax(-1)).float()
+
+    def _detect_conflict_feature_distance(self, audio_emb, text_emb):
+        a = F.normalize(audio_emb, p=2, dim=-1)
+        t = F.normalize(text_emb, p=2, dim=-1)
+        return (1.0 - (a * t).sum(dim=-1).clamp(-1.0, 1.0) > self.conflict_threshold).float()
+
+    def _detect_conflict_learned(self, audio_emb, text_emb):
+        return (self.conflict_detector_net(torch.cat([audio_emb, text_emb], -1)).squeeze(-1) > self.conflict_threshold).float()
+
+    def _detect_conflict(self, audio_emb, text_emb, audio_logits, text_logits):
+        if self.conflict_detection_method == "prediction_divergence":
+            return self._detect_conflict_prediction_divergence(audio_logits, text_logits)
+        elif self.conflict_detection_method == "feature_distance":
+            return self._detect_conflict_feature_distance(audio_emb, text_emb)
+        elif self.conflict_detection_method == "learned":
+            return self._detect_conflict_learned(audio_emb, text_emb)
+        else:
+            raise ValueError(f"Unknown conflict_detection_method: {self.conflict_detection_method}")
+
+    def forward(self, audio_features, text_features):
+        audio_emb = self.audio_proj(audio_features)
+        text_emb = self.text_proj(text_features)
+        audio_logits = self.audio_classifier(audio_emb)
+        text_logits = self.text_classifier(text_emb)
+        conflicts = self._detect_conflict(audio_emb, text_emb, audio_logits, text_logits)
+        tokens = torch.stack([audio_emb, text_emb], dim=1)
+        for attn, norm in zip(self.cross_attn_layers, self.layer_norms):
+            attn_out, _ = attn(tokens, tokens, tokens)
+            tokens = norm(tokens + attn_out)
+        flat = tokens.reshape(tokens.size(0), -1)
+        confidence = self.confidence_net(flat)
+        base = torch.ones_like(confidence) / 2.0
+        cw = confidence / (confidence.sum(dim=-1, keepdim=True) + 1e-8)
+        w = (1 - conflicts.unsqueeze(-1)) * base + conflicts.unsqueeze(-1) * cw
+        fused = self.fusion((tokens * w.unsqueeze(-1)).reshape(tokens.size(0), -1))
+        return self.classifier(fused)

@@ -179,4 +179,21 @@ Ablación controlada respecto al **estudio 45** (*Conflict-Aware Cross-Attention
 | 56 | ablation_56_45_hubert_multiscale | Ablation34Model |
 | 57 | ablation_57_45_emotion2vec_multiscale | Ablation34Model |
 
-*Última actualización: Abril 2026*
+## Ablation 64 (Study 64): WavLM-base + SDPA + BF16 — Optimizado para RTX 3090 Ti
+*   **`ablation_64_wavlm_sdpa_bf16.yaml`**: **Misma receta que Ablation 45** (Conflict-Aware + MultiScaleTemporal + trimodal) pero con **WavLM-base** como encoder de audio, **SDPA attention** (FlashAttention2 dispatch automático), **BF16 mixed precision** (sin NaN, 2x velocidad), **batch_size=8**, y **4 DataLoader workers**. Primera configuración optimizada para RTX 3090 Ti (24GB). Ver `openspec/changes/optimize-rtx3090ti/`.
+
+## Ablation 65 (Study 65): WavLM-base-plus + SDPA + BF16
+*   **`ablation_65_wavlm_plus_sdpa_bf16.yaml`**: **Misma receta que Ablation 64** pero con encoder de audio **microsoft/wavlm-base-plus** (~110M params vs ~95M de WavLM-base). Evalúa si el modelo más grande mejora UA aprovechando los 24GB de VRAM de la RTX 3090 Ti.
+
+## Ablation 66 (Study 66): Bimodal Conflict-Aware — WavLM sin ViT
+*   **`ablation_66_wavlm_bimodal.yaml`**: **Misma receta que Study 64** (WavLM-base + DistilBERT + Conflict-Aware + MultiScaleTemporal + BF16 + SDPA) pero **SIN rama visual ViT**. Usa `BimodalConflictAwareFusion` (version 2-modal de `ConflictAwareCrossAttentionFusion`). Objetivo: determinar si el ViT sobre log-mel es redundante cuando el encoder de audio ya es WavLM. ~176M params (vs 263M del trimodal).
+
+## Mapeo Study → Config (run_ablation.py) — Nuevos estudios
+
+| Study | Config | Modelo |
+|-------|--------|--------|
+| 64 | ablation_64_wavlm_sdpa_bf16 | Ablation34Model |
+| 65 | ablation_65_wavlm_plus_sdpa_bf16 | Ablation34Model |
+| 66 | ablation_66_wavlm_bimodal | Ablation66Model |
+
+*Última actualización: Mayo 2026*

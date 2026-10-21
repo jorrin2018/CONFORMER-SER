@@ -45,6 +45,7 @@ from .ablation_36b_model import Ablation36BModel
 from .ablation_36c_model import Ablation36CModel, DirichletNeutralRegularizedLoss
 from .ablation_38_model import Ablation38Model
 from .ablation_39_model import Ablation39Model
+from .ablation_66_bimodal_conflict import Ablation66Model
 from .utils import create_ablation_optimizer
 
 __all__ = [
@@ -86,6 +87,7 @@ __all__ = [
     'Ablation36CModel',
     'Ablation38Model',
     'Ablation39Model',
+    'Ablation66Model',
     'DirichletNeutralRegularizedLoss',
     'NoiseAwareProsodyCueExtractor',
     'create_ablation_optimizer',

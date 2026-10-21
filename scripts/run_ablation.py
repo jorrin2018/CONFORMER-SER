@@ -17,6 +17,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
 import json
 import math
+import random
 import warnings
 from pathlib import Path
 from tqdm import tqdm
@@ -25,8 +26,52 @@ from datetime import datetime
 import copy
 import gc
 
+# Load .env file for environment variables (HF_TOKEN, PYTORCH_ALLOC_CONF, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# HuggingFace authentication for faster model downloads
+# HF_TOKEN env var is auto-detected by HuggingFace libraries — explicit login only if env not set
+if not os.environ.get("HF_TOKEN"):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Repo root (parent of scripts/). Config paths like config/ablation/*.yaml are relative to here.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_repo_path(relative_or_absolute: str) -> str:
+    """Resolve ablation YAML (or any project file) paths when cwd is ``scripts/`` or repo root.
+
+    Tries ``_REPO_ROOT / path`` first, then ``Path.cwd() / path`` for absolute resolution
+    of existing files. Raises ``FileNotFoundError`` if neither exists.
+    """
+    p = Path(relative_or_absolute)
+    if p.is_absolute():
+        if not p.is_file():
+            raise FileNotFoundError(f"Ablation config not found: {p}")
+        return str(p)
+    from_repo = (_REPO_ROOT / p).resolve()
+    from_cwd = (Path.cwd() / p).resolve()
+    if from_repo.is_file():
+        return str(from_repo)
+    if from_cwd.is_file():
+        return str(from_cwd)
+    raise FileNotFoundError(
+        f"Ablation config not found: {relative_or_absolute!r}\n"
+        f"  Tried: {from_repo}\n"
+        f"  Tried: {from_cwd}"
+    )
+
 
 from src.data import IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn
 from src.ablation_studies import (
@@ -64,6 +109,7 @@ from src.ablation_studies import (
     Ablation36BModel,
     Ablation36CModel,
     Ablation39Model,
+    Ablation66Model,
     create_ablation_optimizer
 )
 from src.ablation_studies.ablation_30_dirichlet import Ablation30Model
@@ -85,12 +131,13 @@ def load_ablation_config(config_path: str, base_config: dict) -> dict:
     training settings for the selected study.
 
     Args:
-        config_path: Path to the ablation YAML config file.
+        config_path: Path to the ablation YAML (relative to repo root or cwd).
         base_config: Base configuration dict (e.g. from load_base_config).
 
     Returns:
         Merged configuration dictionary.
     """
+    config_path = resolve_repo_path(config_path)
     # Load ablation config (force UTF-8 to avoid Windows cp1252 issues)
     with open(config_path, 'r', encoding='utf-8') as f:
         ablation_config = yaml.safe_load(f)
@@ -243,8 +290,17 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     elif study_number == 63:
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
+    elif study_number == 64:
+        # Ablation 64: WavLM-base + SDPA + BF16 (optimized for RTX 3090 Ti)
+        model = Ablation34Model(config)
+    elif study_number == 65:
+        # Ablation 65: WavLM-base-plus + SDPA + BF16 (optimized for RTX 3090 Ti)
+        model = Ablation34Model(config)
+    elif study_number == 66:
+        # Ablation 66: Bimodal Conflict-Aware (WavLM + DistilBERT, no ViT)
+        model = Ablation66Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57, 58-63.")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50, 52-57, 58-66.")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -275,8 +331,20 @@ def _run_ablation_with_config(
     config['seed'] = seed
     torch.manual_seed(seed)
     np.random.seed(seed)
+    random.seed(seed)
     if device == 'cuda':
         torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # Ampere+ optimizations
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision("high")
+        try:
+            os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True,garbage_collection_threshold:0.8"
+        except Exception:
+            pass  # expandable_segments may not be supported on all platforms
     
     # Setup logging
     log_dir = config['logging']['log_dir']
@@ -451,40 +519,48 @@ def _run_ablation_with_config(
             weight_decay = training_config_temp.get('weight_decay', 0.05)
             adam_epsilon = float(training_config_temp.get('adam_epsilon', 1e-8))
             
-            # Create parameter groups
-            audio_params = []
-            text_params = []
-            fusion_params = []
+            # Create parameter groups with selective weight decay
+            _no_decay_kw = ('.bias', 'LayerNorm.weight', 'LayerNorm.bias', 'layer_norm.weight', 'layer_norm.bias')
+            audio_named = []
+            text_named = []
+            fusion_named = []
             
             for name, param in model.named_parameters():
                 if not param.requires_grad:
                     continue
                 if 'audio_encoder' in name:
-                    audio_params.append(param)
+                    audio_named.append((name, param))
                 elif 'text_encoder' in name:
-                    text_params.append(param)
+                    text_named.append((name, param))
                 else:
-                    fusion_params.append(param)
+                    fusion_named.append((name, param))
+            
+            def _split(named_list):
+                d, nd = [], []
+                for n, p in named_list:
+                    if any(k in n for k in _no_decay_kw):
+                        nd.append(p)
+                    else:
+                        d.append(p)
+                return d, nd
+
+            audio_d, audio_nd = _split(audio_named)
+            text_d, text_nd = _split(text_named)
+            fusion_d, fusion_nd = _split(fusion_named)
             
             param_groups = []
-            if audio_params:
-                param_groups.append({
-                    'params': audio_params,
-                    'lr': lr_audio,
-                    'weight_decay': weight_decay
-                })
-            if text_params:
-                param_groups.append({
-                    'params': text_params,
-                    'lr': lr_text,
-                    'weight_decay': weight_decay
-                })
-            if fusion_params:
-                param_groups.append({
-                    'params': fusion_params,
-                    'lr': lr_fusion,
-                    'weight_decay': weight_decay
-                })
+            if audio_d:
+                param_groups.append({'params': audio_d, 'lr': lr_audio, 'weight_decay': weight_decay})
+            if audio_nd:
+                param_groups.append({'params': audio_nd, 'lr': lr_audio, 'weight_decay': 0.0})
+            if text_d:
+                param_groups.append({'params': text_d, 'lr': lr_text, 'weight_decay': weight_decay})
+            if text_nd:
+                param_groups.append({'params': text_nd, 'lr': lr_text, 'weight_decay': 0.0})
+            if fusion_d:
+                param_groups.append({'params': fusion_d, 'lr': lr_fusion, 'weight_decay': weight_decay})
+            if fusion_nd:
+                param_groups.append({'params': fusion_nd, 'lr': lr_fusion, 'weight_decay': 0.0})
             
             # Use 8-bit AdamW
             optimizer = bnb.optim.AdamW8bit(
@@ -1161,13 +1237,16 @@ def main():
         (61, "config/ablation/ablation_61_composite_neutral.yaml"),  # SOTA Combo + CompositeLoss with neutral focus
         (62, "config/ablation/ablation_62_attention_pooling.yaml"),  # SOTA Combo + attention-based audio pooling
         (63, "config/ablation/ablation_63_finetuned_45.yaml"),  # Fine-tuned Study 45
+        (64, "config/ablation/ablation_64_wavlm_sdpa_bf16.yaml"),  # WavLM + SDPA + BF16
+        (65, "config/ablation/ablation_65_wavlm_plus_sdpa_bf16.yaml"),  # WavLM-base-plus + SDPA + BF16
+        (66, "config/ablation/ablation_66_wavlm_bimodal.yaml"),  # Bimodal WavLM+DistilBERT, no ViT
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57, 58-63")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-57, 58-66")
             return
     
     # Run each study

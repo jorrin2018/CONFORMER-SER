@@ -63,15 +63,26 @@ checkpoints/ablation_XX/ablation_XX_YYYYMMDD_HHMMSS/
 # Verify environment and dataset path
 python setup_check.py
 
-# Baseline training
+# Alternative: run setup (installs deps + verify)
+.\setup.bat
+
+# BF16 stability smoke test
+python test_bf16_stability.py --study 45 --epochs 5 --device cuda
+
+# Baseline training (optimized for RTX 3090 Ti with BF16)
 python src\train.py --config config\config.yaml --experiment_name baseline --device cuda
 
-# Ablation training
-python scripts\run_ablation.py --study 34 --device cuda
+# Ablation training (RTX 3090 Ti optimized configs use BF16 + batch=8 + SDPA)
+python scripts\run_ablation.py --study 64 --device cuda   # WavLM + MultiScale + SDPA + BF16
+python scripts\run_ablation.py --study 65 --device cuda   # WavLM-base-plus variant
+python scripts\run_ablation.py --study 60 --device cuda   # SOTA combo
+python scripts\run_ablation.py --study 45 --device cuda   # Best original recipe
 
 # TensorBoard
 .\start_tensorboard.bat
 # or: tensorboard --logdir=logs
+
+# Other .bat shortcuts: train.bat, evaluate.bat, evaluate_ensemble.bat, run_test_only.bat
 
 # Evaluate ablation with explicit YAML
 python src\evaluate_ensemble.py `
@@ -84,6 +95,20 @@ python scripts\run_test_only.py `
   --checkpoint_dir checkpoints\ablation_34\run\ablation_34_20260203_094355 `
   --study 34 --device cuda
 ```
+
+## Hardware-Specific Optimizations (RTX 3090 Ti 24GB)
+
+All configs in `config/ablation/ablation_{45,55-65}*.yaml` now use:
+- `mixed_precision: "bf16"` — BF16 mixed precision (no NaN, no GradScaler)
+- `batch_size: 8`, `gradient_accumulation_steps: 2` — effective batch 16
+- `compute.num_workers: 4` with `windows_keep_dataloader_workers: true`
+- SDPA attention via `attn_implementation="sdpa"` in `from_pretrained()`
+- `torch.set_float32_matmul_precision("high")` for TF32 acceleration
+- `PYTORCH_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.8`
+- `torch.backends.cudnn.benchmark = False` (variable audio lengths)
+- Plateau scheduler (no warmup_ratio with plateau — use cosine for warmup)
+
+Recommended training order for new GPU: study 45 → 64 → 65 → 60 → 61 → 62
 
 ## Important File References
 

@@ -2,7 +2,7 @@
 
 # Dataset
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "F:\\DOCTORADO\\DATASETS\\EMOTION\\IEMOCAP\\archive\\IEMOCAP_full_release"
   # Emotion labels (4 categories - happy merges happy/excited, others removed)
   emotions:
     - angry
@@ -50,50 +50,50 @@ audio:
 text:
   model_name: "distilbert-base-uncased"
   max_length: 128
-  # Text augmentation
-  apply_text_augment: true  # Enabled to combat overfitting
+  # Text augmentation disabled — text encoder is frozen, aug has no effect
+  apply_text_augment: false
   augmentation:
-    apply_random_mask: true
-    apply_random_insert: true  # Enabled for stronger augmentation
-    mask_prob: 0.2  # Increased from 0.15 for stronger augmentation
-    insert_prob: 0.15  # Increased from 0.1 for stronger augmentation
+    apply_random_mask: false
+    apply_random_insert: false
+    mask_prob: 0.0
+    insert_prob: 0.0
 
-# Model architecture (optimized for 8GB GPU)
+# Model architecture (optimized for RTX 3090 Ti 24GB)
 model:
-  audio_encoder: "facebook/wav2vec2-base"  # Smaller model for 8GB GPU
+  audio_encoder: "facebook/wav2vec2-base"
   text_encoder: "distilbert-base-uncased"
-  freeze_audio_encoder: False  # Freeze base, unfreeze last N layers for fine-tuning
-  audio_unfreeze_last_n_layers: 8  # Unfreeze top N transformer layers for fine-tuning
-  freeze_text_encoder: True   # Keep text encoder frozen
-  hidden_dim: 256  # Reduced from 512 to save memory
-  dropout: 0.3  # Increased to combat severe overfitting (was 0.2, still showing overfitting)
-  num_classes: 4  # 4-class setting: angry, happy (happy+excited), sad, neutral
-  fusion_type: "cross_attention"  # Options: concat, cross_attention
+  freeze_audio_encoder: False
+  audio_unfreeze_last_n_layers: 8
+  freeze_text_encoder: True
+  hidden_dim: 256
+  dropout: 0.3
+  num_classes: 4
+  fusion_type: "cross_attention"
 
-# Training (optimized for 8GB GPU)
+# Training (optimized for RTX 3090 Ti 24GB with BF16)
 training:
-  batch_size: 2  # Reduced from 16 for 8GB GPU
+  batch_size: 6
   num_epochs: 100
-  gradient_accumulation_steps: 8  # Simulates effective batch_size=16
-  mixed_precision: false  # DISABLED - main cause of NaN gradients in audio encoder
+  gradient_accumulation_steps: 3  # Effective batch_size=18
+  mixed_precision: "bf16"  # BF16 preferred on Ampere GPUs — no NaN issues, no GradScaler needed
   
   # Optimizer
-  learning_rate_audio: 2.5e-7   # Further reduced to prevent overfitting (was 5.0e-7)
-  learning_rate_text: 2.0e-5    # LR for text encoder (currently frozen)
-  learning_rate_fusion: 5.0e-4  # Reduced to combat overfitting (was 1.0e-3, too high causing volatility)
-  weight_decay: 0.05            # Increased L2 regularization to combat overfitting (was 0.01)
+  learning_rate_audio: 5.0e-7
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 2.0e-4
+  weight_decay: 0.05
   adam_epsilon: 1.0e-8
-  max_grad_norm: 0.5  # Less aggressive gradient clipping (prevents collapse)
+  max_grad_norm: 1.0
   
   # Loss function
   loss:
-    type: "cross_entropy"  # Start with simple cross_entropy, can switch to focal later
-    gamma: 2.0  # Focal loss focusing parameter (not used for cross_entropy)
-    label_smoothing: 0.0  # Disabled to prevent class collapse (was 0.1)
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
   
   # Scheduler
-  scheduler_type: "cosine"  # Cosine with warmup prevents early collapse (better than plateau)
-  warmup_ratio: 0.1  # Warmup prevents early collapse (10% of training steps)
+  scheduler_type: "cosine"  # Cosine with warmup
+  warmup_ratio: 0.1
   # Plateau scheduler parameters (when scheduler_type: "plateau")
   scheduler_metric: "val_loss"  # Metric to monitor: "val_loss" or "val_unweighted_accuracy"
   scheduler_mode: "min"  # "min" for val_loss, "max" for accuracy
@@ -122,11 +122,13 @@ logging:
   use_wandb: false
   project_name: "conformer-iemocap-ser"
 
-# Compute (optimized for 8GB GPU)
+# Compute (optimized for RTX 3090 Ti + i7-12700K)
 compute:
-  num_workers: 2  # Reduced from 4
+  num_workers: 4
   pin_memory: true
-  device: "cuda"  # cuda or cpu
+  persistent_workers: true
+  windows_keep_dataloader_workers: true
+  device: "cuda"
 
 # Reproducibility
 seed: 42

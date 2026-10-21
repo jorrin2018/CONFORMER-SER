@@ -82,7 +82,15 @@ class ConformerMultimodalModel(nn.Module):
                 ) from e
         else:
             try:
-                self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name)
+                audio_kwargs = {}
+                # SDPA auto-dispatches to FlashAttention2 on Ampere+ with BF16 inputs
+                try:
+                    audio_kwargs['attn_implementation'] = 'sdpa'
+                    self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name, **audio_kwargs)
+                except Exception:
+                    # Fallback to eager if model doesn't support SDPA (e.g. WavLM)
+                    audio_kwargs['attn_implementation'] = 'eager'
+                    self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name, **audio_kwargs)
                 audio_hidden_size = self.audio_encoder.config.hidden_size
             except Exception as e:
                 print(f"Warning: Could not load audio encoder {audio_encoder_name}: {e}")
@@ -126,7 +134,10 @@ class ConformerMultimodalModel(nn.Module):
         
         # Text encoder (BERT/DistilBERT)
         try:
-            self.text_encoder = AutoModel.from_pretrained(text_encoder_name)
+            text_kwargs = {}
+            if hasattr(AutoModel, 'from_pretrained'):
+                text_kwargs['attn_implementation'] = 'sdpa'
+            self.text_encoder = AutoModel.from_pretrained(text_encoder_name, **text_kwargs)
             text_hidden_size = self.text_encoder.config.hidden_size
         except Exception as e:
             print(f"Warning: Could not load text encoder {text_encoder_name}: {e}")

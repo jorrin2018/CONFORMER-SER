@@ -134,6 +134,19 @@ class FocalLoss(nn.Module):
             return focal_loss
 
 
+class CrossEntropyLossAutoCast(nn.CrossEntropyLoss):
+    """CrossEntropyLoss that auto-casts weight to match input dtype.
+
+    Fixes RuntimeError when weight (float32) doesn't match logits dtype
+    (bfloat16) under BF16 mixed precision.
+    """
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        if self.weight is not None and inputs.dtype != self.weight.dtype:
+            self.weight = self.weight.to(inputs.dtype)
+        return super().forward(inputs, targets)
+
+
 class LabelSmoothingCrossEntropy(nn.Module):
     """
     Cross Entropy Loss with Label Smoothing.
@@ -305,10 +318,9 @@ def create_loss_function(
     if loss_type == 'cross_entropy':
         if class_weights is not None:
             class_weights = class_weights.to(device)
-        # Apply label smoothing if specified
         if label_smoothing > 0.0:
-            return nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
-        return nn.CrossEntropyLoss(weight=class_weights)
+            return CrossEntropyLossAutoCast(weight=class_weights, label_smoothing=label_smoothing)
+        return CrossEntropyLossAutoCast(weight=class_weights)
     
     elif loss_type == 'focal':
         if alpha is not None:

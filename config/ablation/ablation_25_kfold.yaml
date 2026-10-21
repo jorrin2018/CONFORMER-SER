@@ -3,7 +3,7 @@
 # Modificación: K-Fold Cross Validation (5 Folds, Leave-One-Session-Out)
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "F:\\DOCTORADO\\DATASETS\\EMOTION\\IEMOCAP\\archive\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy

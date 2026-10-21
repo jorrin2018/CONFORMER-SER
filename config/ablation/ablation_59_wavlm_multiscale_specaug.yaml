@@ -3,7 +3,7 @@
 # while adding SpecAugment on the ViT mel branch (like 52).
 
 dataset:
-  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\archive (1)\\IEMOCAP_full_release"
+  data_path: "F:\\DOCTORADO\\DATASETS\\EMOTION\\IEMOCAP\\archive\\IEMOCAP_full_release"
   emotions:
     - angry
     - happy
@@ -88,10 +88,10 @@ model:
     time_mask_param: 40
 
 training:
-  batch_size: 4
+  batch_size: 8
   num_epochs: 100
-  gradient_accumulation_steps: 8
-  mixed_precision: false
+  gradient_accumulation_steps: 2
+  mixed_precision: "bf16"
   learning_rate_audio: 3.0e-5
   learning_rate_text: 2.0e-5
   learning_rate_fusion: 5.0e-6
@@ -102,7 +102,6 @@ training:
     type: "cross_entropy"
     gamma: 2.0
     label_smoothing: 0.1
-  warmup_ratio: 0.1
   scheduler_type: "plateau"
   early_stopping_patience: 8
   save_top_k: 3
@@ -128,8 +127,10 @@ logging:
   project_name: "conformer-iemocap-ser-ablation-59"
 
 compute:
-  num_workers: 2
+  num_workers: 4
   pin_memory: true
+  persistent_workers: true
+  windows_keep_dataloader_workers: true
   device: "cuda"
 
 seed: 42

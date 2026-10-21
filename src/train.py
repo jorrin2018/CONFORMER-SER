@@ -15,10 +15,27 @@ from torch.amp import autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
 import math
+import random
 import warnings
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
+
+# Load .env file for environment variables (HF_TOKEN, PYTORCH_ALLOC_CONF, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# HuggingFace authentication for faster model downloads
+# HF_TOKEN env var is auto-detected by HuggingFace libraries — explicit login only if env not set
+if not os.environ.get("HF_TOKEN"):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -299,75 +316,106 @@ def create_optimizer_and_scheduler(
 ):
     """Create optimizer and learning rate scheduler."""
     
+    _no_decay_keywords = ('.bias', 'LayerNorm.weight', 'LayerNorm.bias', 'layer_norm.weight', 'layer_norm.bias')
+    weight_decay = float(config['training']['weight_decay'])
+
+    def _split_by_decay(param_list):
+        decay_params = []
+        no_decay_params = []
+        for name, param in param_list:
+            if not param.requires_grad:
+                continue
+            if any(nd in name for nd in _no_decay_keywords):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+        return decay_params, no_decay_params
+
     if audio_only:
-        # For audio-only, separate parameters for encoder (if unfrozen) and classifier
-        audio_params = []
-        classifier_params = []
-        
+        audio_named = []
+        classifier_named = []
+
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            
+
             if 'audio_encoder' in name:
-                audio_params.append(param)
+                audio_named.append((name, param))
             else:
-                classifier_params.append(param)
-        
-        # Use different learning rates if both groups exist, otherwise use single LR
-        # Ensure adam_epsilon is a float (YAML may parse 1e-07 as string)
+                classifier_named.append((name, param))
+
         adam_epsilon = float(config['training'].get('adam_epsilon', 1e-8))
-        
-        # Ensure learning rates are floats (YAML may parse 1e-06 as string)
         lr_audio = float(config['training']['learning_rate_audio'])
         lr_classifier = float(config['training'].get('learning_rate_classifier', lr_audio))
-        
-        if audio_params and classifier_params:
-            optimizer = torch.optim.AdamW([
-                {'params': audio_params, 'lr': lr_audio},
-                {'params': classifier_params, 'lr': lr_classifier}
-            ], weight_decay=config['training']['weight_decay'],
-               eps=adam_epsilon)
-        else:
-            # Single group if only one type of parameters is trainable
+
+        audio_decay, audio_no_decay = _split_by_decay(audio_named)
+        cls_decay, cls_no_decay = _split_by_decay(classifier_named)
+
+        param_groups = []
+        if audio_decay:
+            param_groups.append({'params': audio_decay, 'lr': lr_audio, 'weight_decay': weight_decay})
+        if audio_no_decay:
+            param_groups.append({'params': audio_no_decay, 'lr': lr_audio, 'weight_decay': 0.0})
+        if cls_decay:
+            param_groups.append({'params': cls_decay, 'lr': lr_classifier, 'weight_decay': weight_decay})
+        if cls_no_decay:
+            param_groups.append({'params': cls_no_decay, 'lr': lr_classifier, 'weight_decay': 0.0})
+
+        if not param_groups:
             params = [p for p in model.parameters() if p.requires_grad]
-            optimizer = torch.optim.AdamW(
-                [{'params': params}],
-                lr=lr_audio,
-                weight_decay=config['training']['weight_decay'],
-                eps=adam_epsilon
-            )
+            param_groups = [{'params': params, 'lr': lr_audio, 'weight_decay': weight_decay}]
+
+        optimizer = torch.optim.AdamW(param_groups, eps=adam_epsilon)
+
+        if logger is not None:
+            total_decay = sum(len(g['params']) for g in param_groups if g.get('weight_decay', 0) > 0)
+            total_no_decay = sum(len(g['params']) for g in param_groups if g.get('weight_decay', 0) == 0)
+            logger.info(f"Optimizer (audio-only): {total_decay} params with WD, {total_no_decay} params without WD")
     else:
-        # Separate parameters for different learning rates (multimodal)
-        audio_params = []
-        text_params = []
-        fusion_params = []
-        
+        audio_named = []
+        text_named = []
+        fusion_named = []
+
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            
+
             if 'audio_encoder' in name:
-                audio_params.append(param)
+                audio_named.append((name, param))
             elif 'text_encoder' in name:
-                text_params.append(param)
+                text_named.append((name, param))
             else:
-                fusion_params.append(param)
-        
-        # Ensure adam_epsilon is a float (YAML may parse 1e-07 as string)
+                fusion_named.append((name, param))
+
         adam_epsilon = float(config['training'].get('adam_epsilon', 1e-8))
-        
-        # Ensure learning rates are floats (YAML may parse 1e-06 as string)
         lr_audio = float(config['training']['learning_rate_audio'])
         lr_text = float(config['training']['learning_rate_text'])
         lr_fusion = float(config['training']['learning_rate_fusion'])
-        
-        # Create optimizer with parameter groups
-        optimizer = torch.optim.AdamW([
-            {'params': audio_params, 'lr': lr_audio},
-            {'params': text_params, 'lr': lr_text},
-            {'params': fusion_params, 'lr': lr_fusion}
-        ], weight_decay=config['training']['weight_decay'],
-           eps=adam_epsilon)
+
+        audio_decay, audio_no_decay = _split_by_decay(audio_named)
+        text_decay, text_no_decay = _split_by_decay(text_named)
+        fusion_decay, fusion_no_decay = _split_by_decay(fusion_named)
+
+        param_groups = []
+        if audio_decay:
+            param_groups.append({'params': audio_decay, 'lr': lr_audio, 'weight_decay': weight_decay})
+        if audio_no_decay:
+            param_groups.append({'params': audio_no_decay, 'lr': lr_audio, 'weight_decay': 0.0})
+        if text_decay:
+            param_groups.append({'params': text_decay, 'lr': lr_text, 'weight_decay': weight_decay})
+        if text_no_decay:
+            param_groups.append({'params': text_no_decay, 'lr': lr_text, 'weight_decay': 0.0})
+        if fusion_decay:
+            param_groups.append({'params': fusion_decay, 'lr': lr_fusion, 'weight_decay': weight_decay})
+        if fusion_no_decay:
+            param_groups.append({'params': fusion_no_decay, 'lr': lr_fusion, 'weight_decay': 0.0})
+
+        optimizer = torch.optim.AdamW(param_groups, eps=adam_epsilon)
+
+        if logger is not None:
+            total_decay = sum(len(g['params']) for g in param_groups if g.get('weight_decay', 0) > 0)
+            total_no_decay = sum(len(g['params']) for g in param_groups if g.get('weight_decay', 0) == 0)
+            logger.info(f"Optimizer (multimodal): {total_decay} params with WD, {total_no_decay} params without WD")
     
     # Create scheduler
     scheduler_type = config['training'].get('scheduler_type', 'cosine')
@@ -834,8 +882,21 @@ def main():
     # Set random seed
     torch.manual_seed(config['seed'])
     np.random.seed(config['seed'])
+    random.seed(config['seed'])
     if device == 'cuda':
         torch.cuda.manual_seed(config['seed'])
+        torch.cuda.manual_seed_all(config['seed'])
+        # Ampere+ optimizations
+        torch.backends.cudnn.benchmark = False  # Variable audio lengths — disable benchmark
+        torch.backends.cudnn.deterministic = False  # Non-deterministic for performance
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision("high")
+        # Memory fragmentation prevention for variable-length audio
+        try:
+            os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True,garbage_collection_threshold:0.8"
+        except Exception:
+            pass  # expandable_segments may not be supported on all platforms
     
     # Setup logging
     logger = setup_logger('train', config['logging']['log_dir'])
