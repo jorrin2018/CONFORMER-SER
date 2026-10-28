@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–65`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–94`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -92,6 +92,33 @@ is the most common failure in this repo.
   `ablation_phase2_49_wavlm_multiscale_head_FUTURE.yaml` have **no code path** in
   `run_ablation.py`. A YAML file existing does *not* mean the study is runnable.
 - Studies **20, 29, 41** run K-Fold / LOSO cross-validation instead of the standard split.
+
+### Deck-alignment series (87–94) — branch `feature/deck-alignment`
+
+Each study turns on ONE opt-in key on top of study 72 so the code matches what
+`CAMF_presentacion_1.pptx` describes. Without the keys the code is bit-identical to
+`main` (checked: same logits for 72/74, same augmentations, same dataset samples).
+Full table, decisions and commands: [`docs/VARIANTES_PRESENTACION.md`](docs/VARIANTES_PRESENTACION.md).
+
+| Study | Key(s) | vs |
+|-------|--------|----|
+| 87 | `text.speechcue` tokens, `normalize: global` (72 used the natural-language prompt) | 72 |
+| 88 | `text.speechcue.rate_source: forced_alignment` (`.syseg`) | 87 |
+| 89 | `audio.pad_after_preprocessing` + `model.audio_masked_pooling` (48 % of pooled frames were padding) | 72 |
+| 90 | `model.vision_mel_speech_only` | 89 |
+| 91 | `model.vision_feature: cls` (pooler has no checkpoint weights) | 72 |
+| 92 | ViT last 4 blocks + final LN trainable | 91 |
+| 93 | `audio.augmentation.pitch_shift_impl: torchaudio` (`apply_pitch_shift` was a no-op) | 72 |
+| 94 | 88 + 90 + 91 + 93, ViT frozen | 72 |
+
+- Models that need `audio_lengths` set `uses_audio_lengths = True`; every forward call
+  in the training/eval path goes through `src/models/forward_utils.multimodal_forward`,
+  which raises if the batch lacks the lengths. New model call sites must use it.
+- Verify before launching: `python -m pytest tests/test_deck_variants.py -q`,
+  `python scripts/check_deck_variants.py --study N --with-data`,
+  and for 88/94 `scripts/check_forced_alignment.py` then
+  `scripts/fit_speechcue_stats.py --rate-source forced_alignment`.
+- `tests/tiny_encoders.py` gives tiny RANDOM encoders for offline tests only. Never train with them.
 
 ### Recent series (58–63)
 

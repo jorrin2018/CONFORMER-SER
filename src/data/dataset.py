@@ -282,6 +282,12 @@ def collate_fn(batch: List[Dict]) -> Dict:
     text_input_ids = torch.stack([item['text_input_ids'] for item in batch])
     text_attention_mask = torch.stack([item['text_attention_mask'] for item in batch])
     labels = torch.tensor([item['label'] for item in batch], dtype=torch.long)
+    # Muestras reales de cada enunciado antes del relleno a max_length. Solo lo leen
+    # los modelos con model.uses_audio_lengths (pooling enmascarado, log-mel sin
+    # relleno); para los demas es metadato.
+    audio_lengths = torch.tensor(
+        [int(item.get('audio_length', item['audio'].shape[-1])) for item in batch],
+        dtype=torch.long)
     
     # Keep metadata
     emotions = [item['emotion'] for item in batch]
@@ -289,6 +295,7 @@ def collate_fn(batch: List[Dict]) -> Dict:
     
     return {
         'audio': audio,
+        'audio_lengths': audio_lengths,
         'text_input_ids': text_input_ids,
         'text_attention_mask': text_attention_mask,
         'labels': labels,

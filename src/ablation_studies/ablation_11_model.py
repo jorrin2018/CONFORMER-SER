@@ -105,12 +105,24 @@ class Ablation11Model(ConformerMultimodalModel):
         # Rama Visual: ViT sobre Mel-espectrograma
         # -----------------------------
         vit_name = model_config.get("vision_encoder", "google/vit-base-patch16-224")
-        try:
-            self.vision_encoder = ViTModel.from_pretrained(vit_name)
-        except Exception:
-            # Fallback a configuración por defecto si no se puede cargar el checkpoint
-            vit_config = ViTConfig()
-            self.vision_encoder = ViTModel(vit_config)
+        # Antes habia aqui un `except Exception` que, si el checkpoint no cargaba,
+        # seguia con ViTModel(ViTConfig()) -- pesos ALEATORIOS -- sin avisar. Es el
+        # mismo defecto que el 20/10/2026 dejo la rama de audio en ruido (REWRITE_NOTES
+        # sec. 13): un encoder que no carga tiene que parar la corrida.
+        errores = []
+        self.vision_encoder = None
+        for kwargs in ({"use_safetensors": True}, {}):
+            try:
+                self.vision_encoder = ViTModel.from_pretrained(vit_name, **kwargs)
+                break
+            except Exception as e:  # noqa: BLE001
+                errores.append(f"  ViTModel.from_pretrained({vit_name!r}, {kwargs}) -> "
+                               f"{type(e).__name__}: {e}")
+        if self.vision_encoder is None:
+            raise RuntimeError(
+                f"No se pudo cargar el ViT {vit_name!r} con pesos preentrenados.\n"
+                + "\n".join(errores)
+                + "\nNO se sigue con pesos aleatorios.")
 
         vision_hidden_size = self.vision_encoder.config.hidden_size
 
@@ -140,6 +152,38 @@ class Ablation11Model(ConformerMultimodalModel):
         )
 
         self.vit_image_size = int(model_config.get("vision_image_size", 224))
+
+        # -----------------------------
+        # Variantes "como en la presentacion" (todas opt-in; por defecto = historico)
+        # -----------------------------
+        # audio_masked_pooling: promediar SOLO los T' frames reales de Wav2Vec2 (Ec. 1).
+        #   Historico: el audio llega rellenado con ceros a max_length (8 s) y se
+        #   promedia sobre todos los frames, relleno incluido.
+        # vision_mel_speech_only: log-mel, z-score y redimensionado sobre el enunciado
+        #   real (Ec. 2-3). Historico: sobre los 8 s, asi que el z-score lo domina el
+        #   suelo log(1e-9) del relleno y el habla ocupa solo una franja de la imagen.
+        # vision_feature: "cls" usa el [CLS] (tras la LayerNorm final) como dice la
+        #   Ec. 3. "pooler" (historico) usa pooler_output, un Linear+tanh que el
+        #   checkpoint google/vit-base-patch16-224 NO trae: queda aleatorio y, con el
+        #   ViT congelado, nunca se entrena (REWRITE_NOTES 13.1).
+        self._audio_masked_pooling = bool(model_config.get("audio_masked_pooling", False))
+        self._vision_mel_speech_only = bool(model_config.get("vision_mel_speech_only", False))
+        self._vision_feature = str(model_config.get("vision_feature", "pooler"))
+        if self._vision_feature not in ("pooler", "cls"):
+            raise ValueError(f"model.vision_feature={self._vision_feature!r}; use 'pooler' or 'cls'")
+        if self._vision_feature == "cls" and getattr(self.vision_encoder, "pooler", None) is not None:
+            # Con [CLS] el pooler no se usa: congelarlo para que no cuente como
+            # entrenable en los informes de parametros.
+            for p in self.vision_encoder.pooler.parameters():
+                p.requires_grad = False
+        self.uses_audio_lengths = self._audio_masked_pooling or self._vision_mel_speech_only
+        if self.uses_audio_lengths and not audio_config.get("pad_after_preprocessing", False):
+            # Con el orden historico (rellenar y despues aumentar/normalizar) la
+            # speed perturbation estira el contenido dentro del relleno y la longitud
+            # real deja de ser exacta. Se exige el orden nuevo en vez de aproximar.
+            raise ValueError(
+                "model.audio_masked_pooling / model.vision_mel_speech_only requieren "
+                "audio.pad_after_preprocessing: true")
 
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=sample_rate,
@@ -209,17 +253,39 @@ class Ablation11Model(ConformerMultimodalModel):
         if self._weighted_hidden_states:
             self.audio_encoder_layer_logits = build_layer_weights(self.audio_encoder)
 
-    def _waveform_to_vit_image(self, audio: torch.Tensor) -> torch.Tensor:
+    def _audio_frame_mask(self, audio_lengths: torch.Tensor, num_frames: int) -> torch.Tensor:
+        """(B,) muestras reales -> (B, num_frames) mascara float de frames reales."""
+        fn = getattr(self.audio_encoder, "_get_feat_extract_output_lengths", None)
+        if fn is None:
+            raise RuntimeError(
+                f"{type(self.audio_encoder).__name__} no expone "
+                "_get_feat_extract_output_lengths: audio_masked_pooling no soportado")
+        frames = fn(audio_lengths).to(torch.long).clamp(min=1, max=num_frames)
+        idx = torch.arange(num_frames, device=audio_lengths.device).unsqueeze(0)
+        return (idx < frames.unsqueeze(1)).to(torch.float32)
+
+    def _waveform_to_vit_image(self, audio: torch.Tensor,
+                               audio_lengths: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Convierte un batch de waveforms (B, T) en imágenes (B, 3, H, W) para ViT
         a través de Mel-espectrogramas normalizados.
+
+        Con vision_mel_speech_only y audio_lengths, cada log-mel se calcula solo
+        sobre las muestras reales del enunciado (sin el relleno a max_length).
         """
         batch_size = audio.size(0)
         images = []
+        recortar = self._vision_mel_speech_only and audio_lengths is not None
+        if self._vision_mel_speech_only and audio_lengths is None:
+            raise RuntimeError("vision_mel_speech_only necesita audio_lengths en el forward")
+        min_len = int(getattr(self.mel_transform, "win_length", 400) or 400)
 
         for i in range(batch_size):
             # audio[i]: (T,)
             waveform = audio[i]
+            if recortar:
+                n = int(audio_lengths[i].item())
+                waveform = waveform[:max(n, min_len)]
             mel = self.mel_transform(waveform)  # (n_mels, time)
 
             # Log-mel; optional SpecAugment (ViT branch only, training mode)
@@ -262,6 +328,7 @@ class Ablation11Model(ConformerMultimodalModel):
         text_input_ids: torch.Tensor,
         text_attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
+        audio_lengths: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward trimodal:
@@ -276,10 +343,16 @@ class Ablation11Model(ConformerMultimodalModel):
             audio_features = weighted_hidden_states(
                 self.audio_encoder, audio, self.audio_encoder_layer_logits
             )
-            audio_pooled = self.pool_audio_features(audio_features)
         else:
             audio_outputs = self.audio_encoder(audio)
             audio_features = audio_outputs.last_hidden_state  # (B, S, H_a)
+        if self._audio_masked_pooling:
+            if audio_lengths is None:
+                raise RuntimeError("audio_masked_pooling necesita audio_lengths en el forward")
+            frame_mask = self._audio_frame_mask(audio_lengths, audio_features.size(1))
+            audio_pooled = self.pool_audio_features(
+                audio_features, frame_mask.to(audio_features.dtype))  # (B, H_a)
+        else:
             audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
 
         # -----------------------------
@@ -294,11 +367,13 @@ class Ablation11Model(ConformerMultimodalModel):
         # -----------------------------
         # Visión: Mel-espectrograma -> imagen -> ViT
         # -----------------------------
-        vit_images = self._waveform_to_vit_image(audio)  # (B, 3, H, W)
+        vit_images = self._waveform_to_vit_image(audio, audio_lengths)  # (B, 3, H, W)
         vit_images = vit_images.to(audio.device)
 
         vision_outputs = self.vision_encoder(pixel_values=vit_images)
-        if hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
+        if self._vision_feature == "cls":
+            vision_features = vision_outputs.last_hidden_state[:, 0, :]  # [CLS] tras LayerNorm
+        elif hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
             vision_features = vision_outputs.pooler_output  # (B, H_v)
         else:
             vision_features = vision_outputs.last_hidden_state[:, 0, :]  # CLS

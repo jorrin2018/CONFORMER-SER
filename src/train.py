@@ -24,6 +24,7 @@ import numpy as np
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.models.forward_utils import multimodal_forward
 from src.data import (IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn,
                       collate_fn_audio_only, build_dataset, corpus_from_config)
 from src.data.speechcue import (SPEECHCUE_TOKENS, SpeechCueNormalizer,
@@ -165,6 +166,19 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     # Audio augmentation config
     apply_audio_augment = audio_config.get('apply_waveform_augment', False)
     audio_augment_config = audio_config.get('augmentation', {})
+
+    # audio.pad_after_preprocessing (por defecto False = historico): aumentar y
+    # normalizar el enunciado real y rellenar a max_length al final. Con True, la
+    # speed perturbation devuelve su longitud natural en vez de recortar/rellenar.
+    pad_after_preprocessing = bool(audio_config.get('pad_after_preprocessing', False))
+    if pad_after_preprocessing:
+        audio_augment_config = dict(audio_augment_config or {}, preserve_length=False)
+    logger.info(f"Audio: pad_after_preprocessing={pad_after_preprocessing}")
+    if apply_audio_augment and (audio_augment_config or {}).get('apply_pitch_shift'):
+        impl = (audio_augment_config or {}).get('pitch_shift_impl', 'legacy_noop')
+        logger.info(f"Audio augmentation: pitch shift pedido, implementacion={impl}"
+                    + ("  -> NO SE APLICA (comportamiento historico)"
+                       if impl == 'legacy_noop' else ""))
     
     audio_preprocessor = AudioPreprocessor(
         sample_rate=config['dataset']['sample_rate'],
@@ -195,6 +209,16 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
                 f"Run: python scripts/fit_speechcue_stats.py"
             )
         speechcue_stats = SpeechCueStatsCache.load(cache_path)
+        # La fuente de la tasa silabica tiene que ser la que pide el config: un
+        # cache equivocado cambiaria el factor de la ablacion sin que nada falle.
+        want_rate = sc_config.get('rate_source', 'transcript')
+        have_rate = SpeechCueStatsCache.load_meta(cache_path).get('rate_source', 'transcript')
+        if want_rate != have_rate:
+            raise ValueError(
+                f"text.speechcue.rate_source={want_rate!r} pero {cache_path} tiene "
+                f"rate_source={have_rate!r}. Genera el cache con "
+                f"scripts/fit_speechcue_stats.py --rate-source {want_rate}")
+        logger.info(f"SpeechCue: tasa silabica desde {have_rate}")
         speechcue_tokens = SPEECHCUE_TOKENS
         # Per-speaker normalisation of pitch and energy. Without it the pitch
         # token mostly encodes speaker gender and the energy token encodes the
@@ -291,6 +315,7 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         audio_preprocessor=audio_preprocessor,
         text_preprocessor=text_preprocessor,
         max_audio_length=config['audio']['max_length'],
+        pad_after_preprocessing=pad_after_preprocessing,
         training=True,  # Enable random segment sampling for training
         use_prosody_cues=use_prosody_cues,
         speechcue_stats=speechcue_stats,
@@ -366,6 +391,7 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         audio_preprocessor=val_audio_preprocessor,
         text_preprocessor=val_text_preprocessor,
         max_audio_length=config['audio']['max_length'],
+        pad_after_preprocessing=pad_after_preprocessing,
         training=False,  # Use deterministic start for validation
         use_prosody_cues=use_prosody_cues,
         speechcue_stats=speechcue_stats,
@@ -402,6 +428,7 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         audio_preprocessor=test_audio_preprocessor,
         text_preprocessor=test_text_preprocessor,
         max_audio_length=config['audio']['max_length'],
+        pad_after_preprocessing=pad_after_preprocessing,
         training=False,  # Use deterministic start for test
         use_prosody_cues=use_prosody_cues,
         speechcue_stats=speechcue_stats,
@@ -861,8 +888,9 @@ def train_epoch(
                     text_attention_mask = batch['text_attention_mask'].to(
                         device, non_blocking=non_blocking
                     )
-                    outputs = model(
-                        audio, text_input_ids, text_attention_mask, labels
+                    outputs = multimodal_forward(
+                        model, audio, text_input_ids, text_attention_mask, labels,
+                        batch=batch,
                     )
             if 'alphas' in outputs:
                 loss = criterion(outputs['alphas'], labels)
@@ -895,8 +923,9 @@ def train_epoch(
                 text_attention_mask = batch['text_attention_mask'].to(
                     device, non_blocking=non_blocking
                 )
-                outputs = model(
-                    audio, text_input_ids, text_attention_mask, labels
+                outputs = multimodal_forward(
+                    model, audio, text_input_ids, text_attention_mask, labels,
+                    batch=batch,
                 )
             if 'alphas' in outputs:
                 loss = criterion(outputs['alphas'], labels)
@@ -1059,7 +1088,8 @@ def validate(model, val_loader, criterion, device, config, logger, audio_only: b
                 text_attention_mask = batch['text_attention_mask'].to(
                     device, non_blocking=non_blocking
                 )
-                outputs = model(audio, text_input_ids, text_attention_mask, labels)
+                outputs = multimodal_forward(model, audio, text_input_ids,
+                                             text_attention_mask, labels, batch=batch)
             # Handle Dirichlet models that output alphas instead of logits
             if 'alphas' in outputs:
                 loss = criterion(outputs['alphas'], labels)

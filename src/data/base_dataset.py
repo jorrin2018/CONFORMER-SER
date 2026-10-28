@@ -67,7 +67,8 @@ class BaseSERDataset(Dataset):
         speechcue_stats: Optional['SpeechCueStatsCache'] = None,
         only_speakers: Optional[List[str]] = None,
         exclude_speakers: Optional[List[str]] = None,
-        subset_indices: Optional[List[int]] = None
+        subset_indices: Optional[List[int]] = None,
+        pad_after_preprocessing: bool = False,
     ):
         """
         Args:
@@ -93,6 +94,11 @@ class BaseSERDataset(Dataset):
                 sessions, so the standard LOSO protocol can train on four sessions
                 without validation and training ever sharing a speaker. Applied AFTER
                 the integrity check, which always sees the full session.
+            pad_after_preprocessing: False (historico): el audio se rellena con ceros
+                hasta max_audio_length y DESPUES se aumenta y normaliza, asi que el
+                ruido, la normalizacion z y los pasos del modelo ven el relleno. True:
+                aumento y normalizacion sobre el enunciado real, relleno al final.
+                En los dos casos la muestra lleva 'audio_length' (muestras reales).
             strict_integrity: If True, raise if the loaded corpus does not match the
                 IEMOCAP 4-class contract (see _assert_integrity). Disable only for
                 tests or debugging on a subset - never for a run that goes in a paper.
@@ -107,6 +113,7 @@ class BaseSERDataset(Dataset):
         self.training = training
         self.strict_integrity = strict_integrity
         self.subset_indices = subset_indices
+        self.pad_after_preprocessing = bool(pad_after_preprocessing)
         self.only_speakers = set(only_speakers) if only_speakers else None
         self.exclude_speakers = set(exclude_speakers) if exclude_speakers else None
         self.speechcue_tertiles = speechcue_tertiles
@@ -267,18 +274,33 @@ class BaseSERDataset(Dataset):
             waveform = resampler(waveform)
 
         # Ensure fixed length after possible segment loading/resampling
-        waveform_length = waveform.shape[1]
-        if waveform_length > max_samples:
-            waveform = waveform[:, :max_samples]
-        elif waveform_length < max_samples:
-            padding = max_samples - waveform_length
-            waveform = torch.nn.functional.pad(waveform, (0, padding))
-        
-        # Apply audio preprocessing
-        if self.audio_preprocessor is not None:
-            audio_features = self.audio_preprocessor(waveform.squeeze(0))
+        if self.pad_after_preprocessing:
+            # Aumento y normalizacion sobre el enunciado REAL; el relleno a
+            # max_samples va al final y queda en ceros exactos. audio_length es lo
+            # que el modelo usa para promediar solo frames reales y para calcular
+            # el log-mel sin el relleno.
+            real = waveform[:, :max_samples].squeeze(0)
+            if self.audio_preprocessor is not None:
+                real = self.audio_preprocessor(real)
+            real = real[:max_samples]
+            audio_length = int(real.shape[0])
+            if audio_length < max_samples:
+                real = torch.nn.functional.pad(real, (0, max_samples - audio_length))
+            audio_features = real
         else:
-            audio_features = waveform.squeeze(0)
+            waveform_length = waveform.shape[1]
+            audio_length = int(min(waveform_length, max_samples))
+            if waveform_length > max_samples:
+                waveform = waveform[:, :max_samples]
+            elif waveform_length < max_samples:
+                padding = max_samples - waveform_length
+                waveform = torch.nn.functional.pad(waveform, (0, padding))
+
+            # Apply audio preprocessing
+            if self.audio_preprocessor is not None:
+                audio_features = self.audio_preprocessor(waveform.squeeze(0))
+            else:
+                audio_features = waveform.squeeze(0)
         
         # Build (optionally enriched) transcription
         transcription = sample['transcription']
@@ -308,6 +330,7 @@ class BaseSERDataset(Dataset):
         
         return {
             'audio': audio_features,
+            'audio_length': audio_length,
             'text_input_ids': text_features['input_ids'],
             'text_attention_mask': text_features['attention_mask'],
             'label': sample['emotion_idx'],

@@ -71,6 +71,74 @@ def enumerate_utterances(cfg: dict, sessions):
     return items
 
 
+def build_forced_alignment_cache(args, cfg: dict, sessions) -> int:
+    """F0 y energia del cache base + tasa silabica desde la alineacion forzada.
+
+    No recalcula pYIN: lo unico que cambia frente al cache base es la fuente de la
+    tasa (y el tramo hablado que la divide), asi que el estudio que lo use difiere
+    del que usa el cache base en UN solo factor.
+    """
+    import json
+    import math
+    from src.data.speechcue import forced_alignment_path, rate_from_forced_alignment
+
+    base_path = Path(args.base_cache)
+    if not base_path.exists():
+        print(f"  falta el cache base {base_path}; corre primero fit_speechcue_stats.py")
+        return 2
+    base = SpeechCueStatsCache.load(base_path).table
+    base_meta = SpeechCueStatsCache.load_meta(base_path)
+    items = enumerate_utterances(cfg, sessions)
+    table, missing, bad, pares = {}, [], [], []
+    for uid, path, _ in items:
+        st = base.get(uid)
+        if st is None:
+            bad.append((uid, "no esta en el cache base"))
+            continue
+        fa = forced_alignment_path(path)
+        if not fa.exists():
+            missing.append(uid)
+            if args.allow_missing:
+                table[uid] = st
+            continue
+        try:
+            rate, span = rate_from_forced_alignment(fa, fallback_span=st.duration)
+        except ValueError as e:
+            bad.append((uid, str(e)))
+            continue
+        table[uid] = SpeechCueStats(st.pitch, st.energy, rate, st.duration, span)
+        if math.isfinite(st.rate):
+            pares.append((st.rate, rate))
+
+    print(f"\n  utterances           : {len(items)}")
+    print(f"  con .syseg           : {len(items) - len(missing) - len(bad)}")
+    print(f"  sin .syseg           : {len(missing)}")
+    print(f"  errores              : {len(bad)}")
+    for uid, e in bad[:5]:
+        print(f"    {uid}: {e}")
+    if bad or (missing and not args.allow_missing):
+        print("\n  NO se escribe el cache: hay utterances sin tasa de alineacion forzada.")
+        if missing and not args.allow_missing:
+            print(f"  primeros sin .syseg: {missing[:5]}")
+            print("  (revisa dataset.data_path; --allow-missing conserva la tasa base)")
+        return 1
+
+    if pares:
+        import numpy as np
+        a = np.array(pares)
+        r = float(np.corrcoef(a[:, 0], a[:, 1])[0, 1]) if len(a) > 2 else float("nan")
+        print(f"\n  tasa (sil/s)  transcript: mediana {np.median(a[:, 0]):.2f}   "
+              f"forced_alignment: mediana {np.median(a[:, 1]):.2f}   r = {r:.3f}")
+        print("  Si r es bajo (< 0.5) o la mediana sale fuera de 2-5 sil/s, revisar el "
+              "parser de .syseg con scripts/check_forced_alignment.py ANTES de entrenar.")
+
+    meta = dict(base_meta, rate_source="forced_alignment",
+                base_cache=str(base_path), fa_missing=missing)
+    SpeechCueStatsCache.save(table, args.out, meta=meta)
+    print(f"\n  cache guardado en {args.out}  ({len(table)} utterances)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/config.yaml")
@@ -80,10 +148,26 @@ def main() -> int:
     ap.add_argument("--tracker", choices=["pyin", "yin"], default="pyin")
     ap.add_argument("--flush-every", type=int, default=250)
     ap.add_argument("--force", action="store_true", help="recompute everything")
+    ap.add_argument("--rate-source", choices=["transcript", "forced_alignment"],
+                    default="transcript",
+                    help="transcript (historico): silabas por heuristica de vocales / "
+                         "tramo hablado por energia. forced_alignment: silabas y tramo "
+                         "desde los .syseg de IEMOCAP, como dice la presentacion.")
+    ap.add_argument("--base-cache", default="cache/speechcue_stats.json",
+                    help="con --rate-source forced_alignment: cache del que se copian "
+                         "F0 y energia (no se vuelve a correr pYIN)")
+    ap.add_argument("--allow-missing", action="store_true",
+                    help="con forced_alignment: si falta un .syseg, conservar la tasa "
+                         "del cache base y registrarlo en meta.fa_missing (por defecto, "
+                         "falla)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config, encoding="utf-8"))
     sessions = [int(x) for x in args.sessions.split(",")]
+    if args.rate_source == "forced_alignment":
+        if args.out == "cache/speechcue_stats.json":
+            args.out = "cache/speechcue_stats_fa.json"
+        return build_forced_alignment_cache(args, cfg, sessions)
     out = Path(args.out)
 
     table: dict[str, SpeechCueStats] = {}

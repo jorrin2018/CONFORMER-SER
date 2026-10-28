@@ -45,7 +45,19 @@ class AudioAugmentation(nn.Module):
         # Pitch shift
         pitch_prob: float = 0.2,
         pitch_range: Tuple[int, int] = (-2, 2),  # semitones
-        
+        # Implementacion del pitch shift. "legacy_noop" es lo que ha hecho el repo
+        # siempre: apply_pitch_shift: true NO aplicaba nada (forward() nunca llamaba a
+        # _apply_pitch_shift, y esa funcion remuestrea y deshace el remuestreo, o sea
+        # la identidad). Se conserva como valor por defecto para que las corridas ya
+        # hechas sigan siendo reproducibles. "torchaudio" aplica un pitch shift real
+        # (vocoder de fase + remuestreo, misma duracion), que es lo que describe la
+        # presentacion (+-2 semitonos, p = 0.2).
+        pitch_shift_impl: str = "legacy_noop",
+        # True (por defecto, historico): speed perturbation recorta o rellena con ceros
+        # hasta la longitud de entrada. False: devuelve la longitud natural (len/factor);
+        # lo usa audio.pad_after_preprocessing, donde el relleno a 8 s viene DESPUES.
+        preserve_length: bool = True,
+
         sample_rate: int = 16000
     ):
         super().__init__()
@@ -70,7 +82,19 @@ class AudioAugmentation(nn.Module):
         self.speed_range = speed_range
         self.pitch_range = pitch_range
         self.sample_rate = sample_rate
-        
+        if pitch_shift_impl not in ("legacy_noop", "torchaudio"):
+            raise ValueError(
+                f"pitch_shift_impl={pitch_shift_impl!r}; use 'legacy_noop' or 'torchaudio'")
+        self.pitch_shift_impl = pitch_shift_impl
+        self.preserve_length = bool(preserve_length)
+        if apply_pitch_shift and pitch_shift_impl == "legacy_noop":
+            import warnings
+            warnings.warn(
+                "apply_pitch_shift: true con pitch_shift_impl='legacy_noop': el pitch "
+                "shift NO se aplica (comportamiento historico). Para aplicarlo de verdad: "
+                "audio.augmentation.pitch_shift_impl: torchaudio",
+                UserWarning, stacklevel=2)
+
         # Initialize pitch shift effect (optional, requires torchaudio >= 0.9.0)
         self.pitch_shift = None
         if apply_pitch_shift:
@@ -115,7 +139,14 @@ class AudioAugmentation(nn.Module):
         #    Apply before noise to maintain signal characteristics
         if self.apply_speed_perturb and random.random() < self.speed_prob:
             aug_waveform = self._apply_speed_perturbation(aug_waveform)
-        
+
+        # 2b. Pitch shift real (solo con pitch_shift_impl='torchaudio'). Con
+        #     'legacy_noop' no se consume ningun numero aleatorio aqui, asi que la
+        #     secuencia de aumentos de las corridas antiguas no cambia.
+        if (self.apply_pitch_shift and self.pitch_shift_impl == "torchaudio"
+                and random.random() < self.pitch_prob):
+            aug_waveform = self._apply_pitch_shift_torchaudio(aug_waveform)
+
         # 3. Gaussian Noise (adds realism, applied last)
         if self.apply_noise and random.random() < self.noise_prob:
             aug_waveform = self._add_gaussian_noise(aug_waveform)
@@ -201,6 +232,9 @@ class AudioAugmentation(nn.Module):
             waveform[indices_ceil] * indices_frac
         )
         
+        if not self.preserve_length:
+            return aug_waveform
+
         # Truncate or pad to original length
         if len(aug_waveform) > original_length:
             aug_waveform = aug_waveform[:original_length]
@@ -210,8 +244,51 @@ class AudioAugmentation(nn.Module):
         
         return aug_waveform
     
+    def _apply_pitch_shift_torchaudio(self, waveform: torch.Tensor) -> torch.Tensor:
+        """Pitch shift real de +-pitch_range semitonos, misma duracion.
+
+        Time-stretch con vocoder de fase seguido de remuestreo. Se elige un numero ENTERO de semitonos distinto de cero (con 0
+        seria la identidad y la probabilidad efectiva quedaria por debajo de
+        pitch_prob). Si falla, revienta: un aumento que no se aplica en silencio es
+        justo el defecto que esta opcion corrige.
+        """
+        import math
+        from fractions import Fraction
+        import torchaudio.functional as AF
+        lo, hi = int(self.pitch_range[0]), int(self.pitch_range[1])
+        choices = [s for s in range(lo, hi + 1) if s != 0]
+        if not choices or waveform.numel() < 1024:
+            return waveform
+        n_steps = random.choice(choices)
+        # Mismo algoritmo que torchaudio.functional.pitch_shift (vocoder de fase +
+        # remuestreo), pero remuestreando con una razon racional de enteros pequenos.
+        # torchaudio remuestrea de int(sr/rate) a sr (p. ej. 15101 -> 16000): mcd
+        # minimo, nucleo enorme, ~6.5 s por enunciado de 8 s en CPU. Con la razon
+        # aproximada (error < 0.01 semitonos) son milisegundos.
+        n = waveform.shape[-1]
+        n_fft, hop = 512, 128
+        rate = 2.0 ** (-n_steps / 12.0)
+        window = torch.hann_window(n_fft, device=waveform.device, dtype=waveform.dtype)
+        spec = torch.stft(waveform, n_fft, hop, window=window, return_complex=True)
+        phase_advance = torch.linspace(0, math.pi * hop, n_fft // 2 + 1,
+                                       device=waveform.device, dtype=waveform.dtype)[..., None]
+        stretched = AF.phase_vocoder(spec, rate, phase_advance)
+        y = torch.istft(stretched, n_fft, hop, window=window,
+                        length=int(round(n / rate)))
+        frac = Fraction(rate).limit_denominator(64)
+        shifted = AF.resample(y, orig_freq=frac.denominator, new_freq=frac.numerator)
+        if shifted.shape[-1] > n:
+            shifted = shifted[..., :n]
+        elif shifted.shape[-1] < n:
+            shifted = torch.nn.functional.pad(shifted, (0, n - shifted.shape[-1]))
+        return shifted
+
     def _apply_pitch_shift(self, waveform: torch.Tensor) -> torch.Tensor:
-        """Apply pitch shift using time-stretch and resampling."""
+        """LEGACY, no se usa: remuestrea y deshace el remuestreo, es la identidad.
+
+        Se conserva para no cambiar nada de lo que importe este modulo. El pitch shift
+        real es _apply_pitch_shift_torchaudio (pitch_shift_impl='torchaudio').
+        """
         try:
             import torchaudio
             n_steps = random.randint(*self.pitch_range)

@@ -207,4 +207,18 @@ falla con `Invalid study number`:
 *   **62** (`ablation_62_attention_pooling`): combo SOTA + pooling de audio basado en atención.
 *   **63** (`ablation_63_finetuned_45`): ajuste fino del estudio 45 (menor dropout, menor label smoothing).
 
-*Última actualización: septiembre 2026*
+### Serie 87-94 — alinear el código con la presentación
+
+Base: estudio 72. Cada estudio activa una clave opt-in; detalle y comandos en
+[`docs/VARIANTES_PRESENTACION.md`](../../docs/VARIANTES_PRESENTACION.md).
+
+*   **87** (`ablation_87_speechcue_tokens_global`): SpeechCue de 9 tokens con terciles globales en vez del prompt en texto libre del 72.
+*   **88** (`ablation_88_speechcue_forced_alignment`): el 87 con la tasa silábica de la alineación forzada (`.syseg`).
+*   **89** (`ablation_89_masked_audio_pooling`): promedio de Wav2Vec2 solo sobre frames reales; aumento y normalización antes del relleno.
+*   **90** (`ablation_90_mel_speech_only`): el 89 con el log-mel del ViT calculado sobre el enunciado real.
+*   **91** (`ablation_91_vit_cls_token`): [CLS] del ViT en vez del pooler sin pesos.
+*   **92** (`ablation_92_vit_partial_finetune`): el 91 con los bloques 9-12 del ViT afinados.
+*   **93** (`ablation_93_real_pitch_shift`): pitch shift real (±2 semitonos).
+*   **94** (`ablation_94_camf_as_presented`): 88 + 90 + 91 + 93, ViT congelado.
+
+*Última actualización: octubre 2026*

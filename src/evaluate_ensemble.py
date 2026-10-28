@@ -21,6 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.data import (IEMOCAPDataset, AudioPreprocessor, TextPreprocessor, collate_fn,
                       build_dataset, corpus_from_config)
 from scripts.run_ablation import create_ablation_model, load_ablation_config
+from src.models.forward_utils import multimodal_forward
 from src.ablation_studies import load_base_config
 from src.utils.metrics import EmotionMetrics
 from src.utils.logger import setup_logger
@@ -137,6 +138,7 @@ def create_dataloader(config: dict, split: str):
         audio_preprocessor=audio_preprocessor,
         text_preprocessor=text_preprocessor,
         max_audio_length=config['audio'].get('max_length', 8.0),
+        pad_after_preprocessing=bool(config['audio'].get('pad_after_preprocessing', False)),
         training=False,  # No augmentation during evaluation
         use_prosody_cues=config['text'].get('use_prosody_cues', False)
     )
@@ -181,7 +183,8 @@ def get_predictions_and_logits(
             text_attention_mask = batch['text_attention_mask'].to(device)
             
             # Forward pass
-            outputs = model(audio, text_input_ids, text_attention_mask)
+            outputs = multimodal_forward(model, audio, text_input_ids,
+                                         text_attention_mask, batch=batch)
             
             # Get predictions and logits
             predictions = outputs['predictions']

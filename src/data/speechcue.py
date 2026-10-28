@@ -126,6 +126,84 @@ def count_syllables(transcript: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Syllable rate from IEMOCAP's forced alignment (.syseg)
+# ---------------------------------------------------------------------------
+# The deck (Fig. 4 / notes of slide 16) says the syllable rate comes from the
+# syllable-level forced alignment that IEMOCAP ships, not from a transcript
+# heuristic. IEMOCAP_full_release/SessionN/sentences/ForcedAlignment/<dialog>/
+# <utt>.syseg has one row per aligned unit:
+#
+#      SFrm  EFrm    SegAScr Syllable
+#         0    17    -706853 <s>
+#        18    35    -232434 ...
+#      Total score: ...
+#
+# Frames are 10 ms. Rows whose first two fields are not integers (header, total
+# score) are skipped. Silence, sentence markers and noise fillers (<s>, </s>,
+# <sil>, ++LAUGHTER++, [BREATHING], ...) are not syllables. The speech span runs
+# from the first to the last syllable, so it keeps the inner pauses -- the same
+# definition as the transcript path (leading/trailing silence trimmed, pauses kept).
+FA_FRAME_SHIFT = 0.01
+_FA_SILENCE = {"<s>", "</s>", "<sil>", "sil", "sp", "#"}
+
+
+def is_fa_silence(label: str) -> bool:
+    lab = (label or "").strip().lower()
+    return (not lab or lab in _FA_SILENCE or lab.startswith("++")
+            or lab.startswith("<") or lab.startswith("["))
+
+
+def forced_alignment_path(audio_path, ext: str = ".syseg") -> Path:
+    """.../SessionN/sentences/wav/<dialog>/<utt>.wav -> .../ForcedAlignment/<dialog>/<utt>.syseg"""
+    p = Path(audio_path)
+    parts = list(p.parts)
+    try:
+        i = len(parts) - 1 - parts[::-1].index("wav")
+    except ValueError as e:
+        raise ValueError(f"no 'wav' directory in {audio_path}") from e
+    parts[i] = "ForcedAlignment"
+    return Path(*parts).with_suffix(ext)
+
+
+def read_forced_alignment(path, frame_shift: float = FA_FRAME_SHIFT) -> Tuple[int, float]:
+    """(number of syllables, speech span in seconds) from a .syseg file.
+
+    Raises ValueError if no aligned row can be parsed: an unknown format must stop
+    the cache build, never turn into rate = 0 for every utterance.
+    """
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        tok = line.split()
+        if len(tok) < 4:
+            continue
+        try:
+            sf, ef = int(tok[0]), int(tok[1])
+        except ValueError:
+            continue
+        rows.append((sf, ef, " ".join(tok[3:])))
+    if not rows:
+        raise ValueError(f"{path}: no aligned rows parsed (unknown .syseg format?)")
+    syl = [(sf, ef) for sf, ef, lab in rows if not is_fa_silence(lab)]
+    if not syl:
+        return 0, 0.0
+    span = (max(e for _, e in syl) - min(s for s, _ in syl) + 1) * frame_shift
+    return len(syl), float(span)
+
+
+def rate_from_forced_alignment(path, min_span: float = 0.30,
+                               fallback_span: Optional[float] = None) -> Tuple[float, float]:
+    """(syllables/s, span) using the aligned speech span as denominator.
+
+    Spans shorter than `min_span` (one-word backchannels) fall back to
+    `fallback_span` when given -- the same rule compute_stats() applies.
+    """
+    n, span = read_forced_alignment(path)
+    if span < min_span and fallback_span:
+        span = float(fallback_span)
+    return (float(n / span) if n > 0 and span > 0 else 0.0), span
+
+
+# ---------------------------------------------------------------------------
 # Statistic extraction
 # ---------------------------------------------------------------------------
 def compute_stats(
@@ -461,6 +539,11 @@ class SpeechCueStatsCache:
         rows = raw["stats"] if isinstance(raw, dict) and "stats" in raw else raw
         # Older caches stored only (pitch, energy, rate).
         return cls({u: SpeechCueStats(*v) for u, v in rows.items()})
+
+    @staticmethod
+    def load_meta(path) -> dict:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        return (raw.get("meta") or {}) if isinstance(raw, dict) else {}
 
     @classmethod
     def save(cls, table: Dict[str, SpeechCueStats], path, meta: Optional[dict] = None) -> None:

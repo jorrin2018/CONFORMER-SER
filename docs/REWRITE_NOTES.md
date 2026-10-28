@@ -2866,3 +2866,27 @@ de donde se extrae la información.** Medirlo cuesta diez minutos; suponerlo, un
 - Relanzar 85 y 86 desde cero (los checkpoints y logs del 20/10 no sirven).
 - Barrer el resto del código buscando `except Exception` que degraden en silencio.
 - Declarar el pooler no entrenado del ViT en los detalles de implementación (13.1).
+
+---
+
+## 14. LA PRESENTACIÓN Y EL CÓDIGO NO DESCRIBEN EL MISMO MODELO (28 oct 2026)
+
+Al revisar `CAMF_presentacion_1.pptx` contra el código del estudio 72 salieron siete
+diferencias de implementación. Las más gordas:
+
+- **El 72 no usa SpeechCue.** `use_prosody_cues: true` es el prompt en texto libre
+  (`ProsodyCueExtractor`); los nueve tokens de la Ec. 5 solo estaban en el 64. Todo lo
+  que la presentación atribuye a SpeechCue (H2) se midió con otro módulo.
+- **El 48.2 % de los frames que se promedian en la rama de audio es relleno** (duración
+  media 4.55 s en una ventana de 8 s, medido sobre la caché). Y el log-mel del ViT se
+  normaliza con ese relleno dentro.
+- **El pitch shift que declara el config nunca se aplicó** (ya anotado en AGENTS.md;
+  ahora tiene implementación real opt-in).
+
+Ninguna se arregló cambiando el comportamiento por defecto: son claves opt-in con un
+estudio de un solo factor cada una (87-94, base 72). Tabla completa, lo que hay que
+corregir en la presentación y comandos: `docs/VARIANTES_PRESENTACION.md`.
+
+De paso se eliminó otro `except Exception` que degradaba en silencio: si el ViT no
+cargaba, `Ablation11Model` seguía con un ViT aleatorio (punto pendiente de la sección 13).
+

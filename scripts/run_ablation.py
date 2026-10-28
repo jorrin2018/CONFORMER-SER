@@ -205,9 +205,12 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Lineas base unimodales con el mismo regimen que el 45.
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
-    elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85):
+    elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
+                          87, 88, 89, 90, 91, 92, 93, 94):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
+        # 87-94: el 72 con las variantes que alinean el codigo con la presentacion
+        #        (docs/VARIANTES_PRESENTACION.md).
         model = Ablation34Model(config)
     elif study_number == 47:
         # Ablation 47: Conflict-Aware + SupCon pre-fusión (2 views)
@@ -249,7 +252,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-86 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-94 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1600,7 +1603,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-86; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-94; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1731,13 +1734,22 @@ def main():
         (84, "config/ablation/ablation_84_iemocap_audio_only_7class.yaml"),  # el 71 a 7 clases: el par solo-audio del 83
         (85, "config/ablation/ablation_85_ravdess_trimodal.yaml"),  # el modelo del 74 sobre RAVDESS: replica del extremo texto-nulo (2 frases fijas)
         (86, "config/ablation/ablation_86_ravdess_audio_only.yaml"),  # solo audio sobre RAVDESS: el par del 85
+        # Serie 87-94: variantes que alinean el codigo con la presentacion. Base: 72.
+        (87, "config/ablation/ablation_87_speechcue_tokens_global.yaml"),  # 72 con SpeechCue de 9 tokens (terciles globales) en vez del prompt en texto
+        (88, "config/ablation/ablation_88_speechcue_forced_alignment.yaml"),  # 87 con la tasa silabica de la alineacion forzada (.syseg)
+        (89, "config/ablation/ablation_89_masked_audio_pooling.yaml"),  # 72 promediando Wav2Vec2 solo sobre frames reales (sin el relleno a 8 s)
+        (90, "config/ablation/ablation_90_mel_speech_only.yaml"),  # 89 con el log-mel del ViT calculado sobre el enunciado real
+        (91, "config/ablation/ablation_91_vit_cls_token.yaml"),  # 72 con el [CLS] del ViT en vez del pooler sin pesos
+        (92, "config/ablation/ablation_92_vit_partial_finetune.yaml"),  # 91 con los bloques 9-12 del ViT afinados
+        (93, "config/ablation/ablation_93_real_pitch_shift.yaml"),  # 72 con pitch shift real (el historico no aplica nada)
+        (94, "config/ablation/ablation_94_camf_as_presented.yaml"),  # 88+90+91+93: CAMF como lo describe la presentacion (ViT congelado)
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-86 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-94 (there is no study 51)")
             return
     
     # Run each study
