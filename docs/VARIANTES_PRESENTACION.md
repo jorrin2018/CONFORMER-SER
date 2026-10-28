@@ -41,6 +41,24 @@ Comparación de cada fila, **pareada por fold** y con el mismo protocolo:
 Banda de ruido de re-ejecución: **±0.86 pp** (REWRITE_NOTES sec. 7). Una diferencia
 pareada menor no es atribuible al cambio.
 
+### Lo que se midió ya sobre IEMOCAP (28/10/2026, sin GPU)
+
+Con los `.syseg` de `D:\DOCTORADO\DATASETS\IEMOCAP` y `cache\speechcue_stats.json`:
+
+- **Formato real del `.syseg`**: tres columnas (`SFrm EFrm Syllable`, fonemas unidos por
+  `_`), sin puntuación ni filas de silencio. El parser lo lee y también acepta el formato
+  de cuatro columnas del `.wdseg`.
+- De las 5,531 utterances: **5,473** con `.syseg`; **26** con `.syseg` vacío pero palabra
+  alineada en el `.wdseg` («Hmm.», «Mmhmm.», «Yes.»); **31** sin sílabas («[BREATHING]»,
+  «[LAUGHTER]»: tasa 0, igual que en la ruta por transcripción); **1** sin fichero
+  (`Ses03M_impro03_M001`: tasa NaN → `[R_MID]`).
+- **El número de sílabas casi no cambia**: r = 0.998 entre la heurística y la alineación,
+  razón mediana 1.000. **Lo que cambia es el denominador**: tramo alineado de 2.29 s de
+  mediana frente a 3.52 s del recorte por energía (el recorte con `top_db=35` deja ~1.2 s
+  de silencio). La tasa pasa de 2.97 a **4.42 sílabas/s** de mediana y las dos tasas
+  correlacionan solo **r = 0.58**: el token `[R_x]` cambia de verdad, así que el 88 mide
+  algo.
+
 ### Decisiones tomadas al implementar (revisables)
 
 - **94 deja el ViT congelado.** La presentación se contradice: Fig. 2, notas de la
@@ -112,12 +130,12 @@ python scripts\fit_speechcue_stats.py --rate-source forced_alignment
 for %s in (87 88 89 90 91 92 93 94) do python scripts\check_deck_variants.py --study %s --with-data
 ```
 
-- `check_forced_alignment.py` contrasta el parser de `.syseg` con los ficheros reales (se
-  escribió sin acceso a IEMOCAP). Tiene que decir **OK**; si dice REVISAR, no correr 88 ni
-  94.
+- `check_forced_alignment.py` contrasta el parser de `.syseg` con los ficheros reales. Ya
+  se validó el 28/10 (sección de arriba); tiene que decir **OK**.
 - `fit_speechcue_stats.py --rate-source forced_alignment` **no vuelve a correr pYIN**:
   copia F0 y energía de `cache\speechcue_stats.json` y solo cambia la tasa. Escribe
-  `cache\speechcue_stats_fa.json` y falla si falta algún `.syseg`.
+  `cache\speechcue_stats_fa.json` (segundos). Debe imprimir 5,473 / 26 / 31 / 1; falla
+  si hay un formato desconocido o más de un 2 % sin alineación.
 - `check_deck_variants.py` monta el modelo real con el config real y comprueba cada
   bandera (pooling sobre frames reales, log-mel invariante al relleno, [CLS], bloques del
   ViT, pitch shift sobre un seno, tokens SpeechCue tras `[CLS]` en un batch real).

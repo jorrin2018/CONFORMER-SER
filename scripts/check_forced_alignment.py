@@ -61,8 +61,9 @@ def main() -> int:
                 print("   " + line)
         for line in fa.read_text(encoding="utf-8", errors="replace").splitlines():
             tok = line.split()
-            if len(tok) >= 4 and tok[0].lstrip("-").isdigit() and tok[1].lstrip("-").isdigit():
-                lab = " ".join(tok[3:])
+            if len(tok) >= 3 and tok[0].lstrip("-").isdigit() and tok[1].lstrip("-").isdigit():
+                score = len(tok) >= 4 and tok[2].lstrip("-").isdigit()
+                lab = " ".join(tok[3:] if score else tok[2:])
                 (silencio if is_fa_silence(lab) else silabas)[lab] += 1
         try:
             n_fa, span = read_forced_alignment(fa)

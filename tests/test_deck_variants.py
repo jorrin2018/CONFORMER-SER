@@ -201,6 +201,14 @@ def test_collate_carries_lengths(tmp_path):
 
 
 # ------------------------------------------------------ forced alignment
+# Formato real de IEMOCAP (.syseg): tres columnas, sin silencios.
+SYSEG_REAL = """  SFrm  EFrm Syllable
+    45    50 IX_K
+    51    79 S_K_Y_UW_Z
+    80   105 M_IY
+"""
+
+# Formato con puntuacion y silencios (.wdseg); el parser acepta los dos.
 SYSEG = """ SFrm  EFrm    SegAScr Syllable
     0    20    -100000 <s>
    21    40    -200000 hh_ax
@@ -218,8 +226,32 @@ def test_read_forced_alignment(tmp_path):
     p.write_text(SYSEG)
     n, span = read_forced_alignment(p)
     assert n == 3 and span == pytest.approx((99 - 21 + 1) * 0.01)
-    rate, sp = rate_from_forced_alignment(p)
-    assert rate == pytest.approx(3 / 0.79) and sp == pytest.approx(0.79)
+    rate, sp, src = rate_from_forced_alignment(p)
+    assert rate == pytest.approx(3 / 0.79) and sp == pytest.approx(0.79) and src == "syseg"
+
+
+def test_header_only_syseg_falls_back_to_wdseg(tmp_path):
+    """Turnos no lexicos ("Hmm."): el .syseg trae solo cabecera, el .wdseg la palabra."""
+    sy = tmp_path / "u.syseg"
+    sy.write_text("  SFrm  EFrm Syllable\n")
+    assert read_forced_alignment(sy) == (0, 0.0)
+    (tmp_path / "u.wdseg").write_text(
+        "\t SFrm  EFrm    SegAScr Word\n\t    0    33    1970028 <s>\n"
+        "\t   34    58     865133 HMM\n\t   59    93    1973904 <sil>\n"
+        "\t   94   173    4236421 </s>\n Total score:     9045486\n")
+    rate, span, src = rate_from_forced_alignment(sy, fallback_span=1.75)
+    # 'hmm' -> 1 silaba; tramo 0.25 s < 0.30 -> se usa la duracion del fichero
+    assert src == "wdseg" and span == pytest.approx(1.75) and rate == pytest.approx(1 / 1.75)
+    (tmp_path / "u.wdseg").unlink()
+    rate, span, src = rate_from_forced_alignment(sy)
+    assert src == "empty" and rate == 0.0           # como la ruta transcript con 0 silabas
+
+
+def test_read_forced_alignment_real_iemocap_layout(tmp_path):
+    p = tmp_path / "Ses01F_impro01_F000.syseg"
+    p.write_text(SYSEG_REAL)
+    n, span = read_forced_alignment(p)
+    assert n == 3 and span == pytest.approx((105 - 45 + 1) * 0.01)
 
 
 def test_read_forced_alignment_rejects_unknown_format(tmp_path):
@@ -352,20 +384,30 @@ def test_build_forced_alignment_cache(tmp_path, monkeypatch):
         wav = tmp_path / "Session1/sentences/wav/Ses01F_impro01" / f"{uid}.wav"
         fa = tmp_path / "Session1/sentences/ForcedAlignment/Ses01F_impro01" / f"{uid}.syseg"
         fa.parent.mkdir(parents=True, exist_ok=True)
-        fa.write_text(SYSEG)
+        fa.write_text(SYSEG_REAL)
         items.append((uid, str(wav), "hello there"))
         base[uid] = SpeechCueStats(150.0 + i, 0.1, 2.0, 2.0, 1.5)
     SpeechCueStatsCache.save(base, tmp_path / "base.json", meta={"version": 4})
     monkeypatch.setattr(fit, "enumerate_utterances", lambda cfg, s: items)
     out = tmp_path / "fa.json"
     args = argparse.Namespace(base_cache=str(tmp_path / "base.json"), out=str(out),
-                              allow_missing=False)
+                              max_missing_frac=0.5)
     assert fit.build_forced_alignment_cache(args, {}, [1]) == 0
     c = SpeechCueStatsCache.load(out)
     assert SpeechCueStatsCache.load_meta(out)["rate_source"] == "forced_alignment"
     st = c.get("Ses01F_impro01_F001")
-    assert st.pitch == 151.0 and st.rate == pytest.approx(3 / 0.79)
-    # un .syseg que falta -> no se escribe nada
+    assert st.pitch == 151.0 and st.rate == pytest.approx(3 / 0.61)
+    # un .syseg que falta -> tasa NaN (token MID), registrado en meta
     (tmp_path / "Session1/sentences/ForcedAlignment/Ses01F_impro01/Ses01F_impro01_F002.syseg").unlink()
     out.unlink()
+    assert fit.build_forced_alignment_cache(args, {}, [1]) == 0
+    assert math.isnan(SpeechCueStatsCache.load(out).get("Ses01F_impro01_F002").rate)
+    assert SpeechCueStatsCache.load_meta(out)["fa_unaligned"] == ["Ses01F_impro01_F002"]
+    # demasiados sin alinear -> falla y no escribe
+    args.max_missing_frac = 0.1
+    out.unlink()
     assert fit.build_forced_alignment_cache(args, {}, [1]) == 1 and not out.exists()
+    # un formato desconocido -> falla
+    args.max_missing_frac = 0.5
+    (tmp_path / "Session1/sentences/ForcedAlignment/Ses01F_impro01/Ses01F_impro01_F001.syseg").write_text("basura\n" * 9)
+    assert fit.build_forced_alignment_cache(args, {}, [1]) == 1

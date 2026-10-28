@@ -131,18 +131,35 @@ def count_syllables(transcript: str) -> int:
 # The deck (Fig. 4 / notes of slide 16) says the syllable rate comes from the
 # syllable-level forced alignment that IEMOCAP ships, not from a transcript
 # heuristic. IEMOCAP_full_release/SessionN/sentences/ForcedAlignment/<dialog>/
-# <utt>.syseg has one row per aligned unit:
+# <utt>.syseg has one row per aligned SYLLABLE, phones joined by "_" (checked on
+# the real files, Session1, 28/10/2026):
 #
-#      SFrm  EFrm    SegAScr Syllable
-#         0    17    -706853 <s>
-#        18    35    -232434 ...
-#      Total score: ...
+#        SFrm  EFrm Syllable
+#          45    50 IX_K
+#          51    79 S_K_Y_UW_Z
+#          80   105 M_IY
 #
-# Frames are 10 ms. Rows whose first two fields are not integers (header, total
-# score) are skipped. Silence, sentence markers and noise fillers (<s>, </s>,
-# <sil>, ++LAUGHTER++, [BREATHING], ...) are not syllables. The speech span runs
-# from the first to the last syllable, so it keeps the inner pauses -- the same
-# definition as the transcript path (leading/trailing silence trimmed, pauses kept).
+# Three columns, no score, no silence rows. The word-level .wdseg has a fourth
+# column (SegAScr) and silence rows (<s>, <sil>, </s>); the parser accepts both
+# layouts. Frames are 10 ms. Rows whose first two fields are not integers (header,
+# "Total score") are skipped. Silence, sentence markers and noise fillers are not
+# syllables. The speech span runs from the first to the last syllable, so it keeps
+# the inner pauses -- the same definition as the transcript path (leading/trailing
+# silence trimmed, pauses kept).
+#
+# Measured on the 5,531 four-class utterances (28/10/2026): syllable COUNTS agree
+# with the vowel heuristic almost exactly (r = 0.998, median ratio 1.000); what
+# changes is the denominator. The aligned span has median 2.29 s against 3.52 s for
+# the energy-trimmed span, so the aligned rate has median 4.42 syl/s against 2.97,
+# and the two rates correlate only r = 0.58 -- different tokens.
+#
+# 57 .syseg files are header-only. 26 are non-lexical turns ("Hmm.", "Mmhmm.",
+# "Yes.") whose aligned word is still in the .wdseg next to it: syllables are
+# counted on the aligned words and the span taken from them. The other 31 are
+# non-speech ("[BREATHING]", "[LAUGHTER]"): zero syllables, rate 0 -- the same value
+# the transcript path gives them, so 88 vs 87 differs only where the source does.
+# One utterance (Ses03M_impro03_M001) has no alignment file at all: rate NaN,
+# which SpeechCueTertiles maps to MID and leaves out of the tertile fit.
 FA_FRAME_SHIFT = 0.01
 _FA_SILENCE = {"<s>", "</s>", "<sil>", "sil", "sp", "#"}
 
@@ -174,14 +191,19 @@ def read_forced_alignment(path, frame_shift: float = FA_FRAME_SHIFT) -> Tuple[in
     rows = []
     for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
         tok = line.split()
-        if len(tok) < 4:
+        if len(tok) < 3:
             continue
         try:
             sf, ef = int(tok[0]), int(tok[1])
         except ValueError:
             continue
-        rows.append((sf, ef, " ".join(tok[3:])))
+        # .syseg: SFrm EFrm Label   |   .wdseg/.phseg: SFrm EFrm SegAScr Label
+        has_score = len(tok) >= 4 and tok[2].lstrip("-").isdigit()
+        rows.append((sf, ef, " ".join(tok[3:] if has_score else tok[2:])))
     if not rows:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        if "SFrm" in text and "EFrm" in text and len(text.split()) <= 4:
+            return 0, 0.0                       # header only: nothing was aligned
         raise ValueError(f"{path}: no aligned rows parsed (unknown .syseg format?)")
     syl = [(sf, ef) for sf, ef, lab in rows if not is_fa_silence(lab)]
     if not syl:
@@ -190,17 +212,57 @@ def read_forced_alignment(path, frame_shift: float = FA_FRAME_SHIFT) -> Tuple[in
     return len(syl), float(span)
 
 
-def rate_from_forced_alignment(path, min_span: float = 0.30,
-                               fallback_span: Optional[float] = None) -> Tuple[float, float]:
-    """(syllables/s, span) using the aligned speech span as denominator.
+_WDSEG_VARIANT_RE = re.compile(r"\(\d+\)$")
 
-    Spans shorter than `min_span` (one-word backchannels) fall back to
-    `fallback_span` when given -- the same rule compute_stats() applies.
+
+def read_word_alignment(path, frame_shift: float = FA_FRAME_SHIFT) -> Tuple[int, float]:
+    """(syllables, span) from a .wdseg: heuristic syllables of each ALIGNED word.
+
+    Word labels carry a pronunciation-variant suffix ("EXCUSE(8)") that is removed.
+    """
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        tok = line.split()
+        if len(tok) < 3:
+            continue
+        try:
+            sf, ef = int(tok[0]), int(tok[1])
+        except ValueError:
+            continue
+        has_score = len(tok) >= 4 and tok[2].lstrip("-").isdigit()
+        lab = " ".join(tok[3:] if has_score else tok[2:])
+        if not is_fa_silence(lab):
+            rows.append((sf, ef, _WDSEG_VARIANT_RE.sub("", lab).lower()))
+    if not rows:
+        return 0, 0.0
+    n = sum(count_syllables_word(w) for _, _, lab in rows for w in _WORD_RE.findall(lab))
+    span = (max(e for _, e, _ in rows) - min(s for s, _, _ in rows) + 1) * frame_shift
+    return n, float(span)
+
+
+def rate_from_forced_alignment(path, min_span: float = 0.30,
+                               fallback_span: Optional[float] = None
+                               ) -> Tuple[float, float, str]:
+    """(syllables/s, span, source) using the aligned speech span as denominator.
+
+    source is "syseg", "wdseg" (header-only .syseg, counted on the aligned words)
+    or "empty" (nothing but silence/noise aligned: rate 0, as the transcript path
+    gives a transcript without syllables). Spans shorter than
+    `min_span` (one-word backchannels) fall back to `fallback_span` when given --
+    the same rule compute_stats() applies.
     """
     n, span = read_forced_alignment(path)
+    source = "syseg"
+    if n == 0:
+        wd = Path(path).with_suffix(".wdseg")
+        if wd.exists():
+            n, span = read_word_alignment(wd)
+            source = "wdseg"
+    if n == 0:
+        return 0.0, 0.0, "empty"
     if span < min_span and fallback_span:
         span = float(fallback_span)
-    return (float(n / span) if n > 0 and span > 0 else 0.0), span
+    return float(n / span), span, source
 
 
 # ---------------------------------------------------------------------------
