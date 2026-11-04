@@ -77,6 +77,52 @@ por git) y tarda unos minutos: es inferencia de dos modelos por fold más una pa
 ViT. `expert_gate_offline.py` imprime las tablas y el veredicto, y guarda
 `cache\experts\offline_summary.json`.
 
+## Fusión por incertidumbre: ECE y Brier
+
+Propuesta de la asesora (04/11/2026). Las dos son medidas de **calibración**: dicen si la
+confianza de un modelo corresponde a su tasa real de acierto.
+
+- **ECE** (Expected Calibration Error, 15 bins de la confianza máxima):
+  `Σ_b (n_b/N) · |acierto_b − confianza_b|`. Vale 0 si el modelo está bien calibrado.
+- **Brier** multiclase: `media de Σ_c (p_c − 1[y = c])²`, entre 0 y 2. Mezcla
+  calibración y capacidad de discriminar.
+
+Con las predicciones de los expertos ya guardadas se usan de dos maneras, sin GPU.
+
+**1. Para fusionar.** Cada experto se calibra con escalado de temperatura ajustado en
+validación (minimizando la NLL) y después:
+
+| Regla | Peso de cada experto |
+|---|---|
+| `promedio_cal` | igual, sobre las probabilidades calibradas |
+| `compuerta_cal` | la compuerta con las confianzas calibradas |
+| `brier` | fijo por fold, `w_e ∝ 1 / Brier_e` en validación |
+| `fiabilidad` | por muestra: el acierto esperado del experto a esa confianza, leído de su curva de fiabilidad en validación (la curva que resume la ECE) |
+| `producto` | producto de expertos calibrados dividido entre `prior^(E−1)` (fusión bayesiana) |
+
+La regla de decisión es la misma de antes: más de 0.86 pp sobre el promedio y al menos
+4 de 5 folds. Como se prueban varias reglas a la vez, una que pase por poco hay que
+confirmarla con otra semilla.
+
+**2. Para medir.** Se calculan la ECE, el Brier y la NLL en test de cada experto (crudo y
+calibrado) y de cada fusión. También de la fusión con una temperatura aplicada **después**
+de fusionar: no cambia el UA y corrige que el promedio de expertos que discrepan quede
+infraconfiado. Si `precompute_experts.py` se corre con `--ref-study 74`, sale también la
+del modelo trimodal, para compararlo con la fusión tardía de expertos.
+
+**Limitación que hay que declarar.** En el protocolo `standard`, la validación sale de las
+mismas sesiones, y por tanto de los mismos hablantes, que el train. Una temperatura
+ajustada en validación subestima la sobreconfianza ante hablantes nuevos: la ECE de los
+expertos en validación (0.03 a 0.08) es menor que en test.
+
+```powershell
+python scripts\precompute_experts.py --device cuda --ref-study 74
+python scripts\expert_gate_offline.py
+```
+
+`precompute_experts.py` ya no recalcula los folds que están en disco: reanuda donde se
+quedó y, con `--ref-study`, solo añade el 74.
+
 ## Etapa 2
 
 Se implementa **solo si la prueba sin entrenar sale a favor**. Será un estudio nuevo

@@ -1,34 +1,43 @@
 #!/usr/bin/env python
-"""expert_gate_offline.py -- Prueba SIN ENTRENAR de la compuerta con expertos congelados.
+"""expert_gate_offline.py -- Prueba SIN ENTRENAR de fusiones con expertos congelados.
 
-Antes de gastar ~30 h de GPU en la etapa 2, responde con las predicciones de
-precompute_experts.py la unica pregunta que decide si merece la pena:
+Con las predicciones de precompute_experts.py responde, antes de gastar GPU:
 
-    con expertos entrenados por separado, ¿ponderar por su confianza cuando
-    discrepan le gana a promediarlos?
+  1. Compuerta (04/11/2026): con expertos entrenados por separado, ¿ponderar por su
+     confianza cuando discrepan le gana a promediarlos?
+  2. Fusion por incertidumbre (propuesta de la asesora: ECE y Brier): ¿pesar a cada
+     experto por lo bien CALIBRADO que esta le gana a promediarlos?
 
-En el 75/76 (clasificadores lineales entrenados junto con la fusion) la respuesta fue
-no: elegir por confianza 69.0 % frente a promediar 70.5 % en las muestras de conflicto.
-Aqui los expertos son modelos unimodales completos y no co-adaptan con la fusion.
+Todos los calibradores y pesos se ajustan en VALIDACION de cada fold y se evaluan en
+TEST. Los expertos nunca vieron el test; la validacion solo la usaron para el early
+stopping.
 
-Reglas que se comparan, por fold, sobre test (y val):
-  promedio        media de las tres distribuciones
-  compuerta       la regla de la presentacion con confianzas de experto: si los tres
-                  argmax coinciden (g = 0) promedio; si no (g = 1) w_e = c_e / sum(c),
-                  c_e = max softmax del experto
-  ponderado       w_e = c_e / sum(c) siempre, sin compuerta
-  seleccion       el experto mas seguro decide
-  voto            mayoria; empate -> promedio
-  oraculo         acierta si alguno acierta (techo, NO es un metodo)
+Reglas (probabilidades de los tres expertos: audio, texto, imagen)
+  sin calibrar
+    promedio        media de las tres distribuciones                      <- referencia
+    compuerta       si los tres argmax coinciden, promedio; si no, w_e = c_e / sum(c),
+                    c_e = softmax maxima del experto (la regla de la presentacion)
+    seleccion       decide el experto mas seguro
+    voto            mayoria; empate -> promedio
+  calibradas (escalado de temperatura por experto, T ajustada en val por NLL)
+    promedio_cal    media de las distribuciones calibradas
+    compuerta_cal   la compuerta con confianzas calibradas
+    brier           pesos fijos w_e proporcionales a 1 / Brier_e(val)
+    fiabilidad      pesos por muestra w_e(x) = exactitud esperada del experto a su
+                    confianza, leida de su curva de fiabilidad en val (la curva que
+                    resume la ECE)
+    producto        producto de expertos calibrados / prior^(E-1) (fusion bayesiana
+                    con independencia condicional)
+  oraculo           acierta si alguno acierta (techo, NO es un metodo)
 
-REGLA DE DECISION, fijada antes de ver los numeros: se corre la etapa 2 solo si la
-compuerta le gana al promedio en UA de test por mas de 0.86 pp (banda de ruido de
-re-ejecucion, REWRITE_NOTES sec. 7) de media pareada Y en al menos 4 de 5 folds.
+REGLA DE DECISION, fijada antes de ver los numeros: una fusion merece una version
+entrenada solo si le gana al promedio en UA de test por mas de 0.86 pp (banda de ruido
+de re-ejecucion, REWRITE_NOTES sec. 7) de media pareada Y en al menos 4 de 5 folds.
+Se prueban varias reglas a la vez: una que pase por poco hay que confirmarla con otra
+semilla antes de escribirla.
 
-Ademas mide la SOBRECONFIANZA EN TRAIN: los expertos se entrenaron con esas mismas
-utterances, asi que en train discrepan menos que en test. Si la tasa de g en train y en
-test difiere mucho, la etapa 2 entrenaria con una compuerta que casi no dispara y se
-evaluaria con otra que dispara a menudo; entonces habria que hacer cross-fitting.
+Ademas mide la calibracion (ECE de 15 bins, Brier, NLL) de cada experto, de cada fusion
+y, si precompute_experts.py se corrio con --ref-study 74, del modelo trimodal.
 
     python scripts\\expert_gate_offline.py
 """
@@ -43,8 +52,28 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_calibration():
+    """src/utils/calibration.py cargado por ruta: `import src.utils` arrastra torch y
+    sklearn (metrics.py), y este analisis solo necesita numpy."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "camf_calibration", ROOT / "src" / "utils" / "calibration.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_cal = _load_calibration()
+ReliabilityMap, apply_temperature, brier, ece, fit_temperature, nll = (
+    _cal.ReliabilityMap, _cal.apply_temperature, _cal.brier, _cal.ece,
+    _cal.fit_temperature, _cal.nll)
+
 EXPERTS = ("audio", "text", "vision")
-RULES = ("promedio", "compuerta", "ponderado", "seleccion", "voto", "oraculo")
+RULES = ("promedio", "compuerta", "seleccion", "voto",
+         "promedio_cal", "compuerta_cal", "brier", "fiabilidad", "producto", "oraculo")
+CANDIDATAS = ("compuerta", "compuerta_cal", "brier", "fiabilidad", "producto", "promedio_cal")
 NOISE_PP = 0.86
 
 
@@ -56,25 +85,65 @@ def wa(y, pred):
     return float((y == pred).mean())
 
 
-def apply_rules(P: np.ndarray, y: np.ndarray):
-    """P: (E, N, C). Devuelve {regla: pred (N,)} y g (N,)."""
-    arg = P.argmax(-1)                                   # (E, N)
-    g = ~(arg == arg[0]).all(0)                          # True si no coinciden los tres
-    conf = P.max(-1)                                     # (E, N)
+def _gated(P):
+    arg = P.argmax(-1)
+    g = ~(arg == arg[0]).all(0)
+    conf = P.max(-1)
     w = conf / conf.sum(0, keepdims=True)
+    return np.where(g[:, None], (w[..., None] * P).sum(0), P.mean(0)), g
+
+
+def _weighted(P, w):
+    """P (E, N, C); w (E,) o (E, N)."""
+    w = np.asarray(w, dtype=float)
+    if w.ndim == 1:
+        w = np.repeat(w[:, None], P.shape[1], 1)
+    w = w / w.sum(0, keepdims=True)
+    return (w[..., None] * P).sum(0)
+
+
+def apply_rules(P: np.ndarray, y: np.ndarray, calib: dict | None = None):
+    """P: (E, N, C) sin calibrar. calib (opcional, de validacion): temperaturas, pesos
+    de Brier, mapas de fiabilidad y prior. Devuelve ({regla: (N, C) o None}, {regla:
+    pred}, g)."""
+    E, N, C = P.shape
+    arg = P.argmax(-1)
     mean = P.mean(0)
-    weighted = (w[..., None] * P).sum(0)
-    gated = np.where(g[:, None], weighted, mean)
-    sel = arg[conf.argmax(0), np.arange(P.shape[1])]
-    votes = np.stack([(arg == c).sum(0) for c in range(P.shape[2])], 1)   # (N, C)
-    top = votes.max(1)
-    unique_top = (votes == top[:, None]).sum(1) == 1
+    gated, g = _gated(P)
+    conf = P.max(-1)
+    sel_e = conf.argmax(0)
+    sel = P[sel_e, np.arange(N)]
+    votes = np.stack([(arg == c).sum(0) for c in range(C)], 1)
+    unique_top = (votes == votes.max(1, keepdims=True)).sum(1) == 1
     vote = np.where(unique_top, votes.argmax(1), mean.argmax(1))
-    any_ok = (arg == y[None]).any(0)
-    oracle = np.where(any_ok, y, mean.argmax(1))
-    return {"promedio": mean.argmax(1), "compuerta": gated.argmax(1),
-            "ponderado": weighted.argmax(1), "seleccion": sel, "voto": vote,
-            "oraculo": oracle}, g
+    oracle = np.where((arg == y[None]).any(0), y, mean.argmax(1))
+    dist = {"promedio": mean, "compuerta": gated, "seleccion": sel, "voto": None,
+            "oraculo": None}
+    pred = {"voto": vote, "oraculo": oracle}
+    if calib is not None:
+        Pc = np.stack([apply_temperature(P[e], calib["T"][e]) for e in range(E)])
+        dist["promedio_cal"] = Pc.mean(0)
+        dist["compuerta_cal"] = _gated(Pc)[0]
+        dist["brier"] = _weighted(Pc, 1.0 / np.asarray(calib["brier_val"]))
+        rel = np.stack([calib["rel"][e](Pc[e]) for e in range(E)])
+        dist["fiabilidad"] = _weighted(Pc, np.clip(rel, 1e-3, None))
+        logp = np.log(np.clip(Pc, 1e-12, 1)).sum(0) - (E - 1) * np.log(calib["prior"])
+        logp -= logp.max(1, keepdims=True)
+        prod = np.exp(logp)
+        dist["producto"] = prod / prod.sum(1, keepdims=True)
+    for r, d in dist.items():
+        if d is not None:
+            pred[r] = d.argmax(1)
+    return dist, pred, g
+
+
+def fit_calibration(P_val: np.ndarray, y_val: np.ndarray, y_train: np.ndarray, C: int):
+    T = [fit_temperature(P_val[e], y_val) for e in range(P_val.shape[0])]
+    Pc = [apply_temperature(P_val[e], T[e]) for e in range(P_val.shape[0])]
+    prior = np.bincount(y_train, minlength=C) / len(y_train)
+    return {"T": T, "brier_val": [brier(p, y_val) for p in Pc],
+            "ece_val": [ece(p, y_val) for p in Pc],
+            "rel": [ReliabilityMap().fit(p, y_val) for p in Pc], "prior": prior}
 
 
 def load_fold(path: Path):
@@ -83,7 +152,10 @@ def load_fold(path: Path):
     split = np.array([d["split"][u] for u in uids])
     y = np.array([d["labels"][u] for u in uids])
     P = np.stack([np.array([d["probs"][e][u] for u in uids]) for e in EXPERTS])
-    return d["meta"], split, y, P
+    ref = None
+    if "ref" in d:
+        ref = (d["ref"]["study"], np.array([d["ref"]["probs"][u] for u in uids]))
+    return d["meta"], split, y, P, ref
 
 
 def ref_74(fold: int):
@@ -97,11 +169,54 @@ def ref_74(fold: int):
 
 
 def paired(diffs):
-    d = np.array(diffs)
+    d = np.array(diffs, dtype=float)
     n = len(d)
-    m, s = float(d.mean()), float(d.std(ddof=1)) if n > 1 else float("nan")
+    m = float(d.mean())
+    s = float(d.std(ddof=1)) if n > 1 else float("nan")
     t = m / (s / math.sqrt(n)) if n > 1 and s > 0 else float("nan")
     return m, s, t, int((d > 0).sum())
+
+
+def analyse_fold(path: Path):
+    meta, split, y, P, ref = load_fold(path)
+    k, C = int(meta["fold"]), P.shape[2]
+    va, te, tr = split == "val", split == "test", split == "train"
+    calib = fit_calibration(P[:, va], y[va], y[tr], C)
+    fila = {"fold": k, "T": calib["T"], "brier_val": calib["brier_val"],
+            "ece_val": calib["ece_val"], "ref_74": ref_74(k)}
+    # Temperatura sobre la distribucion YA FUSIONADA (ajustada en val): no cambia el
+    # argmax ni el UA, solo la calibracion. Calibrar cada experto por separado y luego
+    # promediar deja la mezcla infraconfiada cuando discrepan; esto lo corrige.
+    dist_val, _, _ = apply_rules(P[:, va], y[va], calib)
+    T_fus = {r: fit_temperature(dist_val[r], y[va]) for r in ("promedio", "compuerta")}
+    fila["T_fusion"] = T_fus
+    for s, m in (("train", tr), ("val", va), ("test", te)):
+        dist, pred, g = apply_rules(P[:, m], y[m], calib)
+        fila[s] = {r: ua(y[m], pred[r], C) for r in RULES}
+        fila[s]["g_rate"] = float(g.mean())
+        for e, Pe in zip(EXPERTS, P[:, m]):
+            fila[s][f"experto_{e}"] = ua(y[m], Pe.argmax(-1), C)
+        if s == "test":
+            fila["conflicto_test"] = {r: float((pred[r][g] == y[m][g]).mean()) if g.any()
+                                      else float("nan") for r in RULES}
+            cal = {}
+            for e, Pe in zip(EXPERTS, P[:, m]):
+                i = EXPERTS.index(e)
+                Pce = apply_temperature(Pe, calib["T"][i])
+                cal[f"{e} (crudo)"] = (ece(Pe, y[m]), brier(Pe, y[m]), nll(Pe, y[m]))
+                cal[f"{e} (T={calib['T'][i]:.2f})"] = (ece(Pce, y[m]), brier(Pce, y[m]), nll(Pce, y[m]))
+            for r, d in dist.items():
+                if d is not None and r != "oraculo":
+                    cal[r] = (ece(d, y[m]), brier(d, y[m]), nll(d, y[m]))
+            for r, T in T_fus.items():
+                d = apply_temperature(dist[r], T)
+                cal[f"{r} (+T fusion)"] = (ece(d, y[m]), brier(d, y[m]), nll(d, y[m]))
+            if ref is not None:
+                Pr = ref[1][m]
+                fila["ref_test_ua"] = ua(y[m], Pr.argmax(1), C)
+                cal[f"estudio {ref[0]}"] = (ece(Pr, y[m]), brier(Pr, y[m]), nll(Pr, y[m]))
+            fila["calibracion_test"] = cal
+    return fila
 
 
 def main() -> int:
@@ -112,99 +227,106 @@ def main() -> int:
     if not files:
         print(f"  No hay predicciones en {args.dir}; corre antes scripts\\precompute_experts.py")
         return 2
-
-    filas, resumen = [], {"folds": []}
-    for f in files:
-        meta, split, y, P = load_fold(f)
-        k, C = int(meta["fold"]), P.shape[2]
-        fila = {"fold": k}
-        for s in ("train", "val", "test"):
-            m = split == s
-            preds, g = apply_rules(P[:, m], y[m])
-            fila[s] = {r: ua(y[m], preds[r], C) for r in RULES}
-            fila[s]["wa_promedio"] = wa(y[m], preds["promedio"])
-            fila[s]["g_rate"] = float(g.mean())
-            for e, Pe in zip(EXPERTS, P[:, m]):
-                fila[s][f"experto_{e}"] = ua(y[m], Pe.argmax(-1), C)
-            if s == "test":
-                cm = g
-                fila["conflicto_test"] = {
-                    r: float((preds[r][cm] == y[m][cm]).mean()) if cm.any() else float("nan")
-                    for r in RULES}
-        fila["ref_74"] = ref_74(k)
-        filas.append(fila)
+    filas = [analyse_fold(f) for f in files]
+    n = len(filas)
 
     pct = lambda v: "  n/a" if v is None or (isinstance(v, float) and math.isnan(v)) else f"{100 * v:5.2f}"  # noqa: E731
-    print("\n  UA de TEST por fold (%)")
-    cab = ["fold", "audio", "texto", "vision"] + list(RULES) + ["74"]
-    print("  " + "".join(f"{c:>10}" for c in cab))
+    row = lambda cells, w=9: "  " + "".join(f"{c:>{w}}" for c in cells)  # noqa: E731
+
+    print("\n  UA de TEST por fold (%): expertos y fusiones sin calibrar")
+    cab = ["fold", "audio", "texto", "imagen", "promedio", "compuerta", "seleccion", "voto",
+           "oraculo", "74"]
+    print(row(cab, 10))
     for r in filas:
         t = r["test"]
-        vals = [t["experto_audio"], t["experto_text"], t["experto_vision"]] + [t[x] for x in RULES]
-        print("  " + f"{'S' + str(r['fold']):>10}" + "".join(f"{pct(v):>10}" for v in vals)
-              + f"{pct(r['ref_74']):>10}")
+        print(row([f"S{r['fold']}"] + [pct(t[x]) for x in
+                  ("experto_audio", "experto_text", "experto_vision", "promedio", "compuerta",
+                   "seleccion", "voto", "oraculo")] + [pct(r["ref_74"])], 10))
+
+    print("\n  UA de TEST por fold (%): fusiones guiadas por calibracion (ajustadas en val)")
+    cab = ["fold", "promedio", "prom_cal", "comp_cal", "brier", "fiabilid", "producto"]
+    print(row(cab, 10))
+    for r in filas:
+        t = r["test"]
+        print(row([f"S{r['fold']}"] + [pct(t[x]) for x in
+                  ("promedio", "promedio_cal", "compuerta_cal", "brier", "fiabilidad",
+                   "producto")], 10))
+
+    print("\n  Calibracion de los expertos en validacion (la que se usa para pesar)")
+    print(row(["fold", "T audio", "T texto", "T imagen", "Br aud", "Br tex", "Br img",
+               "ECE aud", "ECE tex", "ECE img"], 9))
+    for r in filas:
+        print(row([f"S{r['fold']}"] + [f"{v:.2f}" for v in r["T"]]
+                  + [f"{v:.3f}" for v in r["brier_val"]] + [f"{v:.3f}" for v in r["ece_val"]], 9))
+
+    print("\n  Calibracion en TEST, media de los folds (menor es mejor)")
+    claves = list(filas[0]["calibracion_test"])
+    print(f"    {'':<26}{'ECE':>8}{'Brier':>8}{'NLL':>8}")
+    for c in claves:
+        vals = np.array([r["calibracion_test"][c] for r in filas if c in r["calibracion_test"]])
+        if len(vals):
+            e, b, l_ = vals.mean(0)
+            print(f"    {c:<26}{e:8.3f}{b:8.3f}{l_:8.3f}")
+
+    print("    Ojo: con el protocolo standard la validacion sale de las MISMAS sesiones (y")
+    print("    hablantes) que el train, asi que la temperatura ajustada en val subestima la")
+    print("    sobreconfianza ante hablantes nuevos: comparar la ECE de val con la de test.")
 
     print("\n  Exactitud en las muestras de test CON conflicto (g = 1)")
-    print("  " + "".join(f"{c:>10}" for c in ["fold"] + list(RULES)))
+    print(row(["fold", "promedio", "compuerta", "comp_cal", "brier", "fiabilid", "oraculo"], 10))
     for r in filas:
-        print("  " + f"{'S' + str(r['fold']):>10}"
-              + "".join(f"{pct(r['conflicto_test'][x]):>10}" for x in RULES))
+        c = r["conflicto_test"]
+        print(row([f"S{r['fold']}"] + [pct(c[x]) for x in
+                  ("promedio", "compuerta", "compuerta_cal", "brier", "fiabilidad", "oraculo")], 10))
 
     print("\n  Sobreconfianza en train (los expertos se entrenaron con esas utterances)")
-    print("  " + "".join(f"{c:>14}" for c in ("fold", "g train", "g val", "g test",
-                                             "audio tr-te", "texto tr-te")))
+    print(row(["fold", "g train", "g val", "g test", "audio tr-te", "texto tr-te"], 14))
     gaps = []
     for r in filas:
-        gap = r["test"]["g_rate"] - r["train"]["g_rate"]
-        gaps.append(gap)
-        print("  " + f"{'S' + str(r['fold']):>14}"
-              + "".join(f"{pct(v):>14}" for v in (r["train"]["g_rate"], r["val"]["g_rate"],
-                                                 r["test"]["g_rate"]))
-              + f"{100 * (r['train']['experto_audio'] - r['test']['experto_audio']):>+14.2f}"
-              + f"{100 * (r['train']['experto_text'] - r['test']['experto_text']):>+14.2f}")
+        gaps.append(r["test"]["g_rate"] - r["train"]["g_rate"])
+        print(row([f"S{r['fold']}", pct(r["train"]["g_rate"]), pct(r["val"]["g_rate"]),
+                   pct(r["test"]["g_rate"]),
+                   f"{100 * (r['train']['experto_audio'] - r['test']['experto_audio']):+.2f}",
+                   f"{100 * (r['train']['experto_text'] - r['test']['experto_text']):+.2f}"], 14))
 
-    print("\n  Pareado por fold, UA de test (pp)")
+    print("\n  Pareado por fold contra el PROMEDIO sin calibrar, UA de test (pp)")
     comps = {}
-    for nombre, a, b in (("compuerta - promedio", "compuerta", "promedio"),
-                         ("ponderado - promedio", "ponderado", "promedio"),
-                         ("seleccion - promedio", "seleccion", "promedio"),
-                         ("voto - promedio", "voto", "promedio")):
-        m, s, t, n_pos = paired([100 * (r["test"][a] - r["test"][b]) for r in filas])
-        comps[nombre] = dict(mean=m, sd=s, t=t, folds_pos=n_pos, n=len(filas))
-        print(f"    {nombre:<24} {m:+6.2f} ± {s:4.2f}   t({len(filas) - 1}) = {t:+5.2f}   "
-              f"{n_pos}/{len(filas)} folds a favor")
+    for a in CANDIDATAS + ("seleccion", "voto"):
+        m, s, t, n_pos = paired([100 * (r["test"][a] - r["test"]["promedio"]) for r in filas])
+        comps[f"{a} - promedio"] = dict(mean=m, sd=s, t=t, folds_pos=n_pos, n=n)
+        print(f"    {a + ' - promedio':<26} {m:+6.2f} ± {s:4.2f}   t({n - 1}) = {t:+6.2f}   "
+              f"{n_pos}/{n} folds a favor")
     con_74 = [r for r in filas if r["ref_74"] is not None]
     if con_74:
         m, s, t, n_pos = paired([100 * (r["test"]["promedio"] - r["ref_74"]) for r in con_74])
         comps["promedio expertos - 74"] = dict(mean=m, sd=s, t=t, folds_pos=n_pos, n=len(con_74))
-        print(f"    {'promedio expertos - 74':<24} {m:+6.2f} ± {s:4.2f}   t({len(con_74) - 1}) = {t:+5.2f}   "
-              f"{n_pos}/{len(con_74)} folds a favor")
+        print(f"    {'promedio expertos - 74':<26} {m:+6.2f} ± {s:4.2f}   t({len(con_74) - 1}) = "
+              f"{t:+6.2f}   {n_pos}/{len(con_74)} folds a favor")
 
-    c = comps["compuerta - promedio"]
-    go = c["mean"] > NOISE_PP and c["folds_pos"] >= min(4, len(filas))
-    gap_g = float(np.mean(gaps))
-    print("\n  VEREDICTO (regla fijada antes de ver los numeros)")
-    if go:
-        print(f"    SE CORRE LA ETAPA 2: la compuerta gana al promedio por {c['mean']:+.2f} pp "
-              f"(> {NOISE_PP}) en {c['folds_pos']}/{c['n']} folds.")
+    print("\n  VEREDICTO (regla fijada antes de ver los numeros: > 0.86 pp y >= 4/5 folds)")
+    ganan = [a for a in CANDIDATAS
+             if comps[f"{a} - promedio"]["mean"] > NOISE_PP
+             and comps[f"{a} - promedio"]["folds_pos"] >= min(4, n)]
+    if ganan:
+        print(f"    Merecen version entrenada: {', '.join(ganan)}")
     else:
-        print(f"    NO se corre la etapa 2: compuerta - promedio = {c['mean']:+.2f} pp en "
-              f"{c['folds_pos']}/{c['n']} folds (hace falta > {NOISE_PP} y >= 4/5).")
+        print("    Ninguna fusion le gana al promedio de los expertos: no se entrena ninguna.")
     print(f"    Tasa de g: train {100 * np.mean([r['train']['g_rate'] for r in filas]):.1f} % "
           f"vs test {100 * np.mean([r['test']['g_rate'] for r in filas]):.1f} % "
-          f"(diferencia {100 * gap_g:+.1f} pp).")
-    if gap_g > 0.10:
-        print("    AVISO: en train la compuerta dispara mucho menos que en test. Si se corre la "
-              "etapa 2, hacerlo con predicciones de train por cross-fitting.")
-    if len(filas) < 5:
-        print(f"    Solo {len(filas)} fold(s): el veredicto es provisional.")
+          f"(diferencia {100 * float(np.mean(gaps)):+.1f} pp).")
+    if float(np.mean(gaps)) > 0.10:
+        print("    AVISO: en train la compuerta dispara mucho menos que en test. Una version "
+              "entrenada necesitaria predicciones de train por cross-fitting.")
+    if n < 5:
+        print(f"    Solo {n} fold(s): el veredicto es provisional.")
 
-    resumen["folds"] = filas
-    resumen["comparaciones"] = comps
-    resumen["go_stage2"] = bool(go)
-    resumen["g_rate_gap_test_minus_train"] = gap_g
     out = Path(args.dir) / "offline_summary.json"
-    out.write_text(json.dumps(resumen, indent=2), encoding="utf-8")
+    for r in filas:
+        r["calibracion_test"] = {k: dict(zip(("ece", "brier", "nll"), v))
+                                 for k, v in r["calibracion_test"].items()}
+    out.write_text(json.dumps({"folds": filas, "comparaciones": comps, "ganan": ganan,
+                               "g_rate_gap_test_minus_train": float(np.mean(gaps))},
+                              indent=2), encoding="utf-8")
     print(f"\n  Resumen en {out}\n")
     return 0
 

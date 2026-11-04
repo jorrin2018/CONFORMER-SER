@@ -32,7 +32,7 @@ def _P(*rows):
 
 def test_rules_consensus_is_average():
     P = _P([[.7, .1, .1, .1]], [[.6, .2, .1, .1]], [[.4, .3, .2, .1]])
-    preds, g = off.apply_rules(P, np.array([0]))
+    _, preds, g = off.apply_rules(P, np.array([0]))
     assert not g[0] and preds["compuerta"][0] == preds["promedio"][0] == 0
 
 
@@ -40,7 +40,7 @@ def test_rules_conflict_weights_by_confidence():
     # audio seguro de 1 (0.7); texto y vision tibios en 0 (0.5) -> el promedio dice 0
     # (1/3 vs 0.30), la compuerta (0.29 vs 0.35) y la seleccion dicen 1
     P = _P([[0., .7, .15, .15]], [[.5, .1, .2, .2]], [[.5, .1, .2, .2]])
-    preds, g = off.apply_rules(P, np.array([1]))
+    _, preds, g = off.apply_rules(P, np.array([1]))
     assert g[0]
     assert preds["promedio"][0] == 0
     assert preds["seleccion"][0] == 1 and preds["compuerta"][0] == 1
@@ -49,7 +49,7 @@ def test_rules_conflict_weights_by_confidence():
 
 def test_vote_tie_falls_back_to_average():
     P = _P([[.9, .1, 0, 0]], [[.1, .8, .1, 0]], [[.1, .1, .7, .1]])
-    preds, _ = off.apply_rules(P, np.array([0]))
+    _, preds, _ = off.apply_rules(P, np.array([0]))
     assert preds["voto"][0] == preds["promedio"][0]
 
 
@@ -80,7 +80,48 @@ def test_offline_end_to_end(tmp_path):
         sys.argv = sys_argv
     summ = json.loads((tmp_path / "offline_summary.json").read_text())
     assert len(summ["folds"]) == 5 and "compuerta - promedio" in summ["comparaciones"]
-    assert isinstance(summ["go_stage2"], bool)
+    assert "brier - promedio" in summ["comparaciones"] and isinstance(summ["ganan"], list)
+    cal = summ["folds"][0]["calibracion_test"]
+    assert {"promedio", "brier", "fiabilidad", "audio (crudo)"} <= set(cal)
+
+
+# ------------------------------------------------------------- calibracion
+from src.utils.calibration import (  # noqa: E402
+    ReliabilityMap, apply_temperature, brier, ece, fit_temperature)
+
+
+def _calibrated_sample(n=20000, seed=0):
+    rng = np.random.default_rng(seed)
+    logits = rng.normal(size=(n, 4)) * 2
+    P = np.exp(logits) / np.exp(logits).sum(1, keepdims=True)
+    y = np.array([rng.choice(4, p=p) for p in P])     # y ~ P: calibrado por construccion
+    return P, y
+
+
+def test_ece_and_brier_basic():
+    P, y = _calibrated_sample()
+    assert ece(P, y) < 0.02
+    onehot = np.eye(4)[[0, 1]]
+    assert brier(onehot, np.array([0, 1])) == 0.0
+    assert brier(np.full((1, 4), .25), np.array([0])) == pytest.approx(.75)
+
+
+def test_temperature_undoes_overconfidence():
+    P, y = _calibrated_sample()
+    sharp = apply_temperature(P, 1 / 3)                # sobreconfiado
+    assert ece(sharp, y) > 0.1
+    T = fit_temperature(sharp, y)
+    assert T == pytest.approx(3.0, rel=0.15)
+    assert ece(apply_temperature(sharp, T), y) < 0.03
+
+
+def test_reliability_map_tracks_accuracy():
+    P, y = _calibrated_sample()
+    sharp = apply_temperature(P, 1 / 3)
+    rel = ReliabilityMap().fit(sharp, y)
+    est = rel(sharp)
+    hit = (sharp.argmax(1) == y)
+    assert abs(est.mean() - hit.mean()) < 0.02 and est.max() <= 1.0
 
 
 # -------------------------------------------------------- experto de imagen
