@@ -151,7 +151,12 @@ def load_fold(path: Path):
     uids = sorted(d["split"])
     split = np.array([d["split"][u] for u in uids])
     y = np.array([d["labels"][u] for u in uids])
-    P = np.stack([np.array([d["probs"][e][u] for u in uids]) for e in EXPERTS])
+    # Con cross-fitting (precompute_experts.py --crossfit), las filas de TRAIN usan la
+    # prediccion fuera de muestra; validacion y test siguen con el experto completo.
+    oof = d.get("probs_oof")
+    P = np.stack([np.array([(oof[e][u] if oof and d["split"][u] == "train" else d["probs"][e][u])
+                            for u in uids]) for e in EXPERTS])
+    d["meta"]["_oof"] = bool(oof)
     ref = None
     if "ref" in d:
         ref = (d["ref"]["study"], np.array([d["ref"]["probs"][u] for u in uids]))
@@ -182,7 +187,7 @@ def analyse_fold(path: Path):
     k, C = int(meta["fold"]), P.shape[2]
     va, te, tr = split == "val", split == "test", split == "train"
     calib = fit_calibration(P[:, va], y[va], y[tr], C)
-    fila = {"fold": k, "T": calib["T"], "brier_val": calib["brier_val"],
+    fila = {"fold": k, "oof": bool(meta.get("_oof")), "T": calib["T"], "brier_val": calib["brier_val"],
             "ece_val": calib["ece_val"], "ref_74": ref_74(k)}
     # Temperatura sobre la distribucion YA FUSIONADA (ajustada en val): no cambia el
     # argmax ni el UA, solo la calibracion. Calibrar cada experto por separado y luego
@@ -279,7 +284,10 @@ def main() -> int:
         print(row([f"S{r['fold']}"] + [pct(c[x]) for x in
                   ("promedio", "compuerta", "compuerta_cal", "brier", "fiabilidad", "oraculo")], 10))
 
-    print("\n  Sobreconfianza en train (los expertos se entrenaron con esas utterances)")
+    con_oof = all(r.get("oof") for r in filas)
+    print("\n  Sobreconfianza en train " + (
+        "(train con predicciones FUERA DE MUESTRA: cross-fitting)" if con_oof else
+        "(los expertos se entrenaron con esas utterances; sin cross-fitting)"))
     print(row(["fold", "g train", "g val", "g test", "audio tr-te", "texto tr-te"], 14))
     gaps = []
     for r in filas:
@@ -314,7 +322,7 @@ def main() -> int:
     print(f"    Tasa de g: train {100 * np.mean([r['train']['g_rate'] for r in filas]):.1f} % "
           f"vs test {100 * np.mean([r['test']['g_rate'] for r in filas]):.1f} % "
           f"(diferencia {100 * float(np.mean(gaps)):+.1f} pp).")
-    if float(np.mean(gaps)) > 0.10:
+    if float(np.mean(gaps)) > 0.10 and not con_oof:
         print("    AVISO: en train la compuerta dispara mucho menos que en test. Una version "
               "entrenada necesitaria predicciones de train por cross-fitting.")
     if n < 5:

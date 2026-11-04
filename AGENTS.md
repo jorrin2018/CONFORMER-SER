@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–94`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–96`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -129,6 +129,11 @@ heads trained jointly with the fusion. Their per-fold predictions are precompute
 first (`scripts/expert_gate_offline.py`). Stage 2 (a training study) is only built if the
 gate beats plain averaging by > 0.86 pp paired on >= 4/5 folds — rule fixed in advance.
 Details: [`docs/EXPERTOS_CONGELADOS.md`](docs/EXPERTOS_CONGELADOS.md).
+
+Studies 95/96 are 71/73 unchanged, run with `--outer-test S` (cross-fitting: LOSO over the
+four sessions other than S, saved under `checkpoints/ablation_9X/outer_S<S>/`) so every
+training utterance gets an out-of-sample expert prediction
+(`precompute_experts.py --crossfit`).
 
 ### Recent series (58–63)
 

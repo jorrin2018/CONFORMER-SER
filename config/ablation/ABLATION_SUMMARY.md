@@ -221,4 +221,11 @@ Base: estudio 72. Cada estudio activa una clave opt-in; detalle y comandos en
 *   **93** (`ablation_93_real_pitch_shift`): pitch shift real (±2 semitonos).
 *   **94** (`ablation_94_camf_as_presented`): 88 + 90 + 91 + 93, ViT congelado.
 
-*Última actualización: octubre 2026*
+### Serie 95-96 — expertos de la compuerta con cross-fitting
+
+*   **95** (`ablation_95_expert_audio_crossfit`): el 71 sin cambios, corrido con `--outer-test S` (LOSO interno sin la sesión externa).
+*   **96** (`ablation_96_expert_text_crossfit`): el 73 sin cambios, igual.
+
+Detalle en [`docs/EXPERTOS_CONGELADOS.md`](../../docs/EXPERTOS_CONGELADOS.md).
+
+*Última actualización: noviembre 2026*

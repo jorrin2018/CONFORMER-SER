@@ -179,7 +179,7 @@ def test_run_expert_reproduces_and_checks_test_ua(tmp_path, monkeypatch):
         return out
 
     run_dir, cfg = _fake_run(tmp_path, 71, "audio")
-    monkeypatch.setattr(pre, "fold_run_dir", lambda study, fold: run_dir)
+    monkeypatch.setattr(pre, "fold_run_dir", lambda study, fold, outer=None: run_dir)
     monkeypatch.setattr(pre, "split_datasets", fake_split)
 
     # 1) calcular el UA real de este modelo y escribirlo como final_results
@@ -226,8 +226,87 @@ def test_vit_cls_features_uses_model_mel_pipeline(tmp_path, monkeypatch):
 
     torch.manual_seed(0)
     vit = tiny_vit()
-    monkeypatch.setattr(pre, "fold_run_dir", lambda s, f: run)
+    monkeypatch.setattr(pre, "fold_run_dir", lambda s, f, outer=None: run)
     monkeypatch.setattr(pre, "split_datasets", fake_split)
     monkeypatch.setattr(transformers.ViTModel, "from_pretrained", classmethod(lambda cls, *a, **k: vit))
     feats = pre.vit_cls_features(74, "cpu", 2, logging.getLogger("t"))
     assert len(feats) == 2 and next(iter(feats.values())).shape == (32,)
+
+
+# ------------------------------------------------------------- cross-fitting
+def test_outer_test_excludes_session_everywhere(tmp_path, monkeypatch):
+    import scripts.run_ablation as ra
+    vistos = []
+
+    def fake_run(study_number, config, device, experiment_name, seed_override, resume):
+        vistos.append(json.loads(json.dumps(config)))
+        return {"best_val_ua": 0.7, "test_unweighted_accuracy": 0.6,
+                "test_weighted_accuracy": 0.6, "final_epoch": 1}
+
+    monkeypatch.setattr(ra, "_run_ablation_with_config", fake_run)
+    monkeypatch.setattr(ra, "load_base_config", lambda: {})
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "checkpoints/ablation_95/outer_S1").mkdir(parents=True)   # lo crean los folds reales
+    cfg = str(ROOT / "config/ablation/ablation_95_expert_audio_crossfit.yaml")
+    ra.run_ablation_study_kfold(95, cfg, device="cpu", protocol="standard", outer_test=1)
+    assert len(vistos) == 4
+    assert sorted(c["dataset"]["test_sessions"][0] for c in vistos) == [2, 3, 4, 5]
+    for c in vistos:
+        d = c["dataset"]
+        assert 1 not in d["train_sessions"] + d["val_sessions"] + d["test_sessions"]
+        assert len(d["train_sessions"]) == 3 and d["val_fraction"] == 0.12
+        assert "outer_S1" in c["logging"]["checkpoint_dir"]
+    summ = tmp_path / "checkpoints/ablation_95/outer_S1/kfold_summary_ablation_95.json"
+    assert summ.exists()
+    assert all(f["outer_test"] == 1 for f in json.loads(summ.read_text())["folds"])
+
+
+def test_crossfit_fold_fills_every_train_utterance(monkeypatch):
+    import argparse
+    rng = np.random.default_rng(0)
+    uids, split, labels = [], {}, {}
+    for s in (2, 3, 4, 5):
+        for i in range(30):
+            u = f"Ses0{s}F_x_F{i:03d}"
+            uids.append(u)
+            split[u] = "val" if i < 4 else "train"
+            labels[u] = int(rng.integers(0, 4))
+    for i in range(20):
+        u = f"Ses01F_x_F{i:03d}"
+        uids.append(u); split[u] = "test"; labels[u] = int(rng.integers(0, 4))
+    probs = {e: {u: [0.25] * 4 for u in uids} for e in ("audio", "text", "vision")}
+    payload = {"meta": {"emotions": ["a", "h", "s", "n"], "vision": {"C": 0.1}},
+               "split": split, "labels": labels, "probs": probs}
+    llamadas = []
+
+    def fake_run_expert(study, fold, device, bs, log, outer=None, only=None):
+        llamadas.append((study, fold, outer, only))
+        mine = [u for u in uids if int(u[3:5]) == fold]
+        return {"probs": {u: [0.7, 0.1, 0.1, 0.1] for u in mine},
+                "labels": {u: labels[u] for u in mine}, "run_dir": f"r{study}_{fold}"}
+
+    monkeypatch.setattr(pre, "run_expert", fake_run_expert)
+    feats = {u: rng.normal(size=8) for u in uids}
+    args = argparse.Namespace(audio_crossfit_study=95, text_crossfit_study=96,
+                              device="cpu", batch_size=2)
+    out = pre.crossfit_fold(payload, 1, args, feats, None)
+    train = [u for u in uids if split[u] == "train"]
+    for e in ("audio", "text", "vision"):
+        assert set(out["probs_oof"][e]) == set(train)
+    assert sorted({(c[0], c[1]) for c in llamadas}) == [(95, s) for s in (2, 3, 4, 5)] + [(96, s) for s in (2, 3, 4, 5)]
+    assert all(c[2] == 1 and c[3] == ("test",) for c in llamadas)
+
+
+def test_offline_uses_oof_rows_for_train(tmp_path):
+    uids = [f"Ses02F_x_{i:03d}" for i in range(8)]
+    split = {u: ("train" if i < 4 else "val" if i < 6 else "test") for i, u in enumerate(uids)}
+    labels = {u: 0 for u in uids}
+    full = {e: {u: [0.9, 0.05, 0.03, 0.02] for u in uids} for e in off.EXPERTS}
+    oof = {e: {u: [0.1, 0.7, 0.1, 0.1] for u in uids if split[u] == "train"} for e in off.EXPERTS}
+    f = tmp_path / "fold_S1.json"
+    f.write_text(json.dumps({"meta": {"fold": 1}, "split": split, "labels": labels,
+                             "probs": full, "probs_oof": oof}))
+    meta, sp, y, P, _ = off.load_fold(f)
+    tr = sp == "train"
+    assert (P[:, tr].argmax(-1) == 1).all() and (P[:, ~tr].argmax(-1) == 0).all()
+    assert meta["_oof"]

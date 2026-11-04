@@ -55,9 +55,14 @@ def unweighted_accuracy(y: np.ndarray, pred: np.ndarray, n_classes: int) -> floa
     return float(np.mean(recalls))
 
 
-def fold_run_dir(study: int, fold: int) -> Path:
-    """La corrida que entra en el kfold_summary del estudio (no la ultima que haya)."""
-    summ = ROOT / "checkpoints" / f"ablation_{study}" / f"kfold_summary_ablation_{study}.json"
+def fold_run_dir(study: int, fold: int, outer: int = None) -> Path:
+    """La corrida que entra en el kfold_summary del estudio (no la ultima que haya).
+
+    Con `outer`, la del LOSO interno de cross-fitting (run_ablation.py --outer-test)."""
+    base = ROOT / "checkpoints" / f"ablation_{study}"
+    if outer is not None:
+        base = base / f"outer_S{outer}"
+    summ = base / f"kfold_summary_ablation_{study}.json"
     if not summ.exists():
         raise SystemExit(f"No encuentro {summ}")
     for f in json.loads(summ.read_text(encoding="utf-8"))["folds"]:
@@ -115,10 +120,13 @@ def ua_of(probs: dict, labels: dict, split: dict, which: str, n_classes: int) ->
     return unweighted_accuracy(y, pred, n_classes)
 
 
-def run_expert(study: int, fold: int, device: str, bs: int, log):
-    run_dir = fold_run_dir(study, fold)
+def run_expert(study: int, fold: int, device: str, bs: int, log, outer: int = None,
+               only=None):
+    run_dir = fold_run_dir(study, fold, outer)
     cfg = eval_config(run_dir)
     datasets = split_datasets(cfg, log)
+    if only:
+        datasets = {k: v for k, v in datasets.items() if k in only}
     model = create_ablation_model(study, cfg, device, log)
     ck = torch.load(run_dir / "best_model.pt", map_location=device, weights_only=False)
     model.load_state_dict(ck["model_state_dict"], strict=True)
@@ -127,7 +135,9 @@ def run_expert(study: int, fold: int, device: str, bs: int, log):
     ua = ua_of(probs, labels, split, "test", n_classes)
     ref = json.loads((run_dir / "final_results.json").read_text(encoding="utf-8"))
     ref_ua = float(ref["test_metrics"]["unweighted_accuracy"])
-    print(f"    estudio {study}: test UA {100 * ua:.2f}  (final_results {100 * ref_ua:.2f})")
+    donde = f"outer S{outer}, test interno S{fold}" if outer is not None else f"fold S{fold}"
+    print(f"    estudio {study} ({donde}): test UA {100 * ua:.2f}  "
+          f"(final_results {100 * ref_ua:.2f})")
     if abs(ua - ref_ua) * 100 > TOL_PP:
         raise SystemExit(
             f"  El UA de test reproducido ({100 * ua:.2f}) no coincide con el de la corrida "
@@ -137,11 +147,26 @@ def run_expert(study: int, fold: int, device: str, bs: int, log):
         torch.cuda.empty_cache()
     return dict(probs=probs, labels=labels, split=split, run_dir=str(run_dir),
                 emotions=cfg["dataset"]["emotions"], test_ua=ua, ref_test_ua=ref_ua,
-                train_ua=ua_of(probs, labels, split, "train", n_classes),
-                val_ua=ua_of(probs, labels, split, "val", n_classes))
+                train_ua=(ua_of(probs, labels, split, "train", n_classes)
+                          if "train" in datasets else None),
+                val_ua=(ua_of(probs, labels, split, "val", n_classes)
+                        if "val" in datasets else None))
 
 
 # ------------------------------------------------------------------ vision
+def vit_cls_features_cached(vision_study: int, device: str, bs: int, log, out: Path) -> dict:
+    """Como vit_cls_features, guardando/leyendo out/vit_cls_S<estudio>.npz."""
+    path = out / f"vit_cls_S{vision_study}.npz"
+    if path.exists():
+        z = np.load(path, allow_pickle=False)
+        print(f"    ViT [CLS] leido de {path} ({len(z['uids'])} utterances)")
+        return {u: f for u, f in zip(z["uids"].tolist(), z["feats"])}
+    feats = vit_cls_features(vision_study, device, bs, log)
+    uids = sorted(feats)
+    np.savez(path, uids=np.array(uids), feats=np.stack([feats[u] for u in uids]))
+    return feats
+
+
 @torch.no_grad()
 def vit_cls_features(vision_study: int, device: str, bs: int, log) -> dict:
     """[CLS] del ViT congelado para TODAS las utterances, con la tuberia log-mel del CAMF."""
@@ -204,6 +229,67 @@ def fit_vision_expert(feats: dict, labels: dict, split: dict, n_classes: int):
     return probs, C
 
 
+def vision_oof(feats: dict, labels: dict, split: dict, C: float, n_classes: int) -> dict:
+    """Experto de imagen fuera de muestra para las utterances de TRAIN del fold externo:
+    la de la sesion s sale de una logistica ajustada con las otras sesiones del fold
+    externo (train + val), con la C elegida para el fold."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    ses = {u: int(u[3:5]) for u in split}
+    dentro = [u for u in split if split[u] in ("train", "val")]
+    oof = {}
+    for s in sorted({ses[u] for u in dentro}):
+        fit = [u for u in dentro if ses[u] != s]
+        pred = [u for u in split if split[u] == "train" and ses[u] == s]
+        if not pred:
+            continue
+        X = np.stack([feats[u] for u in fit])
+        sc = StandardScaler().fit(X)
+        clf = LogisticRegression(C=C, class_weight="balanced", max_iter=3000)
+        clf.fit(sc.transform(X), np.array([labels[u] for u in fit]))
+        P = clf.predict_proba(sc.transform(np.stack([feats[u] for u in pred])))
+        oof.update({u: p.tolist() for u, p in zip(pred, P)})
+    return oof
+
+
+def crossfit_fold(payload: dict, k: int, args, feats: dict, log) -> dict:
+    """Anade payload['probs_oof']: prediccion fuera de muestra de cada experto para
+    cada utterance de TRAIN del fold externo k."""
+    split, labels = payload["split"], payload["labels"]
+    train_uids = [u for u in split if split[u] == "train"]
+    sesiones = sorted({int(u[3:5]) for u in train_uids})
+    oof, origen = {}, {}
+    for nombre, study in (("audio", args.audio_crossfit_study), ("text", args.text_crossfit_study)):
+        oof[nombre], origen[nombre] = {}, {}
+        for s in sesiones:
+            r = run_expert(study, s, args.device, args.batch_size, log, outer=k, only=("test",))
+            for u in train_uids:
+                if int(u[3:5]) == s:
+                    if u not in r["probs"]:
+                        raise SystemExit(f"  {u} (sesion {s}) no esta en el test interno de "
+                                         f"{r['run_dir']}: PARO.")
+                    if r["labels"][u] != labels[u]:
+                        raise SystemExit(f"  Etiqueta distinta para {u}: PARO.")
+                    oof[nombre][u] = r["probs"][u]
+            origen[nombre][f"S{s}"] = r["run_dir"]
+    n_classes = len(payload["meta"]["emotions"])
+    oof["vision"] = vision_oof(feats, labels, split, payload["meta"]["vision"]["C"], n_classes)
+    for e, d in oof.items():
+        falta = [u for u in train_uids if u not in d]
+        if falta:
+            raise SystemExit(f"  {len(falta)} utterances de train sin prediccion OOF de {e}: PARO.")
+        sub = {u: d[u] for u in train_uids}
+        print(f"    {e}: UA en train fuera de muestra {100 * ua_of(sub, labels, split, 'train', n_classes):.2f} "
+              f"(dentro de muestra {100 * ua_of(payload['probs'][e], labels, split, 'train', n_classes):.2f})")
+    payload["probs_oof"] = oof
+    payload["meta"]["crossfit"] = {"audio_study": args.audio_crossfit_study,
+                                   "text_study": args.text_crossfit_study,
+                                   "runs": origen,
+                                   "vision": "logistica por sesion, misma C del fold"}
+    return payload
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--audio-study", type=int, default=71)
@@ -219,6 +305,11 @@ def main() -> int:
     ap.add_argument("--out", default=str(OUT_DEFAULT))
     ap.add_argument("--force", action="store_true",
                     help="recalcular los expertos aunque el fold ya este en disco")
+    ap.add_argument("--crossfit", action="store_true",
+                    help="anadir las predicciones FUERA DE MUESTRA de train de los estudios "
+                         "95/96 (run_ablation.py --outer-test) y del experto de imagen")
+    ap.add_argument("--audio-crossfit-study", type=int, default=95)
+    ap.add_argument("--text-crossfit-study", type=int, default=96)
     args = ap.parse_args()
     if args.device == "cuda" and not torch.cuda.is_available():
         args.device = "cpu"
@@ -237,9 +328,10 @@ def main() -> int:
         print(f"  ya en disco (no se recalculan): {['S%d' % k for k in sorted(existentes)]}")
 
     feats = None
-    if pendientes:
-        print("\n  ViT congelado: extrayendo [CLS] una sola vez")
-        feats = vit_cls_features(args.vision_mel_from, args.device, args.batch_size, log)
+    if pendientes or args.crossfit:
+        print("\n  ViT congelado: [CLS] de todas las utterances")
+        feats = vit_cls_features_cached(args.vision_mel_from, args.device, args.batch_size,
+                                        log, out)
 
     for k in args.folds:
         print(f"\n  Fold S{k}")
@@ -288,6 +380,8 @@ def main() -> int:
                               "probs": ref["probs"],
                               "ua": {"train": ref["train_ua"], "val": ref["val_ua"],
                                      "test": ref["test_ua"]}}
+        if args.crossfit and "probs_oof" not in payload:
+            payload = crossfit_fold(payload, k, args, feats, log)
         path.write_text(json.dumps(payload), encoding="utf-8")
         print(f"    -> {path}")
     print("\n  Siguiente paso: python scripts\\expert_gate_offline.py\n")

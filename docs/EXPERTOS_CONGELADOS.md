@@ -123,12 +123,65 @@ python scripts\expert_gate_offline.py
 `precompute_experts.py` ya no recalcula los folds que están en disco: reanuda donde se
 quedó y, con `--ref-study`, solo añade el 74.
 
-## Etapa 2
+## Plan por pasos (decidido el 05/11/2026)
 
-Se implementa **solo si la prueba sin entrenar sale a favor**. Será un estudio nuevo
-sobre el 74: la fusión recibe `g` y `w` de la caché de expertos en lugar de calcularlos
-con los clasificadores auxiliares y la `confidence_net`. El resto del modelo y el régimen
-de entrenamiento no cambian.
+**Paso 1: expertos entrenados por separado y sin fuga.** Es lo que hay que correr ahora.
+
+**Paso 2: la compuerta original de la presentación, alimentada por los expertos.** Un
+estudio nuevo sobre el 72 (CAMF con la compuerta original): `g` sale de la discrepancia
+de los expertos congelados, en lugar de los clasificadores auxiliares, y los pesos `w`
+siguen saliendo de la `confidence_net`, como en la Ec. 9. Se compara pareado por fold con
+el 72, el 74 (sin compuerta) y el 75 (auxiliares entrenados junto con la fusión). Se
+escribe después del paso 1, cuando existan las predicciones fuera de muestra.
+
+Este paso no lo decide la prueba sin entrenar: esa prueba evalúa reglas que pesan con la
+confianza **del experto**, y la `confidence_net` solo se puede medir entrenándola.
+
+### Paso 1: cross-fitting de los expertos
+
+Para entrenar con la compuerta, cada utterance de **train** necesita la predicción de un
+experto que **no la vio**. Los checkpoints del 71 y del 73 se entrenaron con ellas:
+medido en S1-S3, dan 95-99 % de UA en train y 66-73 % en test, y la compuerta
+dispara en el 37 % de train frente al 66 % de test. Entrenar así sería entrenar con una
+compuerta casi apagada y evaluar con otra encendida.
+
+Solución, por fold externo `S` (la sesión de test de CAMF):
+
+1. Se excluye `S` y se hace LOSO sobre las otras cuatro: cada modelo interno entrena con
+   3 sesiones (más su 12 % de validación) y predice la cuarta.
+2. La predicción de cada utterance de train sale del modelo interno que dejó fuera **su**
+   sesión.
+3. Validación y test del fold externo siguen usando el experto completo (71 / 73), que
+   tampoco los vio.
+
+| Experto | Estudio | Corridas | Coste aprox. (RTX 3070) |
+|---|---|---|---|
+| Audio | **95** = el 71 sin cambios | 4 por fold externo, 20 en total | ~2 h cada una, ~40 h |
+| Texto | **96** = el 73 sin cambios | 20 | ~17 min cada una, ~6 h |
+| Imagen | logística sobre el [CLS] del ViT | se ajusta por sesión dentro de `precompute_experts.py` | segundos |
+
+`run_ablation.py --outer-test S` hace el LOSO interno y lo guarda en
+`checkpoints\ablation_9X\outer_S<S>\`. La sesión externa no entra nunca: ni en train, ni
+en validación, ni en el test interno (hay un test que lo comprueba).
+
+```powershell
+# Paso 1a: expertos internos. Un proceso por fold interno, como siempre.
+foreach ($S in 1..5) {
+  foreach ($s in (1..5 | Where-Object { $_ -ne $S })) {
+    python scripts\run_ablation.py --study 96 --outer-test $S --protocol standard --folds $s --resume --device cuda
+    python scripts\run_ablation.py --study 95 --outer-test $S --protocol standard --folds $s --resume --device cuda
+  }
+}
+# Paso 1b: predicciones fuera de muestra (inferencia; minutos)
+python scripts\precompute_experts.py --crossfit --device cuda
+# Paso 1c: comprobar que la compuerta dispara igual en train que en test
+python scripts\expert_gate_offline.py
+```
+
+Conviene empezar con un solo fold externo (`$S = 1`: ~9 h) y revisar el paso 1c antes de
+lanzar los otros cuatro. `precompute_experts.py --crossfit` reproduce el UA de test de
+cada modelo interno contra su `final_results.json` y para si no coincide, igual que con
+los expertos completos.
 
 ## Cambio colateral
 

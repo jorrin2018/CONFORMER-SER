@@ -201,7 +201,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation34Model(config)
     elif study_number == 43:
         model = Ablation43Model(config)
-    elif study_number in (66, 67, 68, 69, 70, 71, 73, 78, 80, 82, 84, 86):
+    elif study_number in (66, 67, 68, 69, 70, 71, 73, 78, 80, 82, 84, 86, 95, 96):
         # Lineas base unimodales con el mismo regimen que el 45.
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
@@ -252,7 +252,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-94 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-96 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1269,10 +1269,17 @@ def run_ablation_study_kfold(
     seed: int = None,
     protocol: str = 'standard',
     folds: list = None,
-    resume: bool = False
+    resume: bool = False,
+    outer_test: int = None
 ):
     """
     Run Ablation Study with K-Fold cross-validation.
+
+    outer_test: CROSS-FITTING. Excluye esa sesion del corpus y hace LOSO sobre las
+    otras cuatro, guardando todo bajo <checkpoint_dir>/outer_S{outer_test}/. Sirve para
+    obtener predicciones FUERA DE MUESTRA de un experto sobre las utterances de
+    entrenamiento del fold externo (precompute_experts.py --crossfit). La sesion
+    externa no entra NUNCA: ni en train, ni en validacion, ni en el test interno.
     
     Similar to LOSO but with explicit cache clearing between folds to prevent
     training freezes. Each session is used as test set once, with remaining
@@ -1301,6 +1308,19 @@ def run_ablation_study_kfold(
         combined.extend(dataset_cfg.get('val_sessions', []))
         combined.extend(dataset_cfg.get('test_sessions', []))
         all_sessions = sorted(list(set(combined)))
+
+    if outer_test is not None:
+        if protocol != 'standard':
+            raise ValueError("--outer-test solo esta definido para --protocol standard")
+        if int(outer_test) not in [int(x) for x in all_sessions]:
+            raise ValueError(f"--outer-test {outer_test} no esta en all_sessions={all_sessions}")
+        all_sessions = [int(x) for x in all_sessions if int(x) != int(outer_test)]
+        dataset_cfg['all_sessions'] = all_sessions
+        for clave in ('checkpoint_dir', 'log_dir'):
+            base_ablation_config['logging'][clave] = os.path.join(
+                base_ablation_config['logging'][clave], f"outer_S{int(outer_test)}")
+        print(f"[cross-fitting] sesion externa S{outer_test} EXCLUIDA; LOSO interno sobre "
+              f"{all_sessions}; salida en {base_ablation_config['logging']['checkpoint_dir']}")
     
     if len(all_sessions) < 2:
         raise ValueError("K-Fold requires at least 2 sessions in 'dataset.all_sessions'.")
@@ -1468,6 +1488,7 @@ def run_ablation_study_kfold(
             # puede mezclar semillas distintas en una misma media sin avisar.
             fold_metrics['seed'] = int(seed) if seed is not None else None
             fold_metrics['experiment_name'] = fold_experiment_name
+            fold_metrics['outer_test'] = int(outer_test) if outer_test is not None else None
             fold_results.append(fold_metrics)
         except Exception as e:
             print(f"Error in fold {fold_idx + 1}: {e}")
@@ -1603,7 +1624,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-94; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-96; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1637,6 +1658,10 @@ def main():
                              '--folds 4 5. Los demas se recuperan del resumen previo '
                              'si su protocolo coincide. Para reanudar tras un fallo de '
                              'GPU sin repetir folds ya terminados.')
+    parser.add_argument('--outer-test', type=int, default=None, dest='outer_test',
+                        help='Cross-fitting: excluir esta sesion y hacer LOSO sobre las '
+                             'otras cuatro (salida en <checkpoint_dir>/outer_S<N>/). Para '
+                             'los expertos de la compuerta: estudios 95 y 96.')
     parser.add_argument('--loso', '--kfold', action='store_true', dest='loso',
                         help='Force 5-fold leave-one-session-out for the requested '
                              'study, regardless of its number. Required for any '
@@ -1743,13 +1768,16 @@ def main():
         (92, "config/ablation/ablation_92_vit_partial_finetune.yaml"),  # 91 con los bloques 9-12 del ViT afinados
         (93, "config/ablation/ablation_93_real_pitch_shift.yaml"),  # 72 con pitch shift real (el historico no aplica nada)
         (94, "config/ablation/ablation_94_camf_as_presented.yaml"),  # 88+90+91+93: CAMF como lo describe la presentacion (ViT congelado)
+        # Expertos de la compuerta, con cross-fitting (--outer-test S): el 71 y el 73 sin cambios.
+        (95, "config/ablation/ablation_95_expert_audio_crossfit.yaml"),  # = 71 (audio), LOSO interno sin la sesion externa
+        (96, "config/ablation/ablation_96_expert_text_crossfit.yaml"),  # = 73 (texto), LOSO interno sin la sesion externa
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-94 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-96 (there is no study 51)")
             return
     
     # Run each study
@@ -1765,7 +1793,8 @@ def main():
                     experiment_name=experiment_name,
                     seed=args.seed
                 )
-            elif args.loso or args.protocol == 'fixed' or study_number in (20, 29, 41):
+            elif (args.loso or args.protocol == 'fixed' or args.outer_test is not None
+                  or study_number in (20, 29, 41)):
                 # Special case: Ablation 20, 29 and 41 run K-Fold cross-validation with cache clearing.
                 # --protocol fixed entra aqui SIN pedir --loso: pedir las dos cosas a
                 # la vez se lee como una contradiccion ("leave-one-session-out con
@@ -1780,7 +1809,8 @@ def main():
                     seed=args.seed,
                     protocol=args.protocol,
                     folds=args.folds,
-                    resume=args.resume
+                    resume=args.resume,
+                    outer_test=args.outer_test
                 )
             else:
                 run_ablation_study(
