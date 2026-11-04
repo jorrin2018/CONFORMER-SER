@@ -120,6 +120,16 @@ Full table, decisions and commands: [`docs/VARIANTES_PRESENTACION.md`](docs/VARI
   `scripts/fit_speechcue_stats.py --rate-source forced_alignment`.
 - `tests/tiny_encoders.py` gives tiny RANDOM encoders for offline tests only. Never train with them.
 
+### Frozen-expert gate — branch `feature/expert-gate`
+
+The conflict gate reads FROZEN unimodal experts trained beforehand (audio = study 71,
+text = study 73, vision = logistic regression on frozen ViT [CLS]) instead of linear
+heads trained jointly with the fusion. Their per-fold predictions are precomputed
+(`scripts/precompute_experts.py` -> `cache/experts/`, gitignored) and evaluated offline
+first (`scripts/expert_gate_offline.py`). Stage 2 (a training study) is only built if the
+gate beats plain averaging by > 0.86 pp paired on >= 4/5 folds — rule fixed in advance.
+Details: [`docs/EXPERTOS_CONGELADOS.md`](docs/EXPERTOS_CONGELADOS.md).
+
 ### Recent series (58–63)
 
 | Study | Focus | Model class |

@@ -44,8 +44,10 @@ def tiny_encoders():
     """Sustituye la carga de encoders preentrenados por los diminutos."""
     import src.models.conformer as conformer
     import src.ablation_studies.ablation_11_model as m11
+    import src.ablation_studies.unimodal_baseline as uni
 
     orig_load = conformer._cargar_encoder_preentrenado
+    orig_uni = uni._cargar_encoder_preentrenado
     orig_vit = m11.ViTModel
 
     def fake_load(nombre, que):
@@ -57,11 +59,13 @@ def tiny_encoders():
             return tiny_vit()
 
     conformer._cargar_encoder_preentrenado = fake_load
+    uni._cargar_encoder_preentrenado = fake_load
     m11.ViTModel = _FakeViT
     try:
         yield
     finally:
         conformer._cargar_encoder_preentrenado = orig_load
+        uni._cargar_encoder_preentrenado = orig_uni
         m11.ViTModel = orig_vit
 
 

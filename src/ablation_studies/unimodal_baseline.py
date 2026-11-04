@@ -18,8 +18,8 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel
 
-from src.models.conformer import (apply_finetuning_policy, build_layer_weights,
-                                  weighted_hidden_states)
+from src.models.conformer import (_cargar_encoder_preentrenado, apply_finetuning_policy,
+                                  build_layer_weights, weighted_hidden_states)
 from .classification_heads import MultiScaleTemporalClassificationHead
 
 
@@ -77,7 +77,10 @@ class UnimodalBaselineModel(nn.Module):
         # artificialmente mala y la conclusion sobre la fusion, invertida.
         if self.modality == "audio":
             name = mc.get("audio_encoder", "facebook/wav2vec2-base")
-            self.audio_encoder = AutoModel.from_pretrained(name)
+            # Mismo cargador que el trimodal: safetensors primero (transformers >= 5
+            # con torch < 2.6 rechaza los .bin) y falla en vez de seguir con pesos
+            # aleatorios. Antes era AutoModel.from_pretrained(name) a secas.
+            self.audio_encoder = _cargar_encoder_preentrenado(name, "audio")
             apply_finetuning_policy(
                 self.audio_encoder,
                 freeze_all=mc.get("freeze_audio_encoder", False),
@@ -86,7 +89,7 @@ class UnimodalBaselineModel(nn.Module):
             )
         elif self.modality == "text":
             name = mc.get("text_encoder", "distilbert-base-uncased")
-            self.text_encoder = AutoModel.from_pretrained(name)
+            self.text_encoder = _cargar_encoder_preentrenado(name, "texto")
             tokenizer_len = config.get("text", {}).get("_tokenizer_len")
             if tokenizer_len:
                 emb = self.text_encoder.get_input_embeddings()

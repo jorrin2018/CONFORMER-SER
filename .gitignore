@@ -100,3 +100,4 @@ check_*.py
 # ...pero los verificadores del repo NO son scripts de depuracion: son la unica
 # prueba de que los arreglos hacen lo que dicen. Van al control de versiones.
 !scripts/check_*.py
+cache/experts/
