@@ -328,7 +328,7 @@ class BaseSERDataset(Dataset):
         else:
             text_features = {'input_ids': torch.tensor([0]), 'attention_mask': torch.tensor([1])}
         
-        return {
+        item = {
             'audio': audio_features,
             'audio_length': audio_length,
             'text_input_ids': text_features['input_ids'],
@@ -337,3 +337,9 @@ class BaseSERDataset(Dataset):
             'emotion': sample['emotion'],
             'utterance_id': sample['utterance_id']
         }
+        gate = getattr(self, 'expert_gate', None)
+        if gate is not None:
+            # KeyError a proposito: una utterance sin prediccion de los expertos no
+            # puede entrenar con una compuerta inventada.
+            item['expert_g'] = float(gate[sample['utterance_id']])
+        return item

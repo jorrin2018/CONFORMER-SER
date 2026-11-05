@@ -293,7 +293,11 @@ def collate_fn(batch: List[Dict]) -> Dict:
     emotions = [item['emotion'] for item in batch]
     utterance_ids = [item['utterance_id'] for item in batch]
     
+    extra = {}
+    if 'expert_g' in batch[0]:
+        extra['expert_g'] = torch.tensor([float(item['expert_g']) for item in batch])
     return {
+        **extra,
         'audio': audio,
         'audio_lengths': audio_lengths,
         'text_input_ids': text_input_ids,

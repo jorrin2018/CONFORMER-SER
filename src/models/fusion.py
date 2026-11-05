@@ -1678,6 +1678,12 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         conflict_aware_enabled: bool = True,
         # One of: "prediction_divergence" (logits disagree), "feature_distance" (embedding cosine distance), "learned" (MLP)
         conflict_detection_method: str = "prediction_divergence",
+        # "aux" (historico): g sale de los tres clasificadores auxiliares de este modulo.
+        # "experts": g llega desde fuera (expertos congelados entrenados por separado,
+        # src/data/expert_gate.py); los auxiliares se siguen calculando para el
+        # diagnostico pero no deciden nada. Los pesos w siguen saliendo de la
+        # confidence_net en los dos casos (Ec. 9).
+        conflict_source: str = "aux",
     ):
         super().__init__()
 
@@ -1687,6 +1693,10 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         self.hidden_dim = hidden_dim
         self.conflict_threshold = conflict_threshold
         self.conflict_detection_method = conflict_detection_method
+        if conflict_source not in ("aux", "experts"):
+            raise ValueError(f"conflict_source={conflict_source!r}; use 'aux' or 'experts'")
+        self.conflict_source = conflict_source
+        self.last_expert_rate = None
         # Interruptor de la compuerta. Con False la deteccion se calcula igual pero la
         # mascara se fuerza a 0, asi que final_weights == base_weights (uniforme 1/3):
         # misma arquitectura, mismos parametros, mismas formas, la compuerta no dispara.
@@ -1938,12 +1948,15 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
         audio_features: torch.Tensor,
         text_features: torch.Tensor,
         vision_features: torch.Tensor,
+        expert_g: torch.Tensor = None,
     ) -> torch.Tensor:
         """
         Args:
             audio_features: (batch_size, audio_dim)
             text_features: (batch_size, text_dim)
             vision_features: (batch_size, vision_dim)
+            expert_g: (batch_size,) g de los expertos congelados; obligatorio con
+                conflict_source == "experts", ignorado si no.
 
         Returns:
             Logits (batch_size, num_classes)
@@ -1965,7 +1978,16 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
             audio_logits, text_logits, vision_logits,
         )  # (B,)
         self.last_conflict_rate = float(detected.detach().mean().item())
-        conflicts = detected if self.conflict_aware_enabled else torch.zeros_like(detected)
+        if self.conflict_source == "experts":
+            if expert_g is None:
+                raise RuntimeError("conflict_source='experts' sin expert_g en el forward")
+            source = expert_g.to(dtype=detected.dtype, device=detected.device).reshape(-1)
+            if source.shape != detected.shape:
+                raise RuntimeError(f"expert_g {tuple(source.shape)} != batch {tuple(detected.shape)}")
+            self.last_expert_rate = float(source.detach().mean().item())
+        else:
+            source = detected
+        conflicts = source if self.conflict_aware_enabled else torch.zeros_like(source)
 
         # Stack modalities for cross-attention
         tokens = torch.stack([audio_emb, text_emb, vision_emb], dim=1)  # (B, 3, H)
@@ -2014,6 +2036,7 @@ class ConflictAwareCrossAttentionFusion(nn.Module):
             'text_logits': text_logits.detach(),
             'vision_logits': vision_logits.detach(),
             'conflict': detected.detach(),
+            'gate': conflicts.detach(),
             'confidence': confidence_scores.detach(),
             'weights': final_weights.detach(),
         }

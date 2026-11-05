@@ -206,7 +206,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
     elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
-                          87, 88, 89, 90, 91, 92, 93, 94):
+                          87, 88, 89, 90, 91, 92, 93, 94, 97):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         # 87-94: el 72 con las variantes que alinean el codigo con la presentacion
@@ -252,7 +252,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-96 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-97 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1624,7 +1624,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-96; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-97; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1771,13 +1771,14 @@ def main():
         # Expertos de la compuerta, con cross-fitting (--outer-test S): el 71 y el 73 sin cambios.
         (95, "config/ablation/ablation_95_expert_audio_crossfit.yaml"),  # = 71 (audio), LOSO interno sin la sesion externa
         (96, "config/ablation/ablation_96_expert_text_crossfit.yaml"),  # = 73 (texto), LOSO interno sin la sesion externa
+        (97, "config/ablation/ablation_97_expert_gate_original.yaml"),  # 72 con g de los expertos congelados (cross-fitting); w de la confidence_net
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-96 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-97 (there is no study 51)")
             return
     
     # Run each study

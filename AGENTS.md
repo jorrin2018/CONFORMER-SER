@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–96`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–97`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -134,6 +134,13 @@ Studies 95/96 are 71/73 unchanged, run with `--outer-test S` (cross-fitting: LOS
 four sessions other than S, saved under `checkpoints/ablation_9X/outer_S<S>/`) so every
 training utterance gets an out-of-sample expert prediction
 (`precompute_experts.py --crossfit`).
+
+Study 97 = 72 with `model.conflict_aware.conflict_source: experts`: `create_dataloaders`
+attaches per-utterance `g` from `cache/experts/fold_S<k>.json` (out-of-fold for train),
+batches carry `expert_g`, and `ConflictAwareCrossAttentionFusion` uses it instead of its
+aux classifiers; `w` still comes from `confidence_net`. Missing cache, missing OOF or a
+missing utterance raises. Verify with `scripts/check_expert_gate.py --study 97 --fold S`.
+Default (`conflict_source` unset) is bit-identical to `main`.
 
 ### Recent series (58–63)
 

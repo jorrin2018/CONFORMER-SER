@@ -77,6 +77,37 @@ por git) y tarda unos minutos: es inferencia de dos modelos por fold más una pa
 ViT. `expert_gate_offline.py` imprime las tablas y el veredicto, y guarda
 `cache\experts\offline_summary.json`.
 
+### Paso 2: estudio 97
+
+Cómo llega `g` al modelo:
+
+1. `create_dataloaders` lee `cache\experts\fold_S<k>.json` del fold (la sesión de test) y
+   calcula `g` por utterance. En train usa la predicción fuera de muestra (cross-fitting);
+   en validación y test, el experto completo. Las dos son fuera de muestra para cada
+   utterance, así que también vale con otra semilla.
+2. Falla si el cache no tiene `probs_oof`, si es de otro fold o si falta alguna utterance.
+   Lo que no hace nunca es entrenar con una `g` inventada.
+3. Imprime en el log `Compuerta de expertos: g = 1 en el X % de train/val/test`. Las tres
+   tasas deberían parecerse; en S1 se midió 67.8 % en train y 61.8 % en test.
+4. Cada muestra lleva `expert_g` en el batch. La fusión lo usa en lugar de su detector:
+   pesos 1/3 si `g` = 0 y `confidence_net` si `g` = 1. Los clasificadores auxiliares se
+   siguen calculando solo para el diagnóstico.
+
+Con `conflict_source` sin definir (todos los estudios anteriores) el modelo es
+bit a bit el mismo que en `main`; se comprobó con los logits del 72, el 74 y el 75.
+
+```powershell
+# antes de cada fold S (con su cache de cross-fitting ya hecho)
+python scripts\check_expert_gate.py --study 97 --fold 1
+# entrenar, un proceso por fold
+python scripts\run_ablation.py --study 97 --loso --protocol standard --folds 1 --resume --device cuda
+```
+
+`check_expert_gate.py` monta el modelo y el reparto reales del fold. Comprueba que la
+tasa de `g` en train y en test difiere menos de 10 pp, que la compuerta de la fusión es
+exactamente la `g` del batch (pesos 1/3 donde vale 0 y los de la `confidence_net` donde
+vale 1) y da un paso de optimización.
+
 ## Fusión por incertidumbre: ECE y Brier
 
 Propuesta de la asesora (04/11/2026). Las dos son medidas de **calibración**: dicen si la
@@ -127,12 +158,12 @@ quedó y, con `--ref-study`, solo añade el 74.
 
 **Paso 1: expertos entrenados por separado y sin fuga.** Es lo que hay que correr ahora.
 
-**Paso 2: la compuerta original de la presentación, alimentada por los expertos.** Un
-estudio nuevo sobre el 72 (CAMF con la compuerta original): `g` sale de la discrepancia
-de los expertos congelados, en lugar de los clasificadores auxiliares, y los pesos `w`
-siguen saliendo de la `confidence_net`, como en la Ec. 9. Se compara pareado por fold con
-el 72, el 74 (sin compuerta) y el 75 (auxiliares entrenados junto con la fusión). Se
-escribe después del paso 1, cuando existan las predicciones fuera de muestra.
+**Paso 2: la compuerta original de la presentación, alimentada por los expertos.** Es el
+**estudio 97** (implementado el 05/11/2026): el 72 con un solo cambio,
+`model.conflict_aware.conflict_source: experts`. `g` sale de la discrepancia de los tres
+expertos congelados, en lugar de los clasificadores auxiliares, y los pesos `w` siguen
+saliendo de la `confidence_net`, como en la Ec. 9. Se compara pareado por fold con el 72,
+el 74 (sin compuerta) y el 75 (auxiliares entrenados junto con la fusión).
 
 Este paso no lo decide la prueba sin entrenar: esa prueba evalúa reglas que pesan con la
 confianza **del experto**, y la `confidence_net` solo se puede medir entrenándola.

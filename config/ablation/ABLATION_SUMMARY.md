@@ -225,6 +225,7 @@ Base: estudio 72. Cada estudio activa una clave opt-in; detalle y comandos en
 
 *   **95** (`ablation_95_expert_audio_crossfit`): el 71 sin cambios, corrido con `--outer-test S` (LOSO interno sin la sesión externa).
 *   **96** (`ablation_96_expert_text_crossfit`): el 73 sin cambios, igual.
+*   **97** (`ablation_97_expert_gate_original`): el 72 con la `g` de la compuerta tomada de los expertos congelados (cross-fitting); los pesos siguen saliendo de la `confidence_net`.
 
 Detalle en [`docs/EXPERTOS_CONGELADOS.md`](../../docs/EXPERTOS_CONGELADOS.md).
 

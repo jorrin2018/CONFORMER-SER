@@ -329,6 +329,7 @@ class Ablation11Model(ConformerMultimodalModel):
         text_attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         audio_lengths: Optional[torch.Tensor] = None,
+        expert_g: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward trimodal:
@@ -381,7 +382,11 @@ class Ablation11Model(ConformerMultimodalModel):
         # -----------------------------
         # Fusión trimodal
         # -----------------------------
-        logits = self.fusion(audio_pooled, text_features, vision_features)
+        if getattr(self, "uses_expert_gate", False):
+            logits = self.fusion(audio_pooled, text_features, vision_features,
+                                 expert_g=expert_g)
+        else:
+            logits = self.fusion(audio_pooled, text_features, vision_features)
 
         loss = None
         if labels is not None:

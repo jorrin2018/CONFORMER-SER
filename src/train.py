@@ -436,6 +436,21 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         subset_indices=rand_test_idx,
     )
     
+    # Compuerta alimentada por expertos congelados (model.conflict_aware.conflict_source:
+    # experts). g por utterance sale del cache de precompute_experts.py; se cuelga de
+    # los tres datasets y viaja en el batch como 'expert_g'.
+    ca_cfg = (config.get('model', {}) or {}).get('conflict_aware', {}) or {}
+    if ca_cfg.get('conflict_source', 'aux') == 'experts':
+        from src.data.expert_gate import check_coverage, load_expert_gate
+        tests = config['dataset']['test_sessions']
+        if len(tests) != 1:
+            raise ValueError("conflict_source: experts necesita UNA sesion de test (LOSO)")
+        gate = load_expert_gate(ca_cfg.get('expert_cache_dir', 'cache/experts'), tests[0])
+        for nombre, ds in (('train', train_dataset), ('val', val_dataset), ('test', test_dataset)):
+            tasa = check_coverage(gate, [d['utterance_id'] for d in ds.data], nombre)
+            ds.expert_gate = gate
+            logger.info(f"Compuerta de expertos: g = 1 en el {100 * tasa:.1f} % de {nombre}")
+
     # Choose collate function based on model type
     collate_fn_to_use = collate_fn_audio_only if audio_only else collate_fn
     

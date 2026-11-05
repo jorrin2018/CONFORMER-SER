@@ -310,3 +310,104 @@ def test_offline_uses_oof_rows_for_train(tmp_path):
     tr = sp == "train"
     assert (P[:, tr].argmax(-1) == 1).all() and (P[:, ~tr].argmax(-1) == 0).all()
     assert meta["_oof"]
+
+
+# ----------------------------------------------- paso 2: compuerta de expertos
+def _fold_cache(tmp_path, k=1, with_oof=True):
+    uids = {"Ses02F_a_F000": "train", "Ses02F_a_F001": "train",
+            "Ses03F_a_F000": "val", "Ses01F_a_F000": "test"}
+    agree, disagree = [0.7, 0.1, 0.1, 0.1], [0.1, 0.7, 0.1, 0.1]
+    # completo: todos de acuerdo; OOF de train: el texto discrepa en F000
+    probs = {e: {u: agree for u in uids} for e in off.EXPERTS}
+    probs["text"]["Ses01F_a_F000"] = disagree            # test: conflicto
+    d = {"meta": {"fold": k}, "split": uids, "labels": {u: 0 for u in uids}, "probs": probs}
+    if with_oof:
+        oof = {e: {u: agree for u, s in uids.items() if s == "train"} for e in off.EXPERTS}
+        oof["text"]["Ses02F_a_F000"] = disagree
+        d["probs_oof"] = oof
+    (tmp_path / f"fold_S{k}.json").write_text(json.dumps(d))
+
+
+def test_load_expert_gate_uses_oof_for_train(tmp_path):
+    from src.data.expert_gate import check_coverage, load_expert_gate
+    _fold_cache(tmp_path)
+    g = load_expert_gate(tmp_path, 1)
+    assert g == {"Ses02F_a_F000": 1.0, "Ses02F_a_F001": 0.0,
+                 "Ses03F_a_F000": 0.0, "Ses01F_a_F000": 1.0}
+    assert check_coverage(g, ["Ses02F_a_F000", "Ses02F_a_F001"], "train") == 0.5
+    with pytest.raises(KeyError):
+        check_coverage(g, ["Ses04M_x_M000"], "train")
+
+
+def test_load_expert_gate_refuses_in_sample_cache(tmp_path):
+    from src.data.expert_gate import load_expert_gate
+    _fold_cache(tmp_path, with_oof=False)
+    with pytest.raises(ValueError, match="probs_oof"):
+        load_expert_gate(tmp_path, 1)
+    with pytest.raises(ValueError, match="fold"):
+        _fold_cache(tmp_path, k=2)
+        (tmp_path / "fold_S2.json").rename(tmp_path / "fold_S3.json")
+        load_expert_gate(tmp_path, 3)
+
+
+def test_fusion_gate_comes_from_experts():
+    from src.models.fusion import ConflictAwareCrossAttentionFusion
+    torch.manual_seed(0)
+    f = ConflictAwareCrossAttentionFusion(16, 16, 16, hidden_dim=32, num_classes=4,
+                                          num_heads=4, num_layers=1, dropout=0.0,
+                                          conflict_source="experts").eval()
+    x = [torch.randn(4, 16) for _ in range(3)]
+    g = torch.tensor([0.0, 1.0, 0.0, 1.0])
+    f(*x, expert_g=g)
+    d = f.last_diag
+    assert torch.equal(d["gate"], g)
+    assert torch.allclose(d["weights"][g == 0], torch.full((2, 3), 1 / 3))
+    c = d["confidence"][g == 1]
+    assert torch.allclose(d["weights"][g == 1], c / c.sum(-1, keepdim=True), atol=1e-6)
+    with pytest.raises(RuntimeError, match="expert_g"):
+        f(*x)
+    # por defecto ('aux') sigue igual: ignora expert_g
+    h = ConflictAwareCrossAttentionFusion(16, 16, 16, hidden_dim=32, num_classes=4,
+                                          num_heads=4, num_layers=1, dropout=0.0).eval()
+    h(*x)
+    assert torch.equal(h.last_diag["gate"], h.last_diag["conflict"])
+
+
+def test_dataset_and_collate_carry_expert_g(tmp_path):
+    from src.data.dataset import collate_fn
+    from src.data.preprocessing import AudioPreprocessor, TextPreprocessor
+    paths = _write_wavs(tmp_path, secs=(1.0, 1.2))
+    _FakeCorpus.WAVS = paths
+    ds = _FakeCorpus(data_path=".", sessions=[1], emotions=["angry"], sample_rate=16000,
+                     audio_preprocessor=AudioPreprocessor(sample_rate=16000),
+                     text_preprocessor=TextPreprocessor(model_name=LOCAL_TOKENIZER, max_length=16),
+                     max_audio_length=2.0, training=False)
+    assert "expert_g" not in ds[0]
+    ds.expert_gate = {d["utterance_id"]: float(i % 2) for i, d in enumerate(ds.data)}
+    b = collate_fn([ds[0], ds[1]])
+    assert b["expert_g"].tolist() == [0.0, 1.0]
+    ds.expert_gate = {}
+    with pytest.raises(KeyError):
+        ds[0]
+
+
+def test_study_97_model_requires_expert_g():
+    from scripts.run_ablation import create_ablation_model, load_ablation_config
+    from src.models.forward_utils import multimodal_forward
+    from tests.tiny_encoders import offline_config
+    path = str(ROOT / "config/ablation/ablation_97_expert_gate_original.yaml")
+    cfg = offline_config(load_ablation_config(path, {}))
+    with tiny_encoders():
+        m = create_ablation_model(97, cfg, "cpu", logging.getLogger("t")).eval()
+    assert m.uses_expert_gate and m.fusion.conflict_source == "experts"
+    B = 3
+    batch = {"expert_g": torch.tensor([1.0, 0.0, 1.0])}
+    audio = torch.randn(B, 16000)
+    ids = torch.randint(1000, 2000, (B, 12))
+    mask = torch.ones(B, 12, dtype=torch.long)
+    with torch.no_grad():
+        out = multimodal_forward(m, audio, ids, mask, batch=batch)
+    assert out["logits"].shape == (B, 4)
+    assert torch.equal(m.fusion.last_diag["gate"], batch["expert_g"])
+    with pytest.raises(RuntimeError, match="expert_g"):
+        multimodal_forward(m, audio, ids, mask, batch={})

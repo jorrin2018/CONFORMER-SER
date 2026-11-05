@@ -76,7 +76,10 @@ class Ablation34Model(Ablation25Model):
             # hacia nada. Una ablacion hecha con esa clave habria salido identica y
             # habriamos concluido "la compuerta no aporta" por el motivo equivocado.
             conflict_aware_enabled=conflict_config.get("enabled", True),
+            conflict_source=conflict_config.get("conflict_source", "aux"),
         )
+        # Lo lee multimodal_forward para pasar 'expert_g' del batch.
+        self.uses_expert_gate = conflict_config.get("conflict_source", "aux") == "experts"
         fusion_output_dim = self.hidden_dim // 2
 
         head_type = model_config.get("classification_head_type", "lstm")
@@ -268,12 +271,13 @@ class Ablation34Model(Ablation25Model):
         text_attention_mask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         audio_lengths: Optional[torch.Tensor] = None,
+        expert_g: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         if self.fusion_type == "gated_interactive_attention":
             return self._forward_bimodal(audio, text_input_ids, text_attention_mask, labels)
 
         return super().forward(audio, text_input_ids, text_attention_mask, labels,
-                               audio_lengths=audio_lengths)
+                               audio_lengths=audio_lengths, expert_g=expert_g)
 
     def _forward_bimodal(
         self,
