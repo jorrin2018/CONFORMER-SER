@@ -381,6 +381,9 @@ def main() -> int:
                               "ua": {"train": ref["train_ua"], "val": ref["val_ua"],
                                      "test": ref["test_ua"]}}
         if args.crossfit and "probs_oof" not in payload:
+            # Guardar ANTES los expertos completos: si falta alguna corrida interna, el
+            # cross-fitting para, y al reintentar no hay que repetir 71/73.
+            path.write_text(json.dumps(payload), encoding="utf-8")
             payload = crossfit_fold(payload, k, args, feats, log)
         path.write_text(json.dumps(payload), encoding="utf-8")
         print(f"    -> {path}")

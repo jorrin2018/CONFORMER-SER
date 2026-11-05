@@ -197,10 +197,11 @@ en validación, ni en el test interno (hay un test que lo comprueba).
 
 ```powershell
 # Paso 1a: expertos internos. Un proceso por fold interno, como siempre.
-foreach ($S in 1..5) {
-  foreach ($s in (1..5 | Where-Object { $_ -ne $S })) {
-    python scripts\run_ablation.py --study 96 --outer-test $S --protocol standard --folds $s --resume --device cuda
-    python scripts\run_ablation.py --study 95 --outer-test $S --protocol standard --folds $s --resume --device cuda
+# OJO: en PowerShell las variables NO distinguen mayusculas ($S y $s son la misma).
+foreach ($outer in 1..5) {
+  foreach ($inner in (1..5 | Where-Object { $_ -ne $outer })) {
+    python scripts\run_ablation.py --study 96 --outer-test $outer --protocol standard --folds $inner --resume --device cuda
+    python scripts\run_ablation.py --study 95 --outer-test $outer --protocol standard --folds $inner --resume --device cuda
   }
 }
 # Paso 1b: predicciones fuera de muestra (inferencia; minutos)
@@ -209,7 +210,7 @@ python scripts\precompute_experts.py --crossfit --device cuda
 python scripts\expert_gate_offline.py
 ```
 
-Conviene empezar con un solo fold externo (`$S = 1`: ~9 h) y revisar el paso 1c antes de
+Conviene empezar con un solo fold externo (`$outer = 1`: ~9 h) y revisar el paso 1c antes de
 lanzar los otros cuatro. `precompute_experts.py --crossfit` reproduce el UA de test de
 cada modelo interno contra su `final_results.json` y para si no coincide, igual que con
 los expertos completos.
