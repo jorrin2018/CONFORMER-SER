@@ -411,3 +411,9 @@ def test_study_97_model_requires_expert_g():
     assert torch.equal(m.fusion.last_diag["gate"], batch["expert_g"])
     with pytest.raises(RuntimeError, match="expert_g"):
         multimodal_forward(m, audio, ids, mask, batch={})
+
+
+def test_write_atomic_and_corrupt_cache_is_recomputed(tmp_path):
+    p = tmp_path / "fold_S5.json"
+    pre._write_atomic(p, {"a": 1})
+    assert json.loads(p.read_text()) == {"a": 1} and not (tmp_path / "fold_S5.json.tmp").exists()

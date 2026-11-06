@@ -290,6 +290,18 @@ def crossfit_fold(payload: dict, k: int, args, feats: dict, log) -> dict:
     return payload
 
 
+def _write_atomic(path: Path, payload: dict) -> None:
+    """Escribir en un temporal y renombrar: si el disco se llena, el fichero anterior
+    queda intacto en vez de convertirse en uno de 0 bytes."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--audio-study", type=int, default=71)
@@ -320,9 +332,17 @@ def main() -> int:
 
     # Los folds ya escritos no se recalculan: si la corrida se corto en S3, se
     # reanuda en S4. Con --ref-study solo se anade la referencia a lo que ya hay.
-    existentes = {k: json.loads((out / f"fold_S{k}.json").read_text(encoding="utf-8"))
-                  for k in args.folds
-                  if (out / f"fold_S{k}.json").exists() and not args.force}
+    existentes = {}
+    for k in args.folds:
+        f = out / f"fold_S{k}.json"
+        if not f.exists() or args.force:
+            continue
+        try:
+            existentes[k] = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Un fichero a medias (p. ej. disco lleno el 06/11/2026 dejo uno de 0 bytes)
+            # no es un fold terminado: se recalcula.
+            print(f"  [aviso] {f} esta vacio o corrupto ({f.stat().st_size} bytes): se recalcula")
     pendientes = [k for k in args.folds if k not in existentes]
     if existentes:
         print(f"  ya en disco (no se recalculan): {['S%d' % k for k in sorted(existentes)]}")
@@ -383,9 +403,9 @@ def main() -> int:
         if args.crossfit and "probs_oof" not in payload:
             # Guardar ANTES los expertos completos: si falta alguna corrida interna, el
             # cross-fitting para, y al reintentar no hay que repetir 71/73.
-            path.write_text(json.dumps(payload), encoding="utf-8")
+            _write_atomic(path, payload)
             payload = crossfit_fold(payload, k, args, feats, log)
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        _write_atomic(path, payload)
         print(f"    -> {path}")
     print("\n  Siguiente paso: python scripts\\expert_gate_offline.py\n")
     return 0
