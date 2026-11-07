@@ -2890,3 +2890,130 @@ corregir en la presentación y comandos: `docs/VARIANTES_PRESENTACION.md`.
 De paso se eliminó otro `except Exception` que degradaba en silencio: si el ViT no
 cargaba, `Ablation11Model` seguía con un ViT aleatorio (punto pendiente de la sección 13).
 
+
+---
+
+## 15. EXPERTOS CONGELADOS Y FUSIÓN POR INCERTIDUMBRE — prueba sin entrenar, 5 folds (7 nov 2026)
+
+Pregunta: si los clasificadores que deciden el conflicto se entrenan **antes y por
+separado**, uno por modalidad, y se congelan, ¿ponderar las ramas por su confianza (o por
+su calibración, ECE / Brier, propuesta de la asesora) le gana a promediarlas? Método,
+código y comandos: `docs/EXPERTOS_CONGELADOS.md` (rama `feature/expert-gate`).
+
+### Procedencia
+
+| Pieza | De dónde sale |
+|---|---|
+| Experto de audio | estudio 71 (wav2vec2-base, LOSO `standard`, semilla 42), `best_model.pt` de la corrida del `kfold_summary` |
+| Experto de texto | estudio 73 (DistilBERT, mismo protocolo) |
+| Experto de imagen | regresión logística sobre el [CLS] del ViT congelado (log-mel del 74), `C` por UA de validación |
+| Predicciones de train fuera de muestra | estudios 95 / 96 = 71 / 73 sin cambios con `--outer-test S`: 40 corridas internas, 4 por fold externo y modalidad |
+| Cálculo | `scripts/precompute_experts.py --crossfit`, `scripts/expert_gate_offline.py` → `cache/experts/offline_summary.json` |
+| Reparto | el del 74 con semilla 42: las mismas cuatro sesiones de train y el mismo 12 % de validación por fold |
+
+`precompute_experts.py` reprodujo el UA de test de cada uno de los 50 checkpoints (10
+completos y 40 internos) contra su `final_results.json`, dentro de 0.5 pp.
+
+### El cross-fitting era necesario, y funcionó
+
+Sin cross-fitting, los expertos ven en train utterances con las que se entrenaron: 95-99 %
+de UA en train frente a 66-73 % en test. La compuerta se activaba en el **36.7 % de train y
+el 61.8 % de test** (fold S1). Con las predicciones fuera de muestra:
+
+| Fold | g train | g val | g test | audio train − test | texto train − test |
+|---|---|---|---|---|---|
+| S1 | 67.79 | 54.68 | 61.75 | −2.60 | −1.75 |
+| S2 | 67.15 | 60.26 | 65.79 | −7.60 | −8.55 |
+| S3 | 66.32 | 59.89 | 69.68 | +1.87 | +2.14 |
+| S4 | 66.19 | 59.26 | 67.02 | +2.44 | −1.15 |
+| S5 | 67.05 | 59.61 | 65.51 | −2.59 | −0.99 |
+| **media** | **66.9** | | **66.0** | | |
+
+### UA de test por fold (%)
+
+| Fold | audio | texto | imagen | promedio | compuerta | 74 | oráculo |
+|---|---|---|---|---|---|---|---|
+| S1 | 70.97 | 66.92 | 60.76 | 76.00 | 75.88 | 75.66 | 90.39 |
+| S2 | 73.42 | 73.06 | 50.69 | 79.07 | 80.01 | 80.25 | 92.85 |
+| S3 | 66.23 | 64.33 | 51.24 | 72.81 | 72.25 | 71.96 | 88.55 |
+| S4 | 65.59 | 67.57 | 52.82 | 71.63 | 71.86 | 75.49 | 91.63 |
+| S5 | 68.75 | 67.24 | 56.00 | 73.64 | 73.62 | 74.05 | 90.43 |
+| **media** | **68.99** | **67.82** | **54.30** | **74.63** | **74.72** | **75.48** | **90.77** |
+
+Las medias de audio y texto son las del 71 y el 73: los checkpoints se cargaron bien.
+
+### Pareado por fold contra el promedio (pp, UA de test)
+
+Regla fijada **antes** de ver los números: una fusión merece versión entrenada solo si
+gana por más de 0.86 pp (banda de re-ejecución, sección 7) en al menos 4/5 folds.
+
+| Regla | UA media | Δ ± σ | t(4) | folds a favor |
+|---|---|---|---|---|
+| promedio calibrado (T por experto) | 74.85 | +0.22 ± 0.32 | +1.50 | 4/5 |
+| fiabilidad (curva de la ECE en val) | 74.81 | +0.18 ± 0.51 | +0.81 | 4/5 |
+| producto de expertos calibrados | 74.93 | +0.30 ± 1.13 | +0.59 | 3/5 |
+| compuerta calibrada | — | +0.12 ± 0.39 | +0.67 | 4/5 |
+| compuerta (confianza del experto) | 74.72 | +0.09 ± 0.55 | +0.37 | 2/5 |
+| selección del más seguro | 74.17 | −0.46 ± 0.55 | −1.86 | 1/5 |
+| peso 1/Brier | 73.94 | −0.69 ± 0.54 | −2.86 | 1/5 |
+| voto | 73.79 | −0.84 ± 0.47 | −3.98 | 0/5 |
+
+**Ninguna pasa la regla.** Las que van a favor lo hacen por menos de un tercio de la banda
+de ruido.
+
+En las muestras de test con conflicto (g = 1, el 66 %), el promedio acierta el 64.96 % y el
+oráculo el 90.51 %. Son **25.6 pp de margen que ninguna regla basada en confianza o
+calibración recupera**. Es el mismo patrón que en los estudios 75 y 76 (sección 5), ahora
+con expertos completos, entrenados por separado y que no se adaptan con la fusión: el
+resultado no dependía de que el detector se entrenara junto con la fusión.
+
+### La fusión tardía de expertos empata con el 74
+
+Promedio de los tres expertos congelados frente al trimodal 74: **−0.85 ± 1.85 pp,
+t(4) = −1.03, 2/5 folds a favor** (74.63 frente a 75.48). El 74 solo gana claro en S4
+(+3.86). Con tres folds había salido +0.01: la cuarta y la quinta sesión movieron la
+media, y sigue dentro del ruido.
+
+Para el artículo: **entrenar los tres flujos juntos no supera de forma significativa a
+promediar tres modelos entrenados por separado.** Es la línea base que un revisor
+pediría, y hay que reportarla.
+
+### Calibración (test, media de 5 folds)
+
+| | ECE (15 bins) | Brier | NLL |
+|---|---|---|---|
+| audio, crudo / con T | 0.197 / 0.105 | 0.523 / 0.489 | 1.059 / 0.943 |
+| texto, crudo / con T | 0.181 / 0.077 | 0.519 / 0.487 | 1.036 / 0.931 |
+| imagen, crudo / con T | 0.082 / 0.069 | 0.602 / 0.581 | 1.086 / 1.041 |
+| promedio | 0.090 | 0.389 | 0.727 |
+| compuerta | 0.064 | 0.382 | 0.715 |
+| promedio de expertos calibrados | 0.153 | 0.410 | 0.776 |
+| **promedio + T después de fusionar** | **0.042** | **0.376** | **0.707** |
+| **compuerta + T después de fusionar** | **0.039** | **0.378** | **0.707** |
+
+1. Los expertos de audio y texto están **sobreconfiados** (ECE ~0.19; T ajustada 1.3-1.7).
+2. Promediar tres expertos ya corrige buena parte (0.090).
+3. Calibrarlos uno por uno y **después** promediar empeora: la mezcla queda
+   **infraconfiada** cuando discrepan (0.153).
+4. Lo que funciona es una temperatura **sobre la salida fusionada** (T < 1, la afila):
+   ECE 0.042, menos de la mitad, con el UA intacto. Ésa es la contribución defendible de
+   la línea ECE / Brier: calidad de la incertidumbre, no exactitud.
+
+**Limitación que hay que declarar.** En el protocolo `standard`, la validación sale de los
+mismos hablantes que el train. La ECE de los expertos en validación (0.03-0.09) es menor que
+en test (0.08-0.20), así que toda temperatura ajustada en validación subestima la
+sobreconfianza ante hablantes nuevos.
+
+### Qué queda en pie y qué sigue
+
+| Resultado | Estado |
+|---|---|
+| El cross-fitting iguala la tasa de g entre train y test (66.9 / 66.0 %) | **En pie** |
+| Ninguna regla de pesos por confianza o calibración supera al promedio | **En pie**, 5 folds, una semilla |
+| Fusión tardía de expertos ≈ 74 (−0.85 ± 1.85) | **En pie como empate**; no afirmar superioridad en ningún sentido |
+| Temperatura sobre la fusión: ECE 0.090 → 0.042 | **En pie**; declarar que T se ajusta en una validación con los mismos hablantes |
+| La compuerta original con g de los expertos y w de la `confidence_net` | **Sin medir.** Es el estudio 97; la prueba sin entrenar no lo decide, porque no puede evaluar la `confidence_net` |
+
+El 97 está implementado y verificado (`scripts/check_expert_gate.py`). Los antecedentes
+(75, 76 y esta sección) apuntan a un nulo; correrlo cierra la pregunta con el método que
+describe la presentación.
