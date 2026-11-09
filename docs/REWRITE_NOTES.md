@@ -3012,8 +3012,46 @@ sobreconfianza ante hablantes nuevos.
 | Ninguna regla de pesos por confianza o calibración supera al promedio | **En pie**, 5 folds, una semilla |
 | Fusión tardía de expertos ≈ 74 (−0.85 ± 1.85) | **En pie como empate**; no afirmar superioridad en ningún sentido |
 | Temperatura sobre la fusión: ECE 0.090 → 0.042 | **En pie**; declarar que T se ajusta en una validación con los mismos hablantes |
-| La compuerta original con g de los expertos y w de la `confidence_net` | **Sin medir.** Es el estudio 97; la prueba sin entrenar no lo decide, porque no puede evaluar la `confidence_net` |
+| La compuerta original con g de los expertos y w de la `confidence_net` | **Nulo**: estudio 97, abajo |
 
-El 97 está implementado y verificado (`scripts/check_expert_gate.py`). Los antecedentes
-(75, 76 y esta sección) apuntan a un nulo; correrlo cierra la pregunta con el método que
-describe la presentación.
+### RESULTADO DEL ESTUDIO 97 (9 nov 2026): la compuerta original tampoco aporta con expertos buenos
+
+El 97 es el 72 con un solo cambio: `g` sale de los tres expertos congelados con
+cross-fitting, y `w` de la `confidence_net`, como en la Ec. 9. LOSO `standard`, semilla del
+config (42), ningún fold reanudado. El log de cada fold confirma que la compuerta usó la
+`g` de los expertos, con las mismas tasas que el cache (train / val / test, %): S1
+67.8 / 54.7 / 61.8, S2 67.2 / 60.3 / 65.8, S3 66.3 / 59.9 / 69.7, S4 66.2 / 59.3 / 67.0,
+S5 67.0 / 59.6 / 65.5.
+
+| Fold (test) | 72 rota | 74 sin compuerta | 75 auxiliar entrenado | 76 + confianza calibrada | **97 expertos congelados** |
+|---|---|---|---|---|---|
+| S1 | 74.70 | 75.66 | 75.52 | 74.91 | 74.84 |
+| S2 | 81.22 | 80.25 | 81.13 | 79.86 | 81.39 |
+| S3 | 69.86 | 71.96 | 73.14 | 73.69 | 73.43 |
+| S4 | 74.60 | 75.49 | 74.38 | 75.17 | 73.97 |
+| S5 | 73.20 | 74.05 | 72.79 | 72.28 | 72.36 |
+| **media** | 74.71 | **75.48** | 75.39 | 75.18 | **75.20 ± 3.20** |
+
+| Comparación pareada | Efecto (pp) | t(4) | folds a favor |
+|---|---|---|---|
+| 97 vs 74 (expertos vs sin compuerta) | **−0.29 ± 1.49** | −0.43 | 2/5 |
+| 97 vs 75 (expertos vs auxiliar entrenado) | −0.19 ± 0.44 | −0.98 | 2/5 |
+| 97 vs 76 | +0.01 ± 0.98 | +0.03 | 2/5 |
+| 97 vs 72 (expertos vs compuerta rota) | +0.48 ± 1.79 | +0.60 | 3/5 |
+
+**La compuerta de conflicto no aporta en ninguna de sus cuatro formas**: rota (72), con el
+detector entrenado junto con la fusión (75), con la confianza además calibrada (76) y con
+la detección hecha por **expertos completos, entrenados por separado, congelados y sin
+fuga** (97). Las cuatro empatan con quitarla (74), dentro de la banda de ±0.86 pp.
+
+Esto cierra la última objeción posible, «el detector era malo». En el 97 el detector es el
+mejor disponible (cada experto es la línea base unimodal completa) y su señal es igual de
+frecuente en train y en test. Aun así, el resultado no se mueve. Con la prueba sin
+entrenar de esta sección (ninguna regla de pesos por confianza o calibración supera al
+promedio, con un margen de oráculo de 25.6 pp sin explotar), la conclusión es la misma
+por dos caminos independientes: **en IEMOCAP 4 clases, saber que las modalidades
+discrepan no indica cuál de ellas acierta.**
+
+**El modelo del artículo sigue siendo el 74.** «Conflict-Aware» no vuelve al título. El
+97 entra en la subsección de análisis de la compuerta, como cuarta configuración y como la
+más fuerte de todas.
