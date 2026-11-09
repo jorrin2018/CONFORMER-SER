@@ -41,6 +41,10 @@ def create_ablation_optimizer(
     lr_text = float(training_config.get('learning_rate_text', 2e-5))
     lr_fusion = float(training_config.get('learning_rate_fusion', 5e-5))
     lr_classifier = float(training_config.get('learning_rate_classifier', lr_fusion))
+    # Capas nuevas de co-atencion audio<->texto (estudio 101). Solo existe grupo propio
+    # si el config lo pide; sin la clave, nada cambia para las corridas anteriores.
+    lr_crossmodal = training_config.get('learning_rate_crossmodal')
+    lr_crossmodal = None if lr_crossmodal is None else float(lr_crossmodal)
     weight_decay = training_config.get('weight_decay', 0.1)
     adam_epsilon = float(training_config.get('adam_epsilon', 1e-8))
 
@@ -69,6 +73,7 @@ def create_ablation_optimizer(
         text_params = []
         fusion_params = []
         classifier_params = []
+        crossmodal_params = []
 
         use_classifier_lr = training_config.get('learning_rate_classifier') is not None
 
@@ -79,7 +84,9 @@ def create_ablation_optimizer(
             # studies_with_separate_lr) y create_optimizer() en src/train.py, que
             # agrupa por subcadena. 'audio_encoder_layer_logits' contiene
             # 'audio_encoder', asi que cae en el grupo de audio en los dos.
-            if 'audio_encoder' in name or name == 'wavlm_layer_logits':
+            if lr_crossmodal is not None and name.startswith('crossmodal.'):
+                crossmodal_params.append(param)
+            elif 'audio_encoder' in name or name == 'wavlm_layer_logits':
                 audio_params.append(param)
             elif 'text_encoder' in name:
                 text_params.append(param)
@@ -97,6 +104,16 @@ def create_ablation_optimizer(
             param_groups.append({'params': text_params, 'lr': lr_text, 'weight_decay': weight_decay})
         if fusion_params:
             param_groups.append({'params': fusion_params, 'lr': lr_fusion, 'weight_decay': weight_decay})
+        if crossmodal_params:
+            param_groups.append({'params': crossmodal_params, 'lr': lr_crossmodal,
+                                 'weight_decay': weight_decay})
+        elif any(n.startswith('crossmodal.') for n, q in model.named_parameters()
+                 if q.requires_grad):
+            warnings.warn(
+                "El modelo tiene capas 'crossmodal' pero el config no define "
+                "training.learning_rate_crossmodal: entrenan con lr_fusion "
+                f"({lr_fusion}) y, al ser capas nuevas, apenas se moveran.",
+                UserWarning, stacklevel=2)
         if classifier_params:
             param_groups.append({
                 'params': classifier_params,

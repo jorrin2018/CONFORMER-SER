@@ -101,3 +101,4 @@ check_*.py
 # prueba de que los arreglos hacen lo que dicen. Van al control de versiones.
 !scripts/check_*.py
 cache/experts/
+cache/asr/

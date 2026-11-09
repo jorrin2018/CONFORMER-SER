@@ -253,6 +253,32 @@ class Ablation11Model(ConformerMultimodalModel):
         if self._weighted_hidden_states:
             self.audio_encoder_layer_logits = build_layer_weights(self.audio_encoder)
 
+        # -----------------------------
+        # Estudios 98 y 101 (ambos opt-in; por defecto = el 74 tal cual)
+        # -----------------------------
+        # vision_stream: "off" quita la INFORMACION de la rama ViT sin tocar la
+        #   arquitectura: el ViT no se ejecuta y su vector se sustituye por ceros, asi
+        #   que vision_proj(0) = su sesgo, un token constante aprendido. Mismos
+        #   parametros, misma fusion de tres tokens; lo unico que desaparece es lo que
+        #   el ViT ve del log-mel. Es la ablacion audio+texto del 74 (estudio 98).
+        self._vision_stream = str(model_config.get("vision_stream", "on"))
+        if self._vision_stream not in ("on", "off"):
+            raise ValueError(f"model.vision_stream={self._vision_stream!r}; use 'on' u 'off'")
+        # crossmodal_attention: co-atencion frames de audio <-> tokens de texto ANTES
+        #   del pooling (estudio 101). Ver src/models/crossmodal.py.
+        cm_cfg = model_config.get("crossmodal_attention", {}) or {}
+        self.crossmodal = None
+        if cm_cfg.get("enabled", False):
+            from src.models.crossmodal import CrossModalCoAttention
+            self.crossmodal = CrossModalCoAttention(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                num_heads=int(cm_cfg.get("num_heads", 8)),
+                num_layers=int(cm_cfg.get("num_layers", 1)),
+                dropout=float(cm_cfg.get("dropout", 0.1)),
+                ffn_mult=int(cm_cfg.get("ffn_mult", 2)),
+            )
+
     def _audio_frame_mask(self, audio_lengths: torch.Tensor, num_frames: int) -> torch.Tensor:
         """(B,) muestras reales -> (B, num_frames) mascara float de frames reales."""
         fn = getattr(self.audio_encoder, "_get_feat_extract_output_lengths", None)
@@ -347,14 +373,11 @@ class Ablation11Model(ConformerMultimodalModel):
         else:
             audio_outputs = self.audio_encoder(audio)
             audio_features = audio_outputs.last_hidden_state  # (B, S, H_a)
+        frame_mask = None
         if self._audio_masked_pooling:
             if audio_lengths is None:
                 raise RuntimeError("audio_masked_pooling necesita audio_lengths en el forward")
             frame_mask = self._audio_frame_mask(audio_lengths, audio_features.size(1))
-            audio_pooled = self.pool_audio_features(
-                audio_features, frame_mask.to(audio_features.dtype))  # (B, H_a)
-        else:
-            audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
 
         # -----------------------------
         # Texto
@@ -363,21 +386,39 @@ class Ablation11Model(ConformerMultimodalModel):
             input_ids=text_input_ids,
             attention_mask=text_attention_mask,
         )
-        text_features = text_outputs.last_hidden_state[:, 0, :]  # CLS (B, H_t)
+        text_seq = text_outputs.last_hidden_state  # (B, S_t, H_t)
+
+        # Co-atencion audio <-> texto antes del pooling (estudio 101). Sin ella, las
+        # dos secuencias pasan intactas, como en el 74.
+        if getattr(self, "crossmodal", None) is not None:
+            audio_features, text_seq = self.crossmodal(
+                audio_features, text_seq, text_attention_mask, frame_mask)
+
+        if frame_mask is not None:
+            audio_pooled = self.pool_audio_features(
+                audio_features, frame_mask.to(audio_features.dtype))  # (B, H_a)
+        else:
+            audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
+        text_features = text_seq[:, 0, :]  # CLS (B, H_t)
 
         # -----------------------------
         # Visión: Mel-espectrograma -> imagen -> ViT
         # -----------------------------
-        vit_images = self._waveform_to_vit_image(audio, audio_lengths)  # (B, 3, H, W)
-        vit_images = vit_images.to(audio.device)
-
-        vision_outputs = self.vision_encoder(pixel_values=vit_images)
-        if self._vision_feature == "cls":
-            vision_features = vision_outputs.last_hidden_state[:, 0, :]  # [CLS] tras LayerNorm
-        elif hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
-            vision_features = vision_outputs.pooler_output  # (B, H_v)
+        if getattr(self, "_vision_stream", "on") == "off":
+            # Estudio 98: sin la informacion del ViT (ver __init__).
+            vision_features = audio_pooled.new_zeros(
+                audio_pooled.size(0), self.vision_encoder.config.hidden_size)
         else:
-            vision_features = vision_outputs.last_hidden_state[:, 0, :]  # CLS
+            vit_images = self._waveform_to_vit_image(audio, audio_lengths)  # (B, 3, H, W)
+            vit_images = vit_images.to(audio.device)
+
+            vision_outputs = self.vision_encoder(pixel_values=vit_images)
+            if self._vision_feature == "cls":
+                vision_features = vision_outputs.last_hidden_state[:, 0, :]  # [CLS] tras LayerNorm
+            elif hasattr(vision_outputs, "pooler_output") and vision_outputs.pooler_output is not None:
+                vision_features = vision_outputs.pooler_output  # (B, H_v)
+            else:
+                vision_features = vision_outputs.last_hidden_state[:, 0, :]  # CLS
 
         # -----------------------------
         # Fusión trimodal

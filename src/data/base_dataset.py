@@ -69,6 +69,7 @@ class BaseSERDataset(Dataset):
         exclude_speakers: Optional[List[str]] = None,
         subset_indices: Optional[List[int]] = None,
         pad_after_preprocessing: bool = False,
+        transcript_override: Optional[Dict[str, str]] = None,
     ):
         """
         Args:
@@ -99,6 +100,10 @@ class BaseSERDataset(Dataset):
                 ruido, la normalizacion z y los pasos del modelo ven el relleno. True:
                 aumento y normalizacion sobre el enunciado real, relleno al final.
                 En los dos casos la muestra lleva 'audio_length' (muestras reales).
+            transcript_override: utterance_id -> texto. Sustituye la transcripcion del
+                corpus (estudio 100: texto de ASR en lugar del manual). Cada utterance
+                cargada tiene que estar en el mapa; si falta alguna se lanza un error en
+                vez de mezclar texto manual y de ASR en silencio.
             strict_integrity: If True, raise if the loaded corpus does not match the
                 IEMOCAP 4-class contract (see _assert_integrity). Disable only for
                 tests or debugging on a subset - never for a run that goes in a paper.
@@ -119,6 +124,7 @@ class BaseSERDataset(Dataset):
         self.speechcue_tertiles = speechcue_tertiles
         self.speechcue_stats = speechcue_stats
         self._speechcue_missing = 0
+        self.transcript_override = transcript_override
         
         # Prosody cue extractor (optional, for SpeechCue-style prompts)
         if use_prosody_cues:
@@ -150,6 +156,19 @@ class BaseSERDataset(Dataset):
         data = self._collect_records()
 
         self._assert_integrity(data)
+
+        if self.transcript_override is not None:
+            faltan = [d['utterance_id'] for d in data
+                      if d['utterance_id'] not in self.transcript_override]
+            if faltan:
+                raise KeyError(
+                    f"[{self.CORPUS}] {len(faltan)} utterances sin transcripcion en el "
+                    f"mapa de ASR (p. ej. {faltan[:3]}). Corre scripts/transcribe_asr.py "
+                    f"sobre el corpus completo antes de entrenar.")
+            for d in data:
+                d['transcription'] = self.transcript_override[d['utterance_id']]
+            print(f"[{self.CORPUS}] transcripciones sustituidas por ASR en "
+                  f"{len(data)} utterances")
 
         # Speaker filter last: the contract check above must always see the full
         # session, otherwise carving out a validation speaker would look like a

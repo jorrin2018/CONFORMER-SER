@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–97`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–103`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -141,6 +141,26 @@ batches carry `expert_g`, and `ConflictAwareCrossAttentionFusion` uses it instea
 aux classifiers; `w` still comes from `confidence_net`. Missing cache, missing OOF or a
 missing utterance raises. Verify with `scripts/check_expert_gate.py --study 97 --fold S`.
 Default (`conflict_source` unset) is bit-identical to `main`.
+
+### Studies 98–103 — missing paper rows and SOTA candidates
+
+Each is study 74 with ONE change (all opt-in keys; defaults leave 74 unchanged — eval-mode
+logits of 72/74/89 verified identical). Plan, commands and pre-registered readings:
+[`docs/ESTUDIOS_SOTA.md`](docs/ESTUDIOS_SOTA.md). Pre-flight:
+`scripts/check_sota_studies.py --study N --fold 1 --device cuda`.
+
+| Study | Change vs 74 | Key |
+|-------|--------------|-----|
+| 98 | ViT not run, its vector replaced by zeros (same params) | `model.vision_stream: off` |
+| 99 | fixed 17 epochs, test on the LAST epoch (Chen & Rudnicky) | `training.model_selection: last` |
+| 100 | Whisper text instead of manual transcripts | `text.transcript_source: asr` (+ `scripts/transcribe_asr.py`) |
+| 101 | audio-frame ↔ text-token co-attention before pooling | `model.crossmodal_attention` + `training.learning_rate_crossmodal` |
+| 102 | WavLM Base+ audio encoder | `model.audio_encoder` |
+| 103 | RoBERTa-base text encoder (+ its tokenizer) | `model.text_encoder`, `text.model_name` |
+
+`create_ablation_optimizer` puts parameters named `crossmodal.*` in their own group only
+when `learning_rate_crossmodal` is set (warns otherwise: new layers at lr_fusion 5e-6
+barely move — the 68/69 trap).
 
 ### Recent series (58–63)
 

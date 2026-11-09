@@ -206,7 +206,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
     elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
-                          87, 88, 89, 90, 91, 92, 93, 94, 97):
+                          87, 88, 89, 90, 91, 92, 93, 94, 97, 98, 99, 100, 101, 102, 103):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         # 87-94: el 72 con las variantes que alinean el codigo con la presentacion
@@ -252,7 +252,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-97 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-103 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -645,7 +645,20 @@ def _run_ablation_with_config(
     epocas_previas = start_epoch - 1     # para no reportar una epoca final inventada
     if start_epoch > config['training']['num_epochs']:
         logger.info("El fold ya habia agotado las epocas; se pasa directo a evaluar en test.")
-    if patience_counter >= config['training']['early_stopping_patience']:
+    # model_selection: "best_val" (por defecto, todo lo anterior al 99) evalua en test
+    # el checkpoint con mejor metrica de validacion y para con early stopping.
+    # "last" (estudio 99, como Chen & Rudnicky 2023): entrena num_epochs fijas, sin
+    # early stopping, y evalua los pesos de la ULTIMA epoca. La validacion sigue
+    # existiendo (la usa el scheduler de plateau y queda en los logs), pero no elige
+    # el modelo.
+    seleccion = config['training'].get('model_selection', 'best_val')
+    if seleccion not in ('best_val', 'last'):
+        raise ValueError(f"training.model_selection={seleccion!r}; use 'best_val' o 'last'")
+    if seleccion == 'last':
+        logger.info(f"Seleccion de modelo: ULTIMA epoca ({config['training']['num_epochs']} "
+                    f"fijas, sin early stopping).")
+    if (seleccion == 'best_val'
+            and patience_counter >= config['training']['early_stopping_patience']):
         logger.info("El fold ya habia disparado early stopping; se pasa directo a evaluar en test.")
         start_epoch = config['training']['num_epochs'] + 1
 
@@ -759,8 +772,9 @@ def _run_ablation_with_config(
                 best_val_metric=best_val_metric, patience_counter=patience_counter,
                 resume_points=resume_points, config=config, logger=logger)
 
-            # Early stopping
-            if patience_counter >= config['training']['early_stopping_patience']:
+            # Early stopping (no con model_selection: last, que entrena epocas fijas)
+            if (seleccion == 'best_val'
+                    and patience_counter >= config['training']['early_stopping_patience']):
                 logger.info("Early stopping triggered!")
                 break
     
@@ -778,7 +792,12 @@ def _run_ablation_with_config(
 
     # Load best checkpoint so test evaluation uses the best model, not the last epoch
     best_checkpoint_path = os.path.join(checkpoint_dir, experiment_name, 'best_model.pt')
-    if os.path.isfile(best_checkpoint_path):
+    if seleccion == 'last':
+        # Los pesos en memoria SON los de la ultima epoca, tambien tras reanudar
+        # (_load_resume_state restaura last_model.pt).
+        logger.info("model_selection=last: se evalua en test con los pesos de la ultima "
+                    "epoca; best_model.pt se ignora.")
+    elif os.path.isfile(best_checkpoint_path):
         logger.info(f"Loading best model from {best_checkpoint_path} for test evaluation...")
         checkpoint = torch.load(best_checkpoint_path, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'], strict=True)
@@ -819,6 +838,8 @@ def _run_ablation_with_config(
             # Queda marcado para poder rehacerlo limpio si hace falta.
             'resumed': bool(resume_points),
             'resume_points': resume_points,
+            # Que pesos se evaluaron en test: 'best_val' o 'last' (estudio 99).
+            'model_selection': seleccion,
         }, f, indent=2)
 
     logger.info(f"Ablation Study {study_number} run completed!")
@@ -1624,7 +1645,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-97; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-103; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1772,13 +1793,21 @@ def main():
         (95, "config/ablation/ablation_95_expert_audio_crossfit.yaml"),  # = 71 (audio), LOSO interno sin la sesion externa
         (96, "config/ablation/ablation_96_expert_text_crossfit.yaml"),  # = 73 (texto), LOSO interno sin la sesion externa
         (97, "config/ablation/ablation_97_expert_gate_original.yaml"),  # 72 con g de los expertos congelados (cross-fitting); w de la confidence_net
+        # Serie 98-103: las filas que faltan para el articulo y las mejoras candidatas.
+        # Todas son el 74 con UN cambio (docs/ESTUDIOS_SOTA.md).
+        (98, "config/ablation/ablation_98_no_vision_stream.yaml"),  # 74 sin la informacion del ViT (audio + texto)
+        (99, "config/ablation/ablation_99_fixed_epochs_no_selection.yaml"),  # 74 con 17 epocas fijas y la ultima epoca en test (Chen & Rudnicky)
+        (100, "config/ablation/ablation_100_asr_transcripts.yaml"),  # 74 con texto de Whisper en vez de la transcripcion manual
+        (101, "config/ablation/ablation_101_crossmodal_attention.yaml"),  # 74 con co-atencion frames de audio <-> tokens de texto antes del pooling
+        (102, "config/ablation/ablation_102_wavlm_base_plus.yaml"),  # 74 con WavLM Base+ en vez de wav2vec 2.0 base
+        (103, "config/ablation/ablation_103_roberta_base.yaml"),  # 74 con RoBERTa-base en vez de DistilBERT
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-97 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-103 (there is no study 51)")
             return
     
     # Run each study

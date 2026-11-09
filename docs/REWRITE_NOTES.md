@@ -3055,3 +3055,31 @@ discrepan no indica cuál de ellas acierta.**
 **El modelo del artículo sigue siendo el 74.** «Conflict-Aware» no vuelve al título. El
 97 entra en la subsección de análisis de la compuerta, como cuarta configuración y como la
 más fuerte de todas.
+
+## 16. ESTUDIOS 98-103: lo que falta para el artículo y las palancas para el SOTA (9 nov 2026)
+
+Plan completo, comandos y lecturas escritas antes de correr: `docs/ESTUDIOS_SOTA.md`
+(rama `feature/sota-studies`). Cada uno es el 74 con un solo cambio.
+
+**Hallazgo al revisar el código para la pregunta "¿alinear o atención cruzada?":** en el 74
+**no hay interacción audio-texto a nivel de secuencia**. La "cross-attention" de la fusión es
+self-attention entre tres vectores ya agrupados (promedio de wav2vec2, [CLS] de DistilBERT
+y [CLS] del ViT). Ningún frame ve ninguna palabra. Hay que describirlo así en el artículo
+(no como "cross-modal attention" a secas). El estudio 101 añade la co-atención frame ↔
+token que le falta.
+
+| Estudio | Cambio frente al 74 | Para qué |
+|---|---|---|
+| 98 | el ViT no se ejecuta y su vector es cero | ablación audio + texto |
+| 99 | 17 épocas fijas, test con la última | protocolo de Chen & Rudnicky |
+| 100 | texto de Whisper | robustez a ASR (Wu et al. 2021) |
+| 101 | co-atención frames ↔ tokens antes del pooling | fusión del SOTA bimodal (Zhao et al. 2022) |
+| 102 | WavLM Base+ | encoder de audio (+5.2 pp en SUPERB con el mismo tamaño) |
+| 103 | RoBERTa-base | encoder de texto |
+
+Regla de adopción fijada antes de correr: > 0.86 pp en ≥ 4/5 folds con la semilla 42. El
+número del artículo será la media de cinco semillas, reportando aparte las cuatro que no
+participaron en ninguna decisión.
+
+La alineación por palabra queda fuera por ahora. Si el 101 gana, se probará como sesgo
+sobre su atención (un factor encima del 101), no como reemplazo.

@@ -1,0 +1,231 @@
+"""Tests de los estudios 98-103 (filas pendientes del articulo y mejoras candidatas).
+
+Sin GPU, sin IEMOCAP, sin red: encoders diminutos y aleatorios (tests/tiny_encoders.py).
+
+    python -m pytest tests/test_sota_studies.py -q
+"""
+from __future__ import annotations
+
+import glob
+import json
+import logging
+import sys
+from pathlib import Path
+
+import pytest
+import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.run_ablation import create_ablation_model, load_ablation_config  # noqa: E402
+from src.ablation_studies.utils import create_ablation_optimizer  # noqa: E402
+from src.models.crossmodal import CrossModalCoAttention  # noqa: E402
+from tests.tiny_encoders import offline_config, tiny_encoders  # noqa: E402
+
+LOG = logging.getLogger("t")
+
+
+def _cfg(study: int) -> dict:
+    path = glob.glob(str(ROOT / f"config/ablation/ablation_{study}_*.yaml"))
+    assert len(path) == 1, f"config del estudio {study}: {path}"
+    return load_ablation_config(path[0], {})
+
+
+def _flat(d, pre=""):
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out.update(_flat(v, f"{pre}{k}."))
+        else:
+            out[f"{pre}{k}"] = v
+    return out
+
+
+ESPERADO = {
+    98: {"model.vision_stream": "off"},
+    99: {"training.model_selection": "last", "training.num_epochs": 17},
+    100: {"text.transcript_source": "asr",
+          "text.asr_cache": "cache/asr/iemocap_whisper-small.en.json"},
+    101: {"model.crossmodal_attention.enabled": True,
+          "model.crossmodal_attention.num_heads": 8,
+          "model.crossmodal_attention.num_layers": 1,
+          "model.crossmodal_attention.dropout": 0.1,
+          "model.crossmodal_attention.ffn_mult": 2,
+          "training.learning_rate_crossmodal": 1.0e-4},
+    102: {"model.audio_encoder": "microsoft/wavlm-base-plus"},
+    103: {"model.text_encoder": "roberta-base", "text.model_name": "roberta-base"},
+}
+
+
+@pytest.mark.parametrize("study", sorted(ESPERADO))
+def test_config_is_74_plus_one_change(study):
+    """Cada estudio es el 74 con exactamente las claves declaradas cambiadas."""
+    base = _flat(_cfg(74))
+    cfg = _flat(_cfg(study))
+    ignorar = ("logging.",)
+    cambios = {k: cfg.get(k) for k in set(base) | set(cfg)
+               if not k.startswith(ignorar) and base.get(k) != cfg.get(k)}
+    assert cambios == ESPERADO[study]
+
+
+def test_studies_registered():
+    src = (ROOT / "scripts/run_ablation.py").read_text(encoding="utf-8")
+    for n in ESPERADO:
+        assert f"({n}, \"config/ablation/ablation_{n}_" in src
+
+
+def _batch(B=2, S_t=12):
+    torch.manual_seed(0)
+    mask = torch.ones(B, S_t, dtype=torch.long)
+    mask[1, 8:] = 0
+    return (torch.randn(B, 16000 * 2), torch.randint(1000, 2000, (B, S_t)), mask,
+            torch.tensor([0, 1]))
+
+
+def _model(study):
+    cfg = offline_config(_cfg(study))
+    torch.manual_seed(0)
+    with tiny_encoders():
+        m = create_ablation_model(study, cfg, "cpu", LOG)
+    return m, cfg
+
+
+# ----------------------------------------------------------------- estudio 98
+def test_98_does_not_run_vit_and_feeds_zeros():
+    m, _ = _model(98)
+    m.eval()
+
+    def boom(*a, **k):
+        raise AssertionError("el ViT no debe ejecutarse en el estudio 98")
+    m.vision_encoder.forward = boom
+    audio, ids, mask, y = _batch()
+    with torch.no_grad():
+        out = m(audio, ids, mask, y)
+    assert out["logits"].shape == (2, 4)
+    assert torch.count_nonzero(out["vision_features"]) == 0
+
+
+def test_98_same_parameters_as_74():
+    m74, _ = _model(74)
+    m98, _ = _model(98)
+    n = lambda m: sum(p.numel() for p in m.parameters())  # noqa: E731
+    assert n(m74) == n(m98)
+
+
+def test_74_unchanged_runs_vit_and_has_no_crossmodal():
+    m, _ = _model(74)
+    assert m.crossmodal is None and m._vision_stream == "on"
+    llamado = []
+    orig = m.vision_encoder.forward
+
+    def espia(*a, **k):
+        llamado.append(1)
+        return orig(*a, **k)
+    m.vision_encoder.forward = espia
+    m.eval()
+    with torch.no_grad():
+        m(*_batch())
+    assert llamado
+
+
+# ---------------------------------------------------------------- estudio 101
+def test_101_has_crossmodal_and_its_own_lr_group():
+    m, cfg = _model(101)
+    assert isinstance(m.crossmodal, CrossModalCoAttention)
+    opt = create_ablation_optimizer(m, cfg, 101)
+    cm = {id(p) for n, p in m.named_parameters() if n.startswith("crossmodal.")}
+    grupos = [g for g in opt.param_groups if {id(p) for p in g["params"]} == cm]
+    assert len(grupos) == 1 and grupos[0]["lr"] == pytest.approx(1e-4)
+
+
+def test_101_trains_crossmodal():
+    m, cfg = _model(101)
+    m.train()
+    opt = create_ablation_optimizer(m, cfg, 101)
+    antes = {n: p.detach().clone() for n, p in m.named_parameters() if n.startswith("crossmodal.")}
+    out = m(*_batch())
+    torch.nn.functional.cross_entropy(out["logits"], _batch()[3]).backward()
+    sin_grad = [n for n, p in m.named_parameters()
+                if n.startswith("crossmodal.") and (p.grad is None or not p.grad.abs().sum())]
+    assert not sin_grad, sin_grad
+    opt.step()
+    assert any(not torch.equal(antes[n], p) for n, p in m.named_parameters() if n in antes)
+
+
+def test_crossmodal_ignores_padded_text_tokens():
+    torch.manual_seed(0)
+    cm = CrossModalCoAttention(audio_dim=16, text_dim=24, num_heads=4).eval()
+    a, t = torch.randn(2, 30, 16), torch.randn(2, 10, 24)
+    mask = torch.ones(2, 10, dtype=torch.long)
+    mask[:, 6:] = 0
+    t2 = t.clone()
+    t2[:, 6:] = 99.0  # basura en el relleno
+    with torch.no_grad():
+        a1, t1 = cm(a, t, mask)
+        a2, t2o = cm(a, t2, mask)
+    assert a1.shape == a.shape and t1.shape == t.shape
+    assert torch.allclose(a1, a2, atol=1e-6)            # el audio no ve el relleno
+    assert torch.allclose(t1[:, :6], t2o[:, :6], atol=1e-6)
+
+
+def test_crossmodal_without_lr_warns():
+    m, cfg = _model(101)
+    cfg["training"].pop("learning_rate_crossmodal")
+    with pytest.warns(UserWarning, match="learning_rate_crossmodal"):
+        create_ablation_optimizer(m, cfg, 101)
+
+
+# ---------------------------------------------------------------- estudio 99
+def test_99_selection_code_paths_exist():
+    src = (ROOT / "scripts/run_ablation.py").read_text(encoding="utf-8")
+    assert "seleccion = config['training'].get('model_selection', 'best_val')" in src
+    assert "if seleccion == 'last':" in src
+    assert "'model_selection': seleccion" in src
+
+
+# ---------------------------------------------------------------- estudio 100
+def _fake_dataset(override):
+    from src.data.base_dataset import BaseSERDataset
+
+    class Fake(BaseSERDataset):
+        CORPUS = "fake"
+
+        def _collect_records(self):
+            return [dict(audio_path="x.wav", transcription=f"manual {i}", emotion="angry",
+                         emotion_idx=0, utterance_id=f"Ses01F_impro01_F{i:03d}")
+                    for i in range(3)]
+    return Fake(data_path=".", sessions=[1], emotions=["angry"], transcript_override=override)
+
+
+def test_transcript_override_replaces_text():
+    ov = {f"Ses01F_impro01_F{i:03d}": f"asr {i}" for i in range(3)}
+    ds = _fake_dataset(ov)
+    assert [d["transcription"] for d in ds.data] == ["asr 0", "asr 1", "asr 2"]
+
+
+def test_transcript_override_refuses_partial_map():
+    with pytest.raises(KeyError, match="sin transcripcion"):
+        _fake_dataset({"Ses01F_impro01_F000": "asr 0"})
+
+
+def test_load_transcript_override(tmp_path):
+    from src.train import load_transcript_override
+    p = tmp_path / "asr.json"
+    cfg = {"text": {"transcript_source": "asr", "asr_cache": str(p)}, "dataset": {}}
+    p.write_text(json.dumps({"corpus": "iemocap", "complete": False, "transcripts": {}}))
+    with pytest.raises(ValueError, match="incompleto"):
+        load_transcript_override(cfg, LOG)
+    p.write_text(json.dumps({"corpus": "meld", "complete": True, "transcripts": {}}))
+    with pytest.raises(ValueError, match="corpus"):
+        load_transcript_override(cfg, LOG)
+    p.write_text(json.dumps({"corpus": "iemocap", "complete": True, "model": "w",
+                             "wer": 0.1, "transcripts": {"a": "b"}}))
+    assert load_transcript_override(cfg, LOG) == {"a": "b"}
+    assert load_transcript_override({"text": {}}, LOG) is None
+
+
+def test_wer():
+    from scripts.transcribe_asr import wer
+    assert wer([("Hello, there! [LAUGHTER]", "hello there")]) == 0
+    assert wer([("a b c d", "a x c")]) == pytest.approx(0.5)

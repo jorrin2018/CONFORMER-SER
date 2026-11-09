@@ -156,6 +156,37 @@ def _random_fold_indices(config, logger):
     return train_idx, val_idx, test_idx
 
 
+def load_transcript_override(config: dict, logger):
+    """Mapa utterance_id -> texto de ASR, o None si el config usa el texto manual.
+
+    text.transcript_source: "manual" (por defecto) o "asr".
+    text.asr_cache: JSON escrito por scripts/transcribe_asr.py.
+    """
+    text_config = config.get('text', {}) or {}
+    fuente = text_config.get('transcript_source', 'manual')
+    if fuente == 'manual':
+        return None
+    if fuente != 'asr':
+        raise ValueError(f"text.transcript_source={fuente!r}; use 'manual' o 'asr'")
+    import json as _json
+    from src.data.registry import corpus_from_config as _corpus
+    ruta = text_config.get('asr_cache')
+    if not ruta or not Path(ruta).is_file():
+        raise FileNotFoundError(
+            f"text.transcript_source=asr pero no existe text.asr_cache={ruta!r}. "
+            f"Corre: python scripts/transcribe_asr.py --corpus {_corpus(config)}")
+    with open(ruta, encoding='utf-8') as f:
+        cache = _json.load(f)
+    if cache.get('corpus') != _corpus(config):
+        raise ValueError(f"{ruta} es del corpus {cache.get('corpus')!r}, "
+                         f"no de {_corpus(config)!r}")
+    if not cache.get('complete', False):
+        raise ValueError(f"{ruta} esta incompleto: termina de correr transcribe_asr.py")
+    logger.info(f"Texto de ASR: {ruta} (modelo {cache.get('model')}, "
+                f"{len(cache['transcripts'])} utterances, WER {cache.get('wer')})")
+    return cache['transcripts']
+
+
 def create_dataloaders(config: dict, logger, audio_only: bool = False):
     """Create train, validation, and test dataloaders."""
     logger.info(f"Creating dataloaders for {'audio-only' if audio_only else 'multimodal'} model...")
@@ -191,6 +222,11 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
     # Text / prosody configuration
     text_config = config.get('text', {})
     use_prosody_cues = text_config.get('use_prosody_cues', False) if not audio_only else False
+
+    # Estudio 100: texto de ASR en lugar de la transcripcion manual del corpus.
+    transcript_override = None
+    if not audio_only:
+        transcript_override = load_transcript_override(config, logger)
 
     # ---------------------------------------------------------------- SpeechCue
     # Nine discrete tokens whose LOW/MID/HIGH boundaries come from the TRAIN
@@ -319,6 +355,7 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         training=True,  # Enable random segment sampling for training
         use_prosody_cues=use_prosody_cues,
         speechcue_stats=speechcue_stats,
+        transcript_override=transcript_override,
         exclude_speakers=[val_speaker] if val_speaker else None,
         subset_indices=rand_train_idx,
     )
@@ -395,6 +432,7 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         training=False,  # Use deterministic start for validation
         use_prosody_cues=use_prosody_cues,
         speechcue_stats=speechcue_stats,
+        transcript_override=transcript_override,
         speechcue_tertiles=speechcue_tertiles,  # reused unchanged: no leakage
         only_speakers=[val_speaker] if val_speaker else None,
         subset_indices=rand_val_idx if rand_val_idx is not None else val_indices,
@@ -432,6 +470,7 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         training=False,  # Use deterministic start for test
         use_prosody_cues=use_prosody_cues,
         speechcue_stats=speechcue_stats,
+        transcript_override=transcript_override,
         speechcue_tertiles=speechcue_tertiles,  # reused unchanged: no leakage
         subset_indices=rand_test_idx,
     )

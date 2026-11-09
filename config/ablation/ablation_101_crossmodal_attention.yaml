@@ -1,0 +1,171 @@
+# Ablation Study 101: el 74 con co-atencion audio <-> texto a nivel de secuencia.
+#
+# POR QUE. En el 74 la "cross-attention" opera sobre TRES vectores ya agrupados
+# (promedio de wav2vec2, [CLS] de DistilBERT, [CLS] del ViT): ningun frame de audio ve
+# ninguna palabra. El analisis de la compuerta (REWRITE_NOTES sec. 15) deja 25.6 pp de
+# oraculo sin explotar en las muestras de conflicto: la informacion complementaria
+# existe, pero pesar vectores por muestra no la saca. La co-atencion frame <-> token
+# es lo que hace el sistema comparable mas fuerte (Zhao et al. 2022, 76.31 UA).
+#
+# UN SOLO FACTOR. model.crossmodal_attention.enabled: true -> antes del pooling, cada
+# frame de audio atiende a los tokens de texto y cada token a los frames (1 capa,
+# 8 cabezas, residual + LayerNorm + FFN; src/models/crossmodal.py). Las salidas tienen
+# las mismas formas: pooling, fusion, cabeza y compuerta (apagada) son las del 74.
+#
+# SU TASA DE APRENDIZAJE ES PARTE DEL MODULO, no un segundo factor: son capas nuevas,
+# desde cero, y no existe un valor previo. Con el lr de la fusion (5e-6) apenas se
+# moverian y leeriamos un falso nulo -- es lo que anulo los estudios 68 y 69. Se usa
+# 1e-4, el habitual para capas de atencion nuevas sobre encoders preentrenados.
+# scripts\check_sota_studies.py comprueba que el grupo existe y que los pesos se mueven.
+#
+# Comparar contra el 74 (semilla 42), pareado por fold.
+#
+# LECTURA, escrita ANTES de correrlo:
+#   101 - 74 > 0.86 en >= 4/5 folds -> la interaccion frame-palabra aporta: pasa a ser
+#                        el modelo del articulo y se corre con 5 semillas.
+#   |101 - 74| <= 0.86 -> no aporta sobre la fusion de vectores; se reporta como nulo.
+#   74 - 101 > 0.86    -> estorba (posible sobreajuste con 4.9 k utterances).
+
+dataset:
+  data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
+  emotions:
+    - angry
+    - happy
+    - sad
+    - neutral
+  train_sessions: [1, 2, 3]
+  val_sessions: [4]
+  test_sessions: [5]
+  sample_rate: 16000
+
+audio:
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  max_length: 8
+  apply_waveform_augment: true
+  augmentation:
+    apply_time_masking: true
+    apply_noise: true
+    apply_speed_perturb: true
+    apply_pitch_shift: true
+    time_mask_prob: 0.5
+    time_mask_max: 4000
+    num_time_masks: 1
+    noise_prob: 0.3
+    noise_snr_min: 10.0
+    noise_snr_max: 30.0
+    speed_prob: 0.3
+    speed_range: [0.9, 1.1]
+    pitch_prob: 0.2
+    pitch_range: [-2, 2]
+
+text:
+  model_name: "distilbert-base-uncased"
+  max_length: 128
+  apply_text_augment: false
+  augmentation:
+    apply_random_mask: true
+    apply_random_insert: false
+    mask_prob: 0.15
+    insert_prob: 0.1
+  use_prosody_cues: true
+
+model:
+  audio_encoder: "facebook/wav2vec2-base"
+  text_encoder: "distilbert-base-uncased"
+  freeze_audio_encoder: false
+  freeze_text_encoder: false
+  hidden_dim: 512
+  dropout: 0.5
+  num_classes: 4
+  fusion_type: "conflict_aware_cross_attention"
+  audio_unfreeze_last_n_layers: 6
+  text_unfreeze_last_n_layers: 4
+  classification_head_type: "multi_scale_temporal"
+  classification_head:
+    use_temporal_pooling: true
+    pooling_types: ["mean", "max", "attention"]
+    use_lstm: true
+    lstm_num_layers: 2
+    lstm_bidirectional: true
+    lstm_hidden: 512
+    lstm_dropout: 0.3
+    use_self_attention: true
+    attention_heads: 4
+    final_dropout: 0.4
+  fusion_num_heads: 8
+  crossmodal_attention:   # <-- EL UNICO CAMBIO frente al 74
+    enabled: true
+    num_heads: 8
+    num_layers: 1
+    dropout: 0.1
+    ffn_mult: 2
+  fusion_num_layers: 3
+  conflict_aware:
+    enabled: false   # sin compuerta, como el 74
+    conflict_detection_method: "prediction_divergence"
+    conflict_threshold: 0.3
+    confidence_weighting: true
+    conflict_resolution: "confidence_weighted"
+  vision_encoder: "google/vit-base-patch16-224"
+  # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
+  # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
+  freeze_vision_encoder: true
+  vision_unfreeze_last_n_layers: 0
+  vision_image_size: 224
+  mel_n_mels: 80
+  mel_n_fft: 400
+  mel_hop_length: 160
+  mel_win_length: 400
+
+training:
+  batch_size: 4
+  num_epochs: 100
+  gradient_accumulation_steps: 8
+  mixed_precision: false
+  use_param_groups: true
+  learning_rate_audio: 3.0e-5
+  learning_rate_text: 2.0e-5
+  learning_rate_fusion: 5.0e-6
+  learning_rate_crossmodal: 1.0e-4   # parte del modulo nuevo (ver cabecera)
+  weight_decay: 0.05
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  loss:
+    type: "cross_entropy"
+    gamma: 2.0
+    label_smoothing: 0.1
+  warmup_ratio: 0.1
+  scheduler_type: "plateau"
+  early_stopping_patience: 8
+  save_top_k: 3
+  scheduler_metric: "val_loss"
+  scheduler_mode: "min"
+  scheduler_factor: 0.5
+  scheduler_patience: 3
+  scheduler_threshold: 0.0001
+  scheduler_min_lr: 1.0e-7
+  scheduler_cooldown: 1
+  scheduler_verbose: true
+
+evaluation:
+  batch_size: 4
+
+logging:
+  log_dir: "./logs/ablation_101"
+  checkpoint_dir: "./checkpoints/ablation_101"
+  log_every_n_steps: 10
+  val_every_n_epochs: 1
+  use_tensorboard: true
+  use_wandb: false
+  project_name: "conformer-iemocap-ser-ablation-101"
+
+compute:
+  num_workers: 2
+  pin_memory: true
+  device: "cuda"
+
+seed: 42
+
