@@ -3083,3 +3083,48 @@ participaron en ninguna decisión.
 
 La alineación por palabra queda fuera por ahora. Si el 101 gana, se probará como sesgo
 sobre su atención (un factor encima del 101), no como reemplazo.
+
+### 16.1 RESULTADOS 102 Y 101 (10-12 nov 2026): ninguna de las dos palancas pasa la regla
+
+Semilla 42, LOSO `standard`, ningún fold reanudado; `config.json` de cada fold verificado
+(102: `microsoft/wavlm-base-plus`; 101: `crossmodal_attention` activo con
+`learning_rate_crossmodal: 1e-4`).
+
+| Fold (test) | 74 (s42) | 74 (media 3 semillas) | 102 WavLM Base+ | 101 co-atención |
+|---|---|---|---|---|
+| S1 | 75.66 | 76.43 | 75.59 | 76.62 |
+| S2 | 80.25 | 80.17 | 80.31 | 80.05 |
+| S3 | 71.96 | 73.30 | 73.70 | 73.96 |
+| S4 | 75.49 | 73.66 | 76.46 | 73.75 |
+| S5 | 74.05 | 73.24 | 73.72 | 72.84 |
+| **media** | **75.48** | **75.36** | **75.96 ± 2.71** | **75.44 ± 2.93** |
+
+| Comparación pareada (UA) | Δ (pp) | IC 95 % | folds > 0.86 |
+|---|---|---|---|
+| 102 − 74 (s42) | +0.47 ± 0.86 | [−0.59, +1.54] | 2/5 |
+| 101 − 74 (s42) | −0.04 ± 1.54 | [−1.95, +1.87] | 2/5 |
+| 101 − 74 (media de 3 semillas) | +0.08 ± 0.39 | [−0.40, +0.57] | 0/5 |
+| 101 − 102 | −0.51 ± 1.41 | [−2.27, +1.24] | 1/5 |
+
+WA y macro-F1 cuentan lo mismo (102: +0.20 / +0.04; 101: −0.19 / −0.29). **Ninguno se
+adopta.** El modelo sigue siendo el 74.
+
+- **102:** los +5.2 pp de WavLM Base+ en SUPERB (encoder congelado) no se trasladan al
+  afinado parcial dentro de la fusión. Es la lectura escrita de antemano para este caso.
+- **101:** la co-atención frame ↔ token no cambia nada. Su UA por fold coincide con la
+  media de tres semillas del 74 a ±0.39 pp, menos que la variación entre semillas. Por clase
+  tampoco se mueve (angry 82.68, happy 76.29, sad 79.85, neutral 62.96 frente a 82.11,
+  75.11, 80.39, 64.32).
+
+**Qué dice esto junto con la sección 15.** Ya son seis cambios de arquitectura sobre la
+misma fusión (compuerta en cuatro formas, co-atención, encoder de audio) y ninguno sale de
+la banda de ruido. Lo que sí mueve el resultado es si el texto informa (eje léxico: −1.19 /
++6.49 / +12.80). Es un mensaje más fuerte para la revista que perseguir décimas: con un
+protocolo riguroso, la complejidad arquitectónica no aporta y lo que manda es el contenido
+léxico. Hipótesis abiertas, **no conclusiones**: (a) con 4.9 k enunciados de entrenamiento
+la co-atención no tiene datos para aprender el emparejamiento; (b) el 48 % de los frames
+son relleno y el 12.6 % de los enunciados pierde audio por el recorte a 8 s (medido el
+10/11), lo que puede limitar a cualquier fusión por igual.
+
+Siguen pendientes, en este orden: 98 (ablación del ViT, la pedirá el revisor), 103,
+100 y 99.
