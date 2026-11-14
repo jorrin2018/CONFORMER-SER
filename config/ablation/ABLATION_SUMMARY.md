@@ -185,7 +185,7 @@ Ablación controlada respecto al **estudio 45** (*Conflict-Aware Cross-Attention
 | 62 | ablation_62_attention_pooling | Ablation34Model |
 | 63 | ablation_63_finetuned_45 | Ablation34Model |
 
-> **Rango válido: `1-50` y `52-103`.** No existe el estudio 51. La fuente de verdad es
+> **Rango válido: `1-50` y `52-106`.** No existe el estudio 51. La fuente de verdad es
 > `create_ablation_model()` en `scripts/run_ablation.py`.
 
 ### Configs sin ruta de código (no ejecutables)
@@ -229,15 +229,18 @@ Base: estudio 72. Cada estudio activa una clave opt-in; detalle y comandos en
 
 Detalle en [`docs/EXPERTOS_CONGELADOS.md`](../../docs/EXPERTOS_CONGELADOS.md).
 
-### Serie 98-103 — filas pendientes del artículo y candidatas a superar el estado del arte
+### Serie 98-106 — filas pendientes del artículo y candidatas a superar el estado del arte
 
-Base: estudio 74. Cada estudio cambia un solo factor; plan, comandos y lecturas escritas antes de correr en [`docs/ESTUDIOS_SOTA.md`](../../docs/ESTUDIOS_SOTA.md).
+Base: estudio 74 (98, 101, 102); desde el 14/11/2026, el 98 (99, 100, 103, 104). Cada estudio cambia un solo factor; plan, comandos y lecturas escritas antes de correr en [`docs/ESTUDIOS_SOTA.md`](../../docs/ESTUDIOS_SOTA.md).
 
 *   **98** (`ablation_98_no_vision_stream`): sin la información del ViT (no se ejecuta; su vector es cero). La ablación audio + texto.
-*   **99** (`ablation_99_fixed_epochs_no_selection`): 17 épocas fijas y test con la última época, sin early stopping (protocolo de Chen & Rudnicky).
-*   **100** (`ablation_100_asr_transcripts`): texto de Whisper en lugar de la transcripción manual (`scripts/transcribe_asr.py`).
+*   **99** (`ablation_99_fixed_epochs_no_selection`): el 98 con 14 épocas fijas y test con la última época, sin early stopping (protocolo de Chen & Rudnicky).
+*   **100** (`ablation_100_asr_transcripts`): el 98 con texto de Whisper en lugar de la transcripción manual (`scripts/transcribe_asr.py`).
 *   **101** (`ablation_101_crossmodal_attention`): co-atención frames de audio ↔ tokens de texto antes del pooling.
 *   **102** (`ablation_102_wavlm_base_plus`): WavLM Base+ en lugar de wav2vec 2.0 base.
-*   **103** (`ablation_103_roberta_base`): RoBERTa-base en lugar de DistilBERT.
+*   **103** (`ablation_103_roberta_base`): el 98 con RoBERTa-base en lugar de DistilBERT.
+*   **104** (`ablation_104_real_utterance_only`): el 98 viendo solo el enunciado real (aumento y normalización sin relleno; promedio solo de frames reales).
+*   **105** (`ablation_105_cremad_no_vision`): el 77 (CREMA-D) sin la rama ViT.
+*   **106** (`ablation_106_meld_no_vision`): el 79 (MELD) sin la rama ViT; `--protocol fixed`, 2 semillas.
 
 *Última actualización: noviembre 2026*

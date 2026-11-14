@@ -3128,3 +3128,54 @@ son relleno y el 12.6 % de los enunciados pierde audio por el recorte a 8 s (med
 
 Siguen pendientes, en este orden: 98 (ablación del ViT, la pedirá el revisor), 103,
 100 y 99.
+
+### 16.2 ESTUDIO 98 (13-14 nov 2026): el ViT no aporta; la base pasa al 98
+
+Semilla 42, LOSO `standard`, ningún fold reanudado, `vision_stream: off` verificado en el
+`config.json` de los cinco folds.
+
+| Fold (test) | 74 (s42) | 74 (media 3 semillas) | **98 sin ViT** | 98 − 74 (s42) |
+|---|---|---|---|---|
+| S1 | 75.66 | 76.43 | 76.44 | +0.78 |
+| S2 | 80.25 | 80.17 | 80.66 | +0.41 |
+| S3 | 71.96 | 73.30 | 73.38 | +1.42 |
+| S4 | 75.49 | 73.66 | 77.91 | +2.42 |
+| S5 | 74.05 | 73.24 | 73.78 | −0.27 |
+| **media** | **75.48** | **75.36** | **76.43 ± 3.02** | **+0.95 ± 1.02** |
+
+IC 95 % [−0.32, +2.22]; 2/5 folds por encima de +0.86 y **ninguno en que el 74 gane por
+más de 0.86**. Frente a la media de tres semillas del 74: +1.07 ± 1.79, casi todo en S4.
+WA 74.75 (+0.45), macro-F1 75.25 (+0.37). Por clase: angry 84.15, happy 74.15, sad
+82.09, neutral 65.34.
+
+**Lectura.** La media cae justo en la rama "98 − 74 > 0.86" que escribimos para este
+estudio, pero con 2/5 folds y un IC que incluye el cero. Lo defendible: **el flujo de
+imagen no aporta**; "quitarlo mejora" no está demostrado. La fusión audio + texto sigue
+dando +7.44 ± 2.90 pp sobre solo audio y +8.61 ± 1.53 sobre solo texto (5/5 en ambas).
+
+**Decisión (Jorge, 14/11):** probar la base 98 por parsimonia. 99, 100 y 103 (sin correr)
+pasan a partir del 98. Estudios nuevos: 104 (el 98 viendo solo el enunciado real), 105 y
+106 (CREMA-D y MELD sin ViT, para medir el eje léxico con el modelo final). Si estos
+mejoran, se vuelve a hacer la ablación con ViT sobre el modelo final.
+
+**¿Qué aporta el artículo sin el ViT como componente?** Las contribuciones dejan de ser un
+módulo y pasan a ser hallazgos medidos, lo que para una revista es más sólido:
+
+1. **El eje léxico:** el aporte de la fusión escala con lo que informa el texto (CREMA-D ≈ 0,
+   IEMOCAP +6.5 a +7.4, MELD +12.8), con el mismo patrón por clase en los tres corpus
+   (*happy* gana más, *angry* casi nada).
+2. **Un análisis negativo con mecanismo de la fusión consciente de conflicto:** cuatro
+   formas de la compuerta, expertos congelados con cross-fitting y un oráculo de 25.6 pp
+   que ninguna señal de confianza recupera. Saber que las modalidades discrepan no dice
+   cuál acierta.
+3. **La ablación de la complejidad:** co-atención, encoder de audio más fuerte y un flujo
+   espectrograma-como-imagen no salen de la banda de ruido. El flujo de imagen es una
+   pregunta que la literatura deja abierta (varios trabajos proponen log-mel + ViT), y
+   aquí se contesta con un control limpio: con wav2vec2 afinado es redundante. Se
+   confirmará en CREMA-D y MELD (105 y 106).
+4. **Calibración:** una temperatura después de fusionar reduce el ECE a la mitad.
+5. **Metodología de evaluación:** la auditoría de comparabilidad del estado del arte, la
+   banda de ruido medida, la descomposición de la varianza y un protocolo común.
+
+El título deja de prometer un componente ("Conflict-Aware Multistream Fusion") y pasa a
+prometer una respuesta (cuándo y por qué ayuda la fusión multimodal en SER).

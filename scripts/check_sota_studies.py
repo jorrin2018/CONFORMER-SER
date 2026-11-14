@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""check_sota_studies.py -- comprobacion previa de los estudios 98-103, antes de gastar GPU.
+"""check_sota_studies.py -- comprobacion previa de los estudios 98-106, antes de gastar GPU.
 
 Monta el modelo real con el config real (encoders preentrenados de verdad) y un batch
 real del fold, y comprueba lo que cada estudio dice que cambia:
@@ -10,6 +10,8 @@ real del fold, y comprueba lo que cada estudio dice que cambia:
   101  las capas crossmodal existen, tienen su grupo de lr y se mueven tras un paso.
   102  WavLM Base+ carga con pesos preentrenados (solo publica .bin: torch >= 2.6).
   103  RoBERTa-base y su tokenizer cargan; el batch trae ids de RoBERTa.
+  104  relleno al final en ceros exactos, audio_lengths en el batch, pooling enmascarado.
+  105  CREMA-D sin ViT (como el 98).   106  MELD sin ViT (split oficial, sin folds).
 
 Ademas, para todos: un paso de optimizacion con perdida finita y, en CUDA, el pico de
 memoria de ese paso con el batch del config, para saber si cabe en tu GPU.
@@ -59,6 +61,11 @@ def fold_config(study: int, fold: int, tiny: bool, seed: int) -> dict:
         cfg = load_ablation_config(hits[0], load_base_config())
     cfg = copy.deepcopy(cfg)
     d = cfg["dataset"]
+    if d.get("corpus") == "meld":
+        # Split oficial fijo (--protocol fixed): train 1, dev 2, test 3. Sin folds.
+        cfg["seed"] = seed
+        cfg.setdefault("compute", {})["num_workers"] = 0
+        return cfg
     d["train_sessions"] = [s for s in (1, 2, 3, 4, 5) if s != fold]
     d["val_sessions"] = [None]
     d["test_sessions"] = [fold]
@@ -71,7 +78,7 @@ def fold_config(study: int, fold: int, tiny: bool, seed: int) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--study", type=int, required=True, choices=range(98, 104))
+    ap.add_argument("--study", type=int, required=True, choices=range(98, 107))
     ap.add_argument("--fold", type=int, default=1)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cuda")
@@ -87,7 +94,7 @@ def main() -> int:
     if args.study == 99:
         t = cfg["training"]
         ok(t.get("model_selection") == "last", "model_selection = last")
-        ok(t.get("num_epochs") == 17, f"num_epochs fijas = {t.get('num_epochs')}")
+        ok(t.get("num_epochs") == 14, f"num_epochs fijas = {t.get('num_epochs')}")
 
     if args.no_data:
         B = int(cfg["training"]["batch_size"])
@@ -96,6 +103,10 @@ def main() -> int:
                  "labels": torch.arange(B) % 4,
                  "text_input_ids": torch.randint(1000, 2000, (B, S)),
                  "text_attention_mask": torch.ones(B, S, dtype=torch.long)}
+        T = batch["audio"].shape[1]
+        batch["audio_lengths"] = torch.tensor([T // (i + 1) for i in range(B)])
+        for i, n in enumerate(batch["audio_lengths"].tolist()):
+            batch["audio"][i, n:] = 0.0
     else:
         from src.train import create_dataloaders
         train_loader, _, _, _ = create_dataloaders(cfg, log)
@@ -125,8 +136,18 @@ def main() -> int:
     if args.study == 103 and not args.tiny:
         ok("roberta" in type(model.text_encoder).__name__.lower(),
            f"encoder de texto = {type(model.text_encoder).__name__}")
-    if args.study == 98:
-        ok(model._vision_stream == "off", "vision_stream = off")
+    if args.study in (98, 99, 100, 103, 104, 105, 106):
+        ok(model._vision_stream == "off", "vision_stream = off (sin ViT)")
+    if args.study == 104:
+        ok(bool(getattr(model, "uses_audio_lengths", False)), "el modelo usa audio_lengths")
+        ok(cfg["audio"].get("pad_after_preprocessing") is True, "pad_after_preprocessing = true")
+        if not args.no_data:
+            ok("audio_lengths" in batch, "el batch trae audio_lengths")
+            L = batch["audio_lengths"]
+            cortos = [i for i in range(len(L)) if int(L[i]) < batch["audio"].shape[1]]
+            ok(all(torch.count_nonzero(batch["audio"][i, int(L[i]):]) == 0 for i in cortos),
+               f"relleno en ceros exactos ({len(cortos)} enunciados cortos en el batch)")
+    if args.study in (98, 105, 106):
         llamadas = []
         model.vision_encoder.register_forward_hook(lambda *a: llamadas.append(1))
 
@@ -153,7 +174,7 @@ def main() -> int:
         pico = torch.cuda.max_memory_allocated() / 2**30
         total = torch.cuda.get_device_properties(0).total_memory / 2**30
         ok(pico < 0.92 * total, f"pico de memoria {pico:.2f} GB de {total:.1f} GB")
-    if args.study == 98:
+    if args.study in (98, 105, 106):
         ok(not llamadas, "el ViT no se ejecuto")
         ok(int(torch.count_nonzero(out["vision_features"])) == 0, "vector de vision = 0")
     if args.study == 101:

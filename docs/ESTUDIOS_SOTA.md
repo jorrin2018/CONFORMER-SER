@@ -1,10 +1,55 @@
-# Estudios 98-103: filas pendientes del artículo y candidatos a superar el estado del arte
+# Estudios 98-106: filas pendientes del artículo y candidatos a superar el estado del arte
 
 Rama `feature/sota-studies` (sobre `feature/expert-gate`). Noviembre 2026.
 
 Todos son **el estudio 74 con un solo cambio**, activado por una clave opt-in. Sin esas
 claves el código hace exactamente lo mismo que antes: los logits en modo evaluación de los
 estudios 72, 74 y 89 salen idénticos bit a bit antes y después de esta rama.
+
+## 0. Actualización (14 nov 2026): la base pasa a ser el 98
+
+Resultados con la semilla 42 (detalle en REWRITE_NOTES 16.1 y 16.2):
+
+| Estudio | UA | Δ frente al 74 | Decisión |
+|---|---|---|---|
+| 102 WavLM Base+ | 75.96 | +0.47 ± 0.86 (2/5 folds > 0.86) | no se adopta |
+| 101 co-atención | 75.44 | −0.04 ± 1.54 (2/5) | no se adopta |
+| **98 sin ViT** | **76.43** | **+0.95 ± 1.02** (2/5; el 74 no gana en ningún fold por > 0.86) | **nueva base** |
+
+El ViT **no aporta**; que quitarlo *mejore* no está demostrado (IC 95 % [−0.32, +2.22]).
+La base pasa al 98 por parsimonia: igual o mejor, más simple, ~30 % más barato. Los
+estudios 99, 100 y 103, que no se habían corrido, ahora parten del 98. El 101 y el 102
+se quedan como estaban (ya se corrieron sobre el 74).
+
+**Nuevos estudios:**
+
+| Estudio | Base | Cambio | Para qué |
+|---|---|---|---|
+| **104** | 98 | el modelo solo ve el enunciado real: relleno al final, aumento y normalización sin relleno, promedio solo de frames reales | el grupo débil son los enunciados cortos (0–2 s: UA 63.5), que son los que más relleno llevan |
+| **105** | 77 | CREMA-D sin ViT | el eje léxico con el modelo final y la ablación del ViT en un segundo corpus |
+| **106** | 79 | MELD sin ViT (`--protocol fixed`, 2 semillas) | el eje léxico con el modelo final y la ablación del ViT con audio degradado |
+
+**El ViT no desaparece del artículo, pasa a ser una ablación medida.** Con los pares
+74/98 (IEMOCAP), 77/105 (CREMA-D) y 79/106 (MELD) queda la ablación del flujo de imagen
+en los tres corpus. Si el modelo final termina siendo otro (por ejemplo, el 104 si se
+adopta), se corre su versión con ViT para que la ablación sea sobre el modelo final.
+
+**Orden y comandos:**
+
+```powershell
+python scripts\check_sota_studies.py --study 104 --fold 1 --device cuda
+python scripts\run_ablation.py --study 104 --loso --device cuda
+python scripts\check_sota_studies.py --study 105 --fold 1 --device cuda
+python scripts\run_ablation.py --study 105 --loso --device cuda
+python scripts\check_sota_studies.py --study 106 --device cuda
+python scripts\run_ablation.py --study 106 --protocol fixed --seed 42 --device cuda
+python scripts\run_ablation.py --study 106 --protocol fixed --seed 123 --device cuda
+# Despues, 5 semillas del modelo final (98, o 104 si se adopta):
+foreach ($semilla in 123, 456, 789, 1011) {
+    python scripts\run_ablation.py --study 98 --loso --seed $semilla --device cuda
+}
+# Y al final 103, 100 y 99, ya sobre el 98.
+```
 
 ## 1. Qué hay que superar
 

@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–103`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–106`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -142,21 +142,25 @@ aux classifiers; `w` still comes from `confidence_net`. Missing cache, missing O
 missing utterance raises. Verify with `scripts/check_expert_gate.py --study 97 --fold S`.
 Default (`conflict_source` unset) is bit-identical to `main`.
 
-### Studies 98–103 — missing paper rows and SOTA candidates
+### Studies 98–106 — missing paper rows and SOTA candidates
 
-Each is study 74 with ONE change (all opt-in keys; defaults leave 74 unchanged — eval-mode
-logits of 72/74/89 verified identical). Plan, commands and pre-registered readings:
-[`docs/ESTUDIOS_SOTA.md`](docs/ESTUDIOS_SOTA.md). Pre-flight:
+Each is ONE change over its base (all opt-in keys; defaults leave earlier studies unchanged —
+eval-mode logits of 72/74/89 verified identical). Since 14/11/2026 the base for new IEMOCAP
+rows is **98** (74 without the ViT stream: the ViT did not contribute). Plan, commands and
+pre-registered readings: [`docs/ESTUDIOS_SOTA.md`](docs/ESTUDIOS_SOTA.md). Pre-flight:
 `scripts/check_sota_studies.py --study N --fold 1 --device cuda`.
 
-| Study | Change vs 74 | Key |
-|-------|--------------|-----|
-| 98 | ViT not run, its vector replaced by zeros (same params) | `model.vision_stream: off` |
-| 99 | fixed 17 epochs, test on the LAST epoch (Chen & Rudnicky) | `training.model_selection: last` |
-| 100 | Whisper text instead of manual transcripts | `text.transcript_source: asr` (+ `scripts/transcribe_asr.py`) |
-| 101 | audio-frame ↔ text-token co-attention before pooling | `model.crossmodal_attention` + `training.learning_rate_crossmodal` |
-| 102 | WavLM Base+ audio encoder | `model.audio_encoder` |
-| 103 | RoBERTa-base text encoder (+ its tokenizer) | `model.text_encoder`, `text.model_name` |
+| Study | Base | Change | Key |
+|-------|------|--------|-----|
+| 98 | 74 | ViT not run, its vector replaced by zeros (same params) | `model.vision_stream: off` |
+| 99 | 98 | fixed 14 epochs, test on the LAST epoch (Chen & Rudnicky) | `training.model_selection: last` |
+| 100 | 98 | Whisper text instead of manual transcripts | `text.transcript_source: asr` (+ `scripts/transcribe_asr.py`) |
+| 101 | 74 | audio-frame ↔ text-token co-attention before pooling | `model.crossmodal_attention` + `training.learning_rate_crossmodal` |
+| 102 | 74 | WavLM Base+ audio encoder | `model.audio_encoder` |
+| 103 | 98 | RoBERTa-base text encoder (+ its tokenizer) | `model.text_encoder`, `text.model_name` |
+| 104 | 98 | model sees only the real utterance (no padding) | `audio.pad_after_preprocessing`, `model.audio_masked_pooling` |
+| 105 | 77 | CREMA-D without the ViT stream | `model.vision_stream: off` |
+| 106 | 79 | MELD without the ViT stream (`--protocol fixed`, 2 seeds) | `model.vision_stream: off` |
 
 `create_ablation_optimizer` puts parameters named `crossmodal.*` in their own group only
 when `learning_rate_crossmodal` is set (warns otherwise: new layers at lr_fusion 5e-6

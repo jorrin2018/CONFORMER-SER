@@ -206,7 +206,8 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
     elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
-                          87, 88, 89, 90, 91, 92, 93, 94, 97, 98, 99, 100, 101, 102, 103):
+                          87, 88, 89, 90, 91, 92, 93, 94, 97, 98, 99, 100, 101, 102, 103,
+                          104, 105, 106):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         # 87-94: el 72 con las variantes que alinean el codigo con la presentacion
@@ -252,7 +253,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-103 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-106 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1645,7 +1646,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-103; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-106; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1793,21 +1794,25 @@ def main():
         (95, "config/ablation/ablation_95_expert_audio_crossfit.yaml"),  # = 71 (audio), LOSO interno sin la sesion externa
         (96, "config/ablation/ablation_96_expert_text_crossfit.yaml"),  # = 73 (texto), LOSO interno sin la sesion externa
         (97, "config/ablation/ablation_97_expert_gate_original.yaml"),  # 72 con g de los expertos congelados (cross-fitting); w de la confidence_net
-        # Serie 98-103: las filas que faltan para el articulo y las mejoras candidatas.
-        # Todas son el 74 con UN cambio (docs/ESTUDIOS_SOTA.md).
+        # Serie 98-106: filas que faltan para el articulo y mejoras candidatas, un cambio
+        # cada una (docs/ESTUDIOS_SOTA.md).
         (98, "config/ablation/ablation_98_no_vision_stream.yaml"),  # 74 sin la informacion del ViT (audio + texto)
-        (99, "config/ablation/ablation_99_fixed_epochs_no_selection.yaml"),  # 74 con 17 epocas fijas y la ultima epoca en test (Chen & Rudnicky)
-        (100, "config/ablation/ablation_100_asr_transcripts.yaml"),  # 74 con texto de Whisper en vez de la transcripcion manual
+        # 99, 100, 103 y 104 parten del 98 (sin ViT) desde el 14/11/2026.
+        (99, "config/ablation/ablation_99_fixed_epochs_no_selection.yaml"),  # 98 con 14 epocas fijas y la ultima epoca en test (Chen & Rudnicky)
+        (100, "config/ablation/ablation_100_asr_transcripts.yaml"),  # 98 con texto de Whisper en vez de la transcripcion manual
         (101, "config/ablation/ablation_101_crossmodal_attention.yaml"),  # 74 con co-atencion frames de audio <-> tokens de texto antes del pooling
         (102, "config/ablation/ablation_102_wavlm_base_plus.yaml"),  # 74 con WavLM Base+ en vez de wav2vec 2.0 base
-        (103, "config/ablation/ablation_103_roberta_base.yaml"),  # 74 con RoBERTa-base en vez de DistilBERT
+        (103, "config/ablation/ablation_103_roberta_base.yaml"),  # 98 con RoBERTa-base en vez de DistilBERT
+        (104, "config/ablation/ablation_104_real_utterance_only.yaml"),  # 98 viendo solo el enunciado real (sin relleno)
+        (105, "config/ablation/ablation_105_cremad_no_vision.yaml"),  # 77 (CREMA-D) sin la rama ViT
+        (106, "config/ablation/ablation_106_meld_no_vision.yaml"),  # 79 (MELD) sin la rama ViT; --protocol fixed
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-103 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-106 (there is no study 51)")
             return
     
     # Run each study

@@ -1,4 +1,4 @@
-# Ablation Study 100: el 74 con texto de ASR (Whisper) en lugar de la transcripcion manual.
+# Ablation Study 100: el 98 con texto de ASR (Whisper) en lugar de la transcripcion manual.
 #
 # POR QUE. Todo nuestro texto de IEMOCAP es la transcripcion humana del corpus. En un
 # sistema real no existe. Wu et al. 2021 reportan las dos condiciones (78.41 UA manual,
@@ -13,10 +13,11 @@
 #   python scripts\transcribe_asr.py --config config\ablation\ablation_100_asr_transcripts.yaml
 # El script reporta el WER contra la transcripcion manual: va al articulo.
 #
-# Comparar contra el 74 (semilla 42), pareado por fold. Y contra el 71 (solo audio):
+# Comparar contra el 98 (semilla 42), pareado por fold. Y contra el 71 (solo audio):
 # 100 - 71 es el aporte de la fusion con ASR.
+# Base: el 98 (audio + texto, sin ViT) desde el 14/11/2026: el ViT no aporto (estudio 98).
 #
-# LECTURA, escrita ANTES de correrlo: se espera 74 > 100 (el ASR mete errores). Lo que
+# LECTURA, escrita ANTES de correrlo: se espera 98 > 100 (el ASR mete errores). Lo que
 # importa es cuanto queda de 100 - 71: si sigue lejos de 0, el aporte lexico es robusto
 # a ASR; si se acerca a 0, el resultado depende de tener transcripcion humana y el
 # articulo tiene que decirlo.
@@ -66,7 +67,7 @@ text:
     mask_prob: 0.15
     insert_prob: 0.1
   use_prosody_cues: true
-  transcript_source: "asr"   # <-- EL UNICO CAMBIO frente al 74
+  transcript_source: "asr"   # <-- EL UNICO CAMBIO frente al 98
   asr_cache: "cache/asr/iemocap_whisper-small.en.json"
 
 model:
@@ -104,6 +105,7 @@ model:
   # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
   # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
   freeze_vision_encoder: true
+  vision_stream: "off"   # sin la rama ViT, como el 98
   vision_unfreeze_last_n_layers: 0
   vision_image_size: 224
   mel_n_mels: 80

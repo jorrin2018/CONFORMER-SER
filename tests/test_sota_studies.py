@@ -1,4 +1,4 @@
-"""Tests de los estudios 98-103 (filas pendientes del articulo y mejoras candidatas).
+"""Tests de los estudios 98-106 (filas pendientes del articulo y mejoras candidatas).
 
 Sin GPU, sin IEMOCAP, sin red: encoders diminutos y aleatorios (tests/tiny_encoders.py).
 
@@ -42,31 +42,36 @@ def _flat(d, pre=""):
     return out
 
 
+# estudio -> (base, claves que cambian frente a la base)
 ESPERADO = {
-    98: {"model.vision_stream": "off"},
-    99: {"training.model_selection": "last", "training.num_epochs": 17},
-    100: {"text.transcript_source": "asr",
-          "text.asr_cache": "cache/asr/iemocap_whisper-small.en.json"},
-    101: {"model.crossmodal_attention.enabled": True,
-          "model.crossmodal_attention.num_heads": 8,
-          "model.crossmodal_attention.num_layers": 1,
-          "model.crossmodal_attention.dropout": 0.1,
-          "model.crossmodal_attention.ffn_mult": 2,
-          "training.learning_rate_crossmodal": 1.0e-4},
-    102: {"model.audio_encoder": "microsoft/wavlm-base-plus"},
-    103: {"model.text_encoder": "roberta-base", "text.model_name": "roberta-base"},
+    98: (74, {"model.vision_stream": "off"}),
+    99: (98, {"training.model_selection": "last", "training.num_epochs": 14}),
+    100: (98, {"text.transcript_source": "asr",
+               "text.asr_cache": "cache/asr/iemocap_whisper-small.en.json"}),
+    101: (74, {"model.crossmodal_attention.enabled": True,
+               "model.crossmodal_attention.num_heads": 8,
+               "model.crossmodal_attention.num_layers": 1,
+               "model.crossmodal_attention.dropout": 0.1,
+               "model.crossmodal_attention.ffn_mult": 2,
+               "training.learning_rate_crossmodal": 1.0e-4}),
+    102: (74, {"model.audio_encoder": "microsoft/wavlm-base-plus"}),
+    103: (98, {"model.text_encoder": "roberta-base", "text.model_name": "roberta-base"}),
+    104: (98, {"audio.pad_after_preprocessing": True, "model.audio_masked_pooling": True}),
+    105: (77, {"model.vision_stream": "off"}),
+    106: (79, {"model.vision_stream": "off"}),
 }
 
 
 @pytest.mark.parametrize("study", sorted(ESPERADO))
-def test_config_is_74_plus_one_change(study):
-    """Cada estudio es el 74 con exactamente las claves declaradas cambiadas."""
-    base = _flat(_cfg(74))
+def test_config_is_base_plus_one_change(study):
+    """Cada estudio es su base con exactamente las claves declaradas cambiadas."""
+    base_n, esperado = ESPERADO[study]
+    base = _flat(_cfg(base_n))
     cfg = _flat(_cfg(study))
     ignorar = ("logging.",)
     cambios = {k: cfg.get(k) for k in set(base) | set(cfg)
                if not k.startswith(ignorar) and base.get(k) != cfg.get(k)}
-    assert cambios == ESPERADO[study]
+    assert cambios == esperado
 
 
 def test_studies_registered():
@@ -174,6 +179,31 @@ def test_crossmodal_without_lr_warns():
     cfg["training"].pop("learning_rate_crossmodal")
     with pytest.warns(UserWarning, match="learning_rate_crossmodal"):
         create_ablation_optimizer(m, cfg, 101)
+
+
+# ---------------------------------------------------------------- estudio 104
+def test_104_pools_only_real_frames():
+    """Con audio_masked_pooling, cambiar el relleno no cambia la prediccion... del pooling.
+
+    wav2vec2-base no recibe mascara de atencion, asi que el relleno SI llega al encoder;
+    lo que el 104 garantiza es que el promedio solo usa frames reales. Se comprueba con
+    el modelo que el vector de audio no depende de frames fuera de la longitud real.
+    """
+    m, _ = _model(104)
+    assert m.uses_audio_lengths and m._audio_masked_pooling and m._vision_stream == "off"
+    m.eval()
+    feats = torch.randn(2, 100, 32)
+    L = torch.tensor([16000 * 2, 16000])          # 2 s y 1 s de habla real
+    mask = m._audio_frame_mask(L, feats.size(1))
+    a = m.pool_audio_features(feats, mask)
+    feats2 = feats.clone()
+    feats2[1, int(mask[1].sum()):] = 1e3            # basura fuera del enunciado real
+    b = m.pool_audio_features(feats2, mask)
+    assert torch.allclose(a, b)
+    audio, ids, msk, y = _batch()
+    with torch.no_grad():
+        out = m(audio, ids, msk, y, audio_lengths=torch.tensor([32000, 16000]))
+    assert out["logits"].shape == (2, 4)
 
 
 # ---------------------------------------------------------------- estudio 99

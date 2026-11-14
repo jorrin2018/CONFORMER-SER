@@ -1,4 +1,4 @@
-# Ablation Study 103: el 74 con RoBERTa-base en lugar de DistilBERT.
+# Ablation Study 103: el 98 con RoBERTa-base en lugar de DistilBERT.
 #
 # POR QUE. DistilBERT (66 M, 6 capas) es el encoder de texto mas pequeno de la
 # literatura comparable; Zhao et al. 2022 usan BERT-base. El texto es la rama que mas
@@ -10,11 +10,13 @@
 # politica de afinado (4 bloques superiores), mismas tasas. Se usa la posicion 0 (<s>)
 # como [CLS], igual que con DistilBERT.
 #
-# Comparar contra el 74 (semilla 42), pareado por fold.
+# Comparar contra el 98 (semilla 42), pareado por fold.
 #
 # LECTURA, escrita ANTES de correrlo:
-#   103 - 74 > 0.86 en >= 4/5 folds -> el encoder de texto limita; adoptarlo.
-#   |103 - 74| <= 0.86 -> DistilBERT basta; se mantiene (mas barato).
+#   103 - 98 > 0.86 en >= 4/5 folds -> el encoder de texto limita; adoptarlo.
+#   |103 - 98| <= 0.86 -> DistilBERT basta; se mantiene (mas barato).
+#
+# Base: el 98 (audio + texto, sin ViT) desde el 14/11/2026: el ViT no aporto.
 
 dataset:
   data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
@@ -52,7 +54,7 @@ audio:
     pitch_range: [-2, 2]
 
 text:
-  model_name: "roberta-base"   # <-- EL UNICO CAMBIO frente al 74 (tokenizer)
+  model_name: "roberta-base"   # <-- EL UNICO CAMBIO frente al 98 (tokenizer)
   max_length: 128
   apply_text_augment: false
   augmentation:
@@ -64,7 +66,7 @@ text:
 
 model:
   audio_encoder: "facebook/wav2vec2-base"
-  text_encoder: "roberta-base"   # <-- EL UNICO CAMBIO frente al 74 (encoder)
+  text_encoder: "roberta-base"   # <-- EL UNICO CAMBIO frente al 98 (encoder)
   freeze_audio_encoder: false
   freeze_text_encoder: false
   hidden_dim: 512
@@ -97,6 +99,7 @@ model:
   # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
   # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
   freeze_vision_encoder: true
+  vision_stream: "off"   # sin la rama ViT, como el 98
   vision_unfreeze_last_n_layers: 0
   vision_image_size: 224
   mel_n_mels: 80

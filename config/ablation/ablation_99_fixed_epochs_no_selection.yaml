@@ -1,4 +1,4 @@
-# Ablation Study 99: el 74 SIN seleccion de modelo por validacion (epocas fijas).
+# Ablation Study 99: el 98 SIN seleccion de modelo por validacion (epocas fijas).
 #
 # POR QUE. Chen & Rudnicky (2023) reportan 69.9 / 74.3 UA entrenando un numero FIJO de
 # epocas, sin validacion y sin elegir checkpoint. Nosotros elegimos el checkpoint con
@@ -10,17 +10,19 @@
 # early stopping, y se evalua en test la ULTIMA epoca. La validacion sigue existiendo
 # (la usa el scheduler de plateau), pero no elige el modelo.
 #
-# num_epochs = 17: la mediana de la mejor epoca de validacion de las DIEZ corridas del
-# 74 (semillas 42 y 123: 12, 14, 21, 20, 8 y 17, 16, 21, 10, 32 -> mediana 16.5).
-# Sale de la validacion de corridas anteriores, nunca del test. Chen & Rudnicky usan 15.
+# num_epochs = 14: la mediana de la mejor epoca de validacion de los cinco folds del 98
+# (semilla 42; epoca final menos la paciencia de 8: 14, 12, 14, 14, 15). Sale de la
+# validacion, nunca del test. Chen & Rudnicky usan 15. (Con base en el 74 eran 17.)
 #
-# Comparar contra el 74 (semilla 42), pareado por fold.
+# Comparar contra el 98 (semilla 42), pareado por fold.
 #
 # LECTURA, escrita ANTES de correrlo:
-#   |99 - 74| <= 0.86 -> la seleccion por validacion no infla nuestro numero: la
+#   |99 - 98| <= 0.86 -> la seleccion por validacion no infla nuestro numero: la
 #                        comparacion con Chen & Rudnicky es justa en este eje.
-#   74 - 99 > 0.86    -> parte de nuestro UA viene de elegir el checkpoint; se declara
+#   98 - 99 > 0.86    -> parte de nuestro UA viene de elegir el checkpoint; se declara
 #                        al lado de su fila en la tabla de estado del arte.
+#
+# Base: el 98 (audio + texto, sin ViT) desde el 14/11/2026: el ViT no aporto.
 
 dataset:
   data_path: "D:\\DOCTORADO\\DATASETS\\IEMOCAP\\IEMOCAP_full_release"
@@ -103,6 +105,7 @@ model:
   # El articulo describe el ViT congelado, y la corrida que dio 79.23 UA lo tenia
   # congelado en su config.json. Descongelarlo cuesta 10.65 pp (ver estudio 65).
   freeze_vision_encoder: true
+  vision_stream: "off"   # sin la rama ViT, como el 98
   vision_unfreeze_last_n_layers: 0
   vision_image_size: 224
   mel_n_mels: 80
@@ -112,8 +115,8 @@ model:
 
 training:
   batch_size: 4
-  num_epochs: 17
-  model_selection: "last"   # <-- EL UNICO CAMBIO frente al 74 (y num_epochs fijas)
+  num_epochs: 14
+  model_selection: "last"   # <-- EL UNICO CAMBIO frente al 98 (y num_epochs fijas)
   gradient_accumulation_steps: 8
   mixed_precision: false
   use_param_groups: true
