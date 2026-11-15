@@ -259,3 +259,47 @@ def test_wer():
     from scripts.transcribe_asr import wer
     assert wer([("Hello, there! [LAUGHTER]", "hello there")]) == 0
     assert wer([("a b c d", "a x c")]) == pytest.approx(0.5)
+
+
+# ------------------------------------------- borrado de last_model.pt al terminar
+def _logger():
+    return logging.getLogger("t")
+
+
+def test_last_model_is_deleted_only_when_fold_finished(tmp_path):
+    import scripts.run_ablation as ra
+    d = tmp_path / "run"
+    d.mkdir()
+    (d / "last_model.pt").write_bytes(b"x" * 10)
+    (d / "best_model.pt").write_bytes(b"y" * 10)
+    ra._borrar_estado_de_reanudacion(str(d), {}, "best_val", _logger())
+    assert (d / "last_model.pt").exists()          # sin final_results: fold a medias
+    (d / "final_results.json").write_text("{}")
+    ra._borrar_estado_de_reanudacion(str(d), {}, "last", _logger())
+    assert (d / "last_model.pt").exists()          # model_selection last: es el evaluado
+    ra._borrar_estado_de_reanudacion(str(d), {"training": {"keep_last_model": True}},
+                                     "best_val", _logger())
+    assert (d / "last_model.pt").exists()          # pedido explicito de conservarlo
+    ra._borrar_estado_de_reanudacion(str(d), {}, "best_val", _logger())
+    assert not (d / "last_model.pt").exists()
+    assert (d / "best_model.pt").exists()          # el mejor modelo nunca se toca
+
+
+def test_resume_of_finished_fold_does_not_retrain(tmp_path):
+    import scripts.run_ablation as ra
+    model = torch.nn.Linear(3, 2)
+    exp = tmp_path / "exp_fold"
+    exp.mkdir()
+    torch.save({"epoch": 12, "model_state_dict": model.state_dict()}, exp / "best_model.pt")
+    (exp / "final_results.json").write_text(json.dumps(
+        {"final_epoch": 20, "best_val_ua": 0.8, "resume_points": []}))
+    (exp / "metrics.json").write_text(json.dumps(
+        {str(e): {"val_unweighted_accuracy": 0.5} for e in range(1, 21)}))
+    otro = torch.nn.Linear(3, 2)
+    opt = torch.optim.SGD(otro.parameters(), lr=0.1)
+    cfg = {"training": {"early_stopping_patience": 8}}
+    start, mejor, paciencia, puntos, _ = ra._load_resume_state(
+        str(tmp_path), "exp_fold", otro, opt, None, "cpu", "val_ua", "max", _logger(),
+        config_actual=cfg)
+    assert start == 21 and paciencia >= 8 and mejor == 0.8 and puntos == []
+    assert torch.equal(otro.weight, model.weight)  # se cargaron los mejores pesos

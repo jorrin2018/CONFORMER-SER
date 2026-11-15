@@ -451,6 +451,14 @@ scripts). Solo se guardan dos checkpoints por fold: `best_model.pt` y `last_mode
 los dos con el estado del optimizador dentro, **1.75 GB cada uno**. O sea 3.5 GB por
 fold. No recomendar bajar `save_top_k` para ahorrar memoria: es una clave muerta.
 
+**Desde el 15/11/2026 `last_model.pt` se borra al terminar cada fold** (una vez escrito
+`final_results.json`): solo sirve para reanudar un fold a medias. Excepciones: con
+`--keep-last-model` (o `training.keep_last_model: true`) se conserva, y con
+`training.model_selection: last` (estudio 99) tambien, porque ahi es el modelo evaluado.
+`--resume` sobre un fold terminado sin `last_model.pt` NO reentrena: carga
+`best_model.pt` y pasa directo a test. Motivo: el disco D: (932 GB) se lleno el
+14/11/2026 a mitad del estudio 104 y `torch.save` fallo.
+
 **Los fallos de entrenamiento que REVIENTAN en esta maquina son de recursos, no de
 codigo** -- pero ojo, eso vale para los que revientan. El del 20/10/2026 no reventaba:
 entrenaba entero con la rama de audio en ruido (ver la trampa del encoder, mas abajo).

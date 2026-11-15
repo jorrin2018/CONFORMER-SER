@@ -843,6 +843,12 @@ def _run_ablation_with_config(
             'model_selection': seleccion,
         }, f, indent=2)
 
+    # last_model.pt solo sirve para reanudar un fold a medias. Con el fold terminado
+    # (final_results.json ya escrito) son ~1.6 GB muertos por fold: se borra, salvo
+    # --keep-last-model. Con model_selection: last NO se borra, porque ahi el modelo
+    # evaluado en test ES el de la ultima epoca.
+    _borrar_estado_de_reanudacion(results_dir, config, seleccion, logger)
+
     logger.info(f"Ablation Study {study_number} run completed!")
     logger.info(f"Results saved to: {results_dir}")
 
@@ -1068,6 +1074,34 @@ def _save_resume_state(path, *, epoch, model, optimizer, scheduler, best_val_met
             pass
 
 
+# --keep-last-model lo pone a True; tambien vale training.keep_last_model en el config.
+_KEEP_LAST_MODEL = False
+
+
+def _borrar_estado_de_reanudacion(results_dir, config, seleccion, logger):
+    """Borra last_model.pt (y un .tmp huerfano) de un fold que ya termino."""
+    if _KEEP_LAST_MODEL or (config.get('training', {}) or {}).get('keep_last_model', False):
+        return
+    if seleccion == 'last':
+        logger.info("model_selection=last: se conserva last_model.pt (es el modelo evaluado).")
+        return
+    if not os.path.isfile(os.path.join(results_dir, 'final_results.json')):
+        return
+    liberado = 0
+    for nombre in ('last_model.pt', 'last_model.pt.tmp'):
+        ruta = os.path.join(results_dir, nombre)
+        if os.path.isfile(ruta):
+            try:
+                tam = os.path.getsize(ruta)
+                os.remove(ruta)
+                liberado += tam
+            except OSError as e:
+                logger.warning(f"No se pudo borrar {ruta}: {e}")
+    if liberado:
+        logger.info(f"Fold terminado: se borra last_model.pt ({liberado / 2**30:.2f} GB "
+                    f"liberados). Usa --keep-last-model para conservarlo.")
+
+
 def _rebuild_histories(checkpoint_dir, experiment_name, last_epoch, monitor_metric):
     """Reconstruye las curvas de entrenamiento desde metrics.json.
 
@@ -1184,6 +1218,31 @@ def _load_resume_state(checkpoint_dir, experiment_name, model, optimizer, schedu
             return None
         path, exacto = hermano
         base = os.path.dirname(path)
+
+    fr_path = os.path.join(base, 'final_results.json')
+    if not exacto and os.path.isfile(fr_path):
+        # Fold TERMINADO cuyo last_model.pt se borro al acabar. No hay nada que
+        # entrenar: se cargan los mejores pesos y se pasa directo a test. Sin esto,
+        # --resume reanudaria desde best_model.pt y repetiria epocas ya hechas.
+        try:
+            ck = torch.load(path, map_location=device, weights_only=False)
+            fr = json.load(open(fr_path))
+        except Exception as e:
+            logger.warning(f"No se pudo leer {path} para reanudar ({e}); se entrena desde cero.")
+            return None
+        model.load_state_dict(ck['model_state_dict'], strict=True)
+        done = int(fr.get('final_epoch') or ck.get('epoch', 0))
+        paciencia = int(((config_actual or {}).get('training', {}) or {})
+                        .get('early_stopping_patience', 10 ** 6))
+        mejor = fr.get('best_val_ua')
+        if mejor is None:
+            mejor = -1.0 if monitor_mode == 'max' else float('inf')
+        logger.info(f"[reanudacion] {os.path.basename(base)} ya habia terminado (epoca "
+                    f"{done}); se evalua en test con best_model.pt sin reentrenar.")
+        histories = _rebuild_histories(os.path.dirname(base), os.path.basename(base),
+                                       done, monitor_metric)
+        return (done + 1, mejor, paciencia, list(fr.get('resume_points') or []),
+                histories)
 
     try:
         ck = torch.load(path, map_location=device, weights_only=False)
@@ -1675,6 +1734,9 @@ def main():
                              'anterior, reanuda desde ahi. AVISO: un fold reanudado no es '
                              'bit-identico a uno corrido de un tiron -- queda marcado con '
                              'resumed:true en su final_results.json.')
+    parser.add_argument('--keep-last-model', action='store_true', dest='keep_last_model',
+                        help='Conservar last_model.pt (~1.6 GB) al terminar cada fold. Por '
+                             'defecto se borra: solo sirve para reanudar un fold a medias.')
     parser.add_argument('--folds', type=int, nargs='+', default=None,
                         help='Correr solo estos folds (por sesion de test), p. ej. '
                              '--folds 4 5. Los demas se recuperan del resumen previo '
@@ -1693,6 +1755,8 @@ def main():
                              'pero el camino que toma es el de k-fold con limpieza de '
                              'cache entre folds, que es el que se usa desde el 12/09.')
     args = parser.parse_args()
+    global _KEEP_LAST_MODEL
+    _KEEP_LAST_MODEL = bool(args.keep_last_model)
     
     # Define all studies
     studies = [
