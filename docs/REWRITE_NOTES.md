@@ -3179,3 +3179,32 @@ módulo y pasan a ser hallazgos medidos, lo que para una revista es más sólido
 
 El título deja de prometer un componente ("Conflict-Aware Multistream Fusion") y pasa a
 prometer una respuesta (cuándo y por qué ayuda la fusión multimodal en SER).
+
+### 16.3 ESTUDIO 104 (14-16 nov 2026): ver solo el enunciado real NO ayuda
+
+El 98 con `pad_after_preprocessing` + `audio_masked_pooling`. Semilla 42, LOSO `standard`,
+ningún fold reanudado. El fold S1 corrió el 14/11 (con el disco lleno: fallaron los
+guardados de `last_model.pt`, no el entrenamiento); S2-S5 se rehicieron el 15/11 con
+`--folds 2 3 4 5`.
+
+| Fold (test) | 74 (s42) | 98 | **104** | 104 − 98 |
+|---|---|---|---|---|
+| S1 | 75.66 | 76.44 | 75.10 | −1.34 |
+| S2 | 80.25 | 80.66 | 80.09 | −0.57 |
+| S3 | 71.96 | 73.38 | 71.65 | −1.73 |
+| S4 | 75.49 | 77.91 | 73.04 | −4.87 |
+| S5 | 74.05 | 73.78 | 73.68 | −0.10 |
+| **media** | **75.48** | **76.43** | **74.71 ± 3.25** | **−1.72 ± 1.87** |
+
+IC 95 % [−4.05, +0.60]; 5/5 folds por debajo del 98, 3/5 por más de 0.86. WA 73.41
+(−1.34), macro-F1 74.01 (−1.25). Por clase: angry 83.24, happy 70.48 (−3.67), sad 77.01
+(−5.08), neutral 68.11 (+2.77). Contra el 74: −0.77 ± 0.95, dentro de la banda.
+
+**No se adopta.** La lectura escrita de antemano era "el relleno no limita; los cortos son
+difíciles por naturaleza". El signo negativo no está establecido (el IC incluye el cero) y
+no se puede atribuir a una de las dos claves: `pad_after_preprocessing` también cambia la
+aumentación (el enmascarado temporal y el ruido caen siempre sobre habla en vez de, a
+veces, sobre relleno) y la normalización. Además, parte de la distancia al 98 puede ser
+que el 98, con una sola semilla, haya salido alto: contra el 74 el 104 está en el ruido.
+
+**Consecuencia:** la siguiente decisión la dan las semillas del 98, no otro cambio.
