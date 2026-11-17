@@ -3238,3 +3238,29 @@ sobre solo audio y **+7.93 ± 1.60** sobre solo texto, 5/5 en ambas.
 
 Frente a Zhao et al. (76.31, media de 25 corridas): 75.75, a 0.56 pp. Sigue siendo
 "competitivo, no mejor". Faltan las semillas 789 y 1011 para la media de cinco.
+
+### 16.5 ESTUDIO 105 (16-17 nov 2026): CREMA-D sin ViT confirma las dos cosas
+
+El 77 con `vision_stream: off`. Semilla 42, cinco grupos de actores, ningún fold
+reanudado.
+
+| Grupo | 78 solo audio | 77 con ViT | **105 sin ViT** | 105 − 78 | 105 − 77 |
+|---|---|---|---|---|---|
+| 1 | 84.85 | 84.27 | 83.76 | −1.09 | −0.51 |
+| 2 | 83.60 | 80.46 | 83.06 | −0.54 | +2.60 |
+| 3 | 80.03 | 79.49 | 79.81 | −0.22 | +0.32 |
+| 4 | 84.71 | 86.17 | 85.37 | +0.66 | −0.80 |
+| 5 | 84.52 | 81.36 | 80.76 | −3.76 | −0.60 |
+| **media** | **83.54** | **82.35** | **82.55 ± 2.26** | **−0.99 ± 1.67** | **+0.20 ± 1.41** |
+
+1. **El punto CREMA-D del eje no cambia sin ViT:** fusión audio + texto − solo audio =
+   −0.99 ± 1.67 (IC 95 % [−3.07, +1.09], 1/5), frente a −1.19 con el modelo de tres
+   flujos. Sin ganancia, como se esperaba: el texto de CREMA-D no informa.
+2. **Segundo corpus en que el ViT no aporta:** 105 − 77 = +0.20 ± 1.41 (IC [−1.55, +1.95]).
+   La lectura escrita era "si 77 − 105 > 0.86 en ≥ 4/5, el ViT aporta"; no ocurre.
+
+WA 82.41, macro-F1 82.37. Por clase frente al 78: angry −2.26, happy +0.22, sad −2.30,
+neutral +0.37 (ninguna clase gana, como en el 77).
+
+Queda MELD (106), el corpus con el audio más degradado: si el ViT aportara en algún sitio,
+sería ahí.
