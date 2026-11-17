@@ -207,7 +207,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = UnimodalBaselineModel(config)
     elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
                           87, 88, 89, 90, 91, 92, 93, 94, 97, 98, 99, 100, 101, 102, 103,
-                          104, 105, 106):
+                          104, 105, 106, 107, 108, 109, 110):
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         # 87-94: el 72 con las variantes que alinean el codigo con la presentacion
@@ -253,7 +253,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-106 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-110 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1607,9 +1607,14 @@ def run_ablation_study_kfold(
     # esto, correr 42/123/456 sobre el mismo estudio sobrescribe el resumen anterior
     # cada vez y la multi-semilla se destruye a si misma en silencio.
     sufijo_semilla = '' if seed is None else '_seed{}'.format(int(seed))
+    # --protocol random lleva su propio sufijo: sin el, correrlo sobre un estudio ya
+    # hecho en LOSO SOBRESCRIBIA kfold_summary_ablation_NN.json (el resumen 'standard')
+    # con el de folds aleatorios. 'standard' y 'fixed' conservan el nombre historico.
+    sufijo_protocolo = '_random' if protocol == 'random' else ''
     summary_path = (Path(ckpt_root) /
-                    'kfold_summary_ablation_{:02d}{}.json'.format(study_number,
-                                                                  sufijo_semilla))
+                    'kfold_summary_ablation_{:02d}{}{}.json'.format(study_number,
+                                                                    sufijo_protocolo,
+                                                                    sufijo_semilla))
     if requested and summary_path.exists():
         try:
             previo = json.load(open(summary_path))
@@ -1708,7 +1713,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-106; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-110; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1861,7 +1866,7 @@ def main():
         (95, "config/ablation/ablation_95_expert_audio_crossfit.yaml"),  # = 71 (audio), LOSO interno sin la sesion externa
         (96, "config/ablation/ablation_96_expert_text_crossfit.yaml"),  # = 73 (texto), LOSO interno sin la sesion externa
         (97, "config/ablation/ablation_97_expert_gate_original.yaml"),  # 72 con g de los expertos congelados (cross-fitting); w de la confidence_net
-        # Serie 98-106: filas que faltan para el articulo y mejoras candidatas, un cambio
+        # Serie 98-110: filas que faltan para el articulo y mejoras candidatas, un cambio
         # cada una (docs/ESTUDIOS_SOTA.md).
         (98, "config/ablation/ablation_98_no_vision_stream.yaml"),  # 74 sin la informacion del ViT (audio + texto)
         # 99, 100, 103 y 104 parten del 98 (sin ViT) desde el 14/11/2026.
@@ -1873,13 +1878,18 @@ def main():
         (104, "config/ablation/ablation_104_real_utterance_only.yaml"),  # 98 viendo solo el enunciado real (sin relleno)
         (105, "config/ablation/ablation_105_cremad_no_vision.yaml"),  # 77 (CREMA-D) sin la rama ViT
         (106, "config/ablation/ablation_106_meld_no_vision.yaml"),  # 79 (MELD) sin la rama ViT; --protocol fixed
+        # 107-110: ablaciones del modelo final (98) y la fila de MELD comparable (7 clases).
+        (107, "config/ablation/ablation_107_no_prosody_prompt.yaml"),  # 98 sin el prompt de prosodia: el texto es solo la transcripcion
+        (108, "config/ablation/ablation_108_no_audio_augment.yaml"),  # 98 sin aumentacion de audio
+        (109, "config/ablation/ablation_109_concat_fusion.yaml"),  # 98 con fusion por concatenacion (0 capas de atencion entre tokens)
+        (110, "config/ablation/ablation_110_meld_7class_no_vision.yaml"),  # 81 (MELD, 7 clases) sin la rama ViT; --protocol fixed
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-106 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-110 (there is no study 51)")
             return
     
     # Run each study

@@ -1,4 +1,4 @@
-"""Tests de los estudios 98-106 (filas pendientes del articulo y mejoras candidatas).
+"""Tests de los estudios 98-110 (filas pendientes del articulo y mejoras candidatas).
 
 Sin GPU, sin IEMOCAP, sin red: encoders diminutos y aleatorios (tests/tiny_encoders.py).
 
@@ -59,6 +59,10 @@ ESPERADO = {
     104: (98, {"audio.pad_after_preprocessing": True, "model.audio_masked_pooling": True}),
     105: (77, {"model.vision_stream": "off"}),
     106: (79, {"model.vision_stream": "off"}),
+    107: (98, {"text.use_prosody_cues": False}),
+    108: (98, {"audio.apply_waveform_augment": False}),
+    109: (98, {"model.fusion_num_layers": 0}),
+    110: (81, {"model.vision_stream": "off"}),
 }
 
 
@@ -303,3 +307,17 @@ def test_resume_of_finished_fold_does_not_retrain(tmp_path):
         config_actual=cfg)
     assert start == 21 and paciencia >= 8 and mejor == 0.8 and puntos == []
     assert torch.equal(otro.weight, model.weight)  # se cargaron los mejores pesos
+
+
+def test_109_fusion_has_no_attention_layers():
+    m, _ = _model(109)
+    assert len(m.fusion.cross_attn_layers) == 0 and len(m.fusion.layer_norms) == 0
+    m.eval()
+    with torch.no_grad():
+        out = m(*_batch())
+    assert out["logits"].shape == (2, 4)
+
+
+def test_random_protocol_summary_does_not_overwrite_standard():
+    src = (ROOT / "scripts/run_ablation.py").read_text(encoding="utf-8")
+    assert "sufijo_protocolo = '_random' if protocol == 'random' else ''" in src

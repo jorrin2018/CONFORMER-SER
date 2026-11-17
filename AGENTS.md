@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–106`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–110`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -142,7 +142,7 @@ aux classifiers; `w` still comes from `confidence_net`. Missing cache, missing O
 missing utterance raises. Verify with `scripts/check_expert_gate.py --study 97 --fold S`.
 Default (`conflict_source` unset) is bit-identical to `main`.
 
-### Studies 98–106 — missing paper rows and SOTA candidates
+### Studies 98–110 — missing paper rows, protocol rows and SOTA candidates
 
 Each is ONE change over its base (all opt-in keys; defaults leave earlier studies unchanged —
 eval-mode logits of 72/74/89 verified identical). Since 14/11/2026 the base for new IEMOCAP
@@ -161,6 +161,15 @@ pre-registered readings: [`docs/ESTUDIOS_SOTA.md`](docs/ESTUDIOS_SOTA.md). Pre-f
 | 104 | 98 | model sees only the real utterance (no padding) | `audio.pad_after_preprocessing`, `model.audio_masked_pooling` |
 | 105 | 77 | CREMA-D without the ViT stream | `model.vision_stream: off` |
 | 106 | 79 | MELD without the ViT stream (`--protocol fixed`, 2 seeds) | `model.vision_stream: off` |
+| 107 | 98 | no prosody prompt: text is the transcript only | `text.use_prosody_cues: false` |
+| 108 | 98 | no waveform augmentation | `audio.apply_waveform_augment: false` |
+| 109 | 98 | concatenation fusion (0 attention layers between branch tokens) | `model.fusion_num_layers: 0` |
+| 110 | 81 | MELD 7 classes without the ViT stream (`--protocol fixed`) | `model.vision_stream: off` |
+
+`--protocol random` summaries are written as `kfold_summary_ablation_NN_random[_seedS].json`
+(before 18/11/2026 they overwrote the `standard` summary of the same study). The ordered,
+resumable queue of remaining paper runs is `scripts\cola_articulo.ps1` (`-SoloListar` to see
+what is missing).
 
 `create_ablation_optimizer` puts parameters named `crossmodal.*` in their own group only
 when `learning_rate_crossmodal` is set (warns otherwise: new layers at lr_fusion 5e-6

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""check_sota_studies.py -- comprobacion previa de los estudios 98-106, antes de gastar GPU.
+"""check_sota_studies.py -- comprobacion previa de los estudios 98-110, antes de gastar GPU.
 
 Monta el modelo real con el config real (encoders preentrenados de verdad) y un batch
 real del fold, y comprueba lo que cada estudio dice que cambia:
@@ -12,6 +12,9 @@ real del fold, y comprueba lo que cada estudio dice que cambia:
   103  RoBERTa-base y su tokenizer cargan; el batch trae ids de RoBERTa.
   104  relleno al final en ceros exactos, audio_lengths en el batch, pooling enmascarado.
   105  CREMA-D sin ViT (como el 98).   106  MELD sin ViT (split oficial, sin folds).
+  107  sin prompt de prosodia: el dataset no construye el extractor de prosodia.
+  108  sin aumentacion de audio.        109  fusion sin capas de atencion entre ramas.
+  110  MELD a 7 clases sin ViT (split oficial).
 
 Ademas, para todos: un paso de optimizacion con perdida finita y, en CUDA, el pico de
 memoria de ese paso con el batch del config, para saber si cabe en tu GPU.
@@ -78,7 +81,7 @@ def fold_config(study: int, fold: int, tiny: bool, seed: int) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--study", type=int, required=True, choices=range(98, 107))
+    ap.add_argument("--study", type=int, required=True, choices=range(98, 111))
     ap.add_argument("--fold", type=int, default=1)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cuda")
@@ -119,6 +122,12 @@ def main() -> int:
                           for d in train_loader.dataset.data)
             ok(iguales == len(uids), "el dataset usa el texto de ASR")
         batch = next(iter(train_loader))
+        if args.study == 107:
+            ok(getattr(train_loader.dataset, "prosody_extractor", None) is None,
+               "sin prompt de prosodia en el texto")
+        if args.study == 108:
+            pre = train_loader.dataset.audio_preprocessor
+            ok(getattr(pre, "audio_augment", None) is None, "sin aumentacion de audio")
         if args.study == 103:
             tok = train_loader.dataset.text_preprocessor.tokenizer
             ok("roberta" in type(tok).__name__.lower(), f"tokenizer = {type(tok).__name__}")
@@ -136,8 +145,12 @@ def main() -> int:
     if args.study == 103 and not args.tiny:
         ok("roberta" in type(model.text_encoder).__name__.lower(),
            f"encoder de texto = {type(model.text_encoder).__name__}")
-    if args.study in (98, 99, 100, 103, 104, 105, 106):
+    if args.study in (98, 99, 100, 103, 104, 105, 106, 107, 108, 109, 110):
         ok(model._vision_stream == "off", "vision_stream = off (sin ViT)")
+    if args.study == 109:
+        ok(len(model.fusion.cross_attn_layers) == 0, "fusion sin capas de atencion")
+    if args.study == 110:
+        ok(cfg["model"]["num_classes"] == 7, "7 clases")
     if args.study == 104:
         ok(bool(getattr(model, "uses_audio_lengths", False)), "el modelo usa audio_lengths")
         ok(cfg["audio"].get("pad_after_preprocessing") is True, "pad_after_preprocessing = true")
@@ -147,7 +160,7 @@ def main() -> int:
             cortos = [i for i in range(len(L)) if int(L[i]) < batch["audio"].shape[1]]
             ok(all(torch.count_nonzero(batch["audio"][i, int(L[i]):]) == 0 for i in cortos),
                f"relleno en ceros exactos ({len(cortos)} enunciados cortos en el batch)")
-    if args.study in (98, 105, 106):
+    if args.study in (98, 105, 106, 107, 108, 109, 110):
         llamadas = []
         model.vision_encoder.register_forward_hook(lambda *a: llamadas.append(1))
 
@@ -174,7 +187,7 @@ def main() -> int:
         pico = torch.cuda.max_memory_allocated() / 2**30
         total = torch.cuda.get_device_properties(0).total_memory / 2**30
         ok(pico < 0.92 * total, f"pico de memoria {pico:.2f} GB de {total:.1f} GB")
-    if args.study in (98, 105, 106):
+    if args.study in (98, 105, 106, 107, 108, 109, 110):
         ok(not llamadas, "el ViT no se ejecuto")
         ok(int(torch.count_nonzero(out["vision_features"])) == 0, "vector de vision = 0")
     if args.study == 101:

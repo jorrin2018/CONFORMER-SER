@@ -1,4 +1,4 @@
-# Estudios 98-106: filas pendientes del artículo y candidatos a superar el estado del arte
+# Estudios 98-110: filas pendientes del artículo y candidatos a superar el estado del arte
 
 Rama `feature/sota-studies` (sobre `feature/expert-gate`). Noviembre 2026.
 
@@ -213,3 +213,74 @@ estudios 81 y 82 (MELD de 7 clases, 2 semillas).
 | `scripts/check_sota_studies.py` | comprobación previa con modelo, datos y GPU reales |
 | `tests/test_sota_studies.py` | 19 tests sin GPU ni datos |
 | `config/ablation/ablation_98…103_*.yaml` | un config por estudio, con su lectura en la cabecera |
+
+## 9. Fase final: protocolos comparables y ablaciones del modelo final (18 nov 2026)
+
+El modelo del artículo es el **98** (audio + texto). Lo que falta se divide en dos grupos:
+filas que permiten compararse con cada trabajo relacionado **bajo su propio protocolo**, y
+ablaciones que sostienen cada pieza del 98. Todo está en una cola ordenada y reanudable:
+
+```powershell
+.\scripts\cola_articulo.ps1 -SoloListar      # que falta, sin correr nada
+.\scripts\cola_articulo.ps1                  # bloques A-D, en orden
+.\scripts\cola_articulo.ps1 -Bloques A,B     # solo esos bloques
+```
+
+La cola se salta lo que ya tiene un resumen completo y se detiene si encuentra uno
+parcial. Antes de cada estudio nuevo pasa `check_sota_studies.py`, y antes del 100
+transcribe con Whisper si falta el cache.
+
+### 9.1 Comparación con los trabajos relacionados
+
+| Trabajo | Su protocolo | Nuestra fila | Cómo se obtiene | Estado |
+|---|---|---|---|---|
+| Zhao et al. 2022 (76.31 UA) | LOSO, media de 25 corridas (5 × 5) | 98 con 5 semillas | bloque A: semillas 789 y 1011 | 3/5 hechas |
+| Pepino et al. 2021 (67.2 UA) | LOSO, wav2vec2-base congelado | estudio 70 (réplica) | bloque D | pendiente |
+| Chen & Rudnicky 2023 (69.9 / 74.3) | LOSO, épocas fijas, sin selección | estudio 99 | bloque D | pendiente |
+| Yoon et al. 2018 (0.718 WAP) | 5 folds aleatorios, dependiente de hablante | 98 y 71 con `--protocol random` | bloque D | pendiente |
+| Wu et al. 2021 (71.90 UA con ASR) | LOSO, ASR, ±3 enunciados de contexto | estudio 100 (ASR, sin contexto) | bloque D | pendiente; sigue sin ser comparable por el contexto |
+| Literatura de MELD (weighted F1, 7 clases) | split oficial | 110 (y su par 82) con 2 semillas | bloque D | pendiente |
+| Literatura de CREMA-D | mayoría con repartos aleatorios | 105 y 78 con `--protocol random` | bloque D | pendiente |
+| emotion2vec (72.69 UA) | LOSO, encoder congelado + capa lineal | no se replica | — | se cita como comparable, sin fila propia |
+| Morais et al. 2022 (77.76 UA) | LOSO, dos encoders afinados | no se replica | — | ídem |
+| Makiuchi et al. 2021 (73.0 UA) | LOSO | — | — | comparable tal cual |
+
+**Regla de reporte:** las filas `random` van **siempre** al lado de las LOSO, nunca solas.
+Su propósito es medir cuánto vale el reparto, no dar un número mejor.
+
+**Corrección de código necesaria:** antes de esta entrega, `--protocol random` escribía
+`kfold_summary_ablation_NN.json` y **sobrescribía** el resumen LOSO del mismo estudio.
+Ahora escribe `kfold_summary_ablation_NN_random.json`.
+
+### 9.2 Ablaciones del modelo final
+
+| Pieza del 98 | Ablación | Estado |
+|---|---|---|
+| fusión audio + texto | 98 frente a 71 (solo audio) y 73 (solo texto) | hecho con 1 semilla de 71/73; bloque C añade 123 y 456 |
+| flujo de imagen (ViT) | 74/98, 77/105, 79/106 | **hecho: no aporta en ningún corpus** |
+| compuerta de conflicto | 72, 75, 76, 97 frente al 74 | hecho: no aporta (análisis sobre el 74) |
+| prompt de prosodia en el texto | **107**: el 98 sin el prompt | pendiente (bloque B), el más importante |
+| atención entre ramas | **109**: el 98 con 0 capas (concatenación + MLP) | pendiente (bloque B) |
+| aumentación de audio | **108**: el 98 sin aumentación | pendiente (bloque B) |
+| encoder de audio | 102 (WavLM Base+) | hecho: no aporta |
+| interacción frame ↔ palabra | 101 (co-atención) | hecho: no aporta |
+| relleno del audio | 104 | hecho: no aporta |
+| encoder de texto | 103 (RoBERTa-base) | opcional (bloque E) |
+
+**Por qué el 107 es el más importante:** en el 98 el texto lleva una descripción de
+prosodia calculada del audio. El argumento del artículo es que el aporte de la fusión es
+léxico. Si el 107 empata con el 98, el argumento queda limpio. Si no, el eje se describe
+como "transcripción + descripción prosódica".
+
+### 9.3 Coste estimado (RTX 3070)
+
+| Bloque | Corridas | Horas aprox. |
+|---|---|---|
+| A | 2 × 98 | ~20 |
+| B | 107, 109, 108 | ~30 |
+| C | 2 × 73, 2 × 71 | ~23 |
+| D | random ×4, 70, 99, 100 (+ASR), 110 ×2, 82 ×2 | ~75 |
+| **total A-D** | | **~150 h (unos 6-7 días seguidos)** |
+
+Si hay que recortar: A y B son imprescindibles; de D, Yoon (random) y MELD 7 clases son
+los que más pide un revisor.

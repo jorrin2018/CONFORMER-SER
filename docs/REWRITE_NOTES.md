@@ -3313,3 +3313,15 @@ degradado. Con wav2vec2 afinado es redundante. El modelo del artículo es audio 
 
 También se corrigió el aviso de `--protocol fixed` en `run_ablation.py`: citaba la banda
 de ±0.86 pp de IEMOCAP, que no se transporta a MELD.
+
+### 16.7 PLAN FINAL (18 nov 2026): protocolos comparables y ablaciones del modelo final
+
+Estudios nuevos sobre el 98: **107** (sin prompt de prosodia; decide si el aporte es
+léxico puro), **108** (sin aumentación) y **109** (fusión por concatenación). Además,
+**110** = MELD a 7 clases sin ViT, la fila comparable con la literatura de MELD. Cola
+ordenada y reanudable: `scripts\cola_articulo.ps1`. Tabla de qué fila compara con qué
+trabajo: `docs/ESTUDIOS_SOTA.md`, sección 9.
+
+Bug corregido: `--protocol random` sobrescribía el resumen LOSO del mismo estudio
+(`kfold_summary_ablation_NN.json`). Ahora usa el sufijo `_random`. No afectó a ningún
+resultado: el protocolo aleatorio no se había corrido todavía.
