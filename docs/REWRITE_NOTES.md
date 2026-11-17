@@ -3208,3 +3208,33 @@ veces, sobre relleno) y la normalización. Además, parte de la distancia al 98 
 que el 98, con una sola semilla, haya salido alto: contra el 74 el 104 está en el ruido.
 
 **Consecuencia:** la siguiente decisión la dan las semillas del 98, no otro cambio.
+
+### 16.4 TRES SEMILLAS DEL 98 (17 nov 2026): el ViT no aporta, y quitarlo tampoco mejora
+
+Semillas 123 y 456, LOSO `standard`, ningún fold reanudado, `vision_stream: off` en todos
+los `config.json`.
+
+| Fold (test) | 98 s42 | 98 s123 | 98 s456 | **98 media** | 74 media (3 semillas) | Δ |
+|---|---|---|---|---|---|---|
+| S1 | 76.44 | 75.80 | 77.02 | 76.42 | 76.43 | −0.01 |
+| S2 | 80.66 | 79.56 | 80.47 | 80.23 | 80.17 | +0.06 |
+| S3 | 73.38 | 72.77 | 71.95 | 72.70 | 73.30 | −0.60 |
+| S4 | 77.91 | 77.57 | 74.45 | 76.64 | 73.66 | +2.99 |
+| S5 | 73.78 | 70.74 | 73.81 | 72.78 | 73.24 | −0.47 |
+| **media** | **76.43** | **75.29** | **75.54** | **75.75** | **75.36** | **+0.39 ± 1.48** |
+
+98 − 74 con tres semillas por lado: +0.39 ± 1.48 pp (IC 95 % [−1.44, +2.23], 2/5 folds a
+favor). Con las 15 parejas fold × semilla: +0.39 ± 1.93 (IC [−0.68, +1.47], 8/15). Solo
+con las semillas nuevas (123 y 456), que no participaron en ninguna decisión: +0.12. WA
+74.29 (+0.15), macro-F1 74.80. Varianza: 1.26 pp dentro del fold y 3.14 entre folds, la
+misma estructura que el 74.
+
+**Se confirma lo que anticipó 16.3:** el +0.95 de la semilla 42 era en buena parte suerte.
+La conclusión sólida es **98 ≈ 74**: el flujo de imagen no aporta, y quitarlo no empeora
+ni mejora. La base sigue siendo el 98 por parsimonia, no por exactitud.
+
+Aporte de la fusión audio + texto con la media de tres semillas del 98: **+6.76 ± 2.63 pp**
+sobre solo audio y **+7.93 ± 1.60** sobre solo texto, 5/5 en ambas.
+
+Frente a Zhao et al. (76.31, media de 25 corridas): 75.75, a 0.56 pp. Sigue siendo
+"competitivo, no mejor". Faltan las semillas 789 y 1011 para la media de cinco.
