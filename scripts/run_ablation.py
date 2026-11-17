@@ -1655,8 +1655,11 @@ def run_ablation_study_kfold(
               "sale abajo es 0 por construccion y NO mide nada.\n"
               "                 La variabilidad se mide repitiendo con otra semilla "
               "(--seed 123) y comparando\n"
-              "                 contra la banda de +-0.86 pp de la seccion 7 de "
-              "REWRITE_NOTES.")
+              "                 contra la banda MEDIDA en ese corpus. En MELD: +-2.4 pp con una "
+              "semilla por condicion\n"
+              "                 y +-1.23 pp con dos (REWRITE_NOTES 12.7). La de +-0.86 pp es "
+              "de IEMOCAP con 5 folds\n"
+              "                 y NO se transporta.")
 
     # Aggregate K-Fold results across folds
     best_val_uas = [fr['best_val_ua'] for fr in fold_results if fr.get('best_val_ua') is not None]

@@ -3264,3 +3264,52 @@ neutral +0.37 (ninguna clase gana, como en el 77).
 
 Queda MELD (106), el corpus con el audio más degradado: si el ViT aportara en algún sitio,
 sería ahí.
+
+### 16.6 ESTUDIO 106 (17 nov 2026): MELD sin ViT cierra el eje y la ablación del ViT
+
+El 79 con `vision_stream: off`, split oficial (`--protocol fixed`), semillas 42 y 123,
+`config.json` verificado en las dos.
+
+| UA (%) | s42 | s123 | media |
+|---|---|---|---|
+| 80 solo audio | 46.06 | 45.94 | 46.00 |
+| 79 con ViT | 59.41 | 58.19 | 58.80 |
+| **106 sin ViT** | **59.10** | **57.34** | **58.22** |
+
+- **106 − 80 = +12.22 pp** (por semilla +13.04 / +11.40). Con la σ medida del propio 106
+  (1.24 pp por corrida) la banda de la diferencia de medias de dos semillas es ±1.76: el
+  efecto es unas 14 veces la banda. Macro-F1 +13.05, WA +11.15.
+- **106 − 79 = −0.58 pp** (por semilla −0.31 / −0.85), dentro de la banda (±2.14 con la σ
+  del 106). **El ViT tampoco aporta en el corpus con el audio más degradado.** Macro-F1
+  −0.80, WA −0.56.
+- Por clase frente al 80 (media de dos semillas): happy **+45.40**, neutral +6.29, sad
+  +3.84, angry −6.67. El patrón de 12.7 se mantiene (todo el aporte es *happy*; *angry*
+  no gana). Frente al 79, angry −7.83 y happy +7.84 caen dentro del rango entre semillas
+  de esas clases (hasta 9.6 pp): no se interpretan.
+
+#### El eje léxico con el modelo final (audio + texto, sin ViT)
+
+| Corpus | Texto | Fusión − solo audio (UA) | Corridas |
+|---|---|---|---|
+| CREMA-D | 12 frases fijas | **−0.99 ± 1.67** (IC 95 % [−3.07, +1.09]) | 5 grupos, semilla 42 |
+| IEMOCAP | transcripción manual | **+6.76 ± 2.63** (IC [+3.49, +10.03], 5/5) | 5 folds, media de 3 semillas del 98 |
+| MELD | subtítulos, audio degradado | **+12.22** (banda ±1.76) | split oficial, 2 semillas |
+
+Mismo orden y casi la misma magnitud que con el modelo de tres flujos (−1.19 / +6.49 /
++12.80).
+
+#### La ablación del ViT en los tres corpus
+
+| Corpus | Sin ViT − con ViT | Lectura |
+|---|---|---|
+| IEMOCAP | +0.39 ± 1.48 (3 semillas por lado) | no aporta |
+| CREMA-D | +0.20 ± 1.41 | no aporta |
+| MELD | −0.58 (2 semillas por lado; banda ±2.14) | no aporta |
+
+**Conclusión para el artículo:** el flujo espectrograma-como-imagen (ViT congelado sobre el
+log-mel) no aporta en ninguno de los tres corpus, ni siquiera cuando el audio está
+degradado. Con wav2vec2 afinado es redundante. El modelo del artículo es audio + texto
+(estudio 98) y la rama ViT se reporta como ablación.
+
+También se corrigió el aviso de `--protocol fixed` en `run_ablation.py`: citaba la banda
+de ±0.86 pp de IEMOCAP, que no se transporta a MELD.
