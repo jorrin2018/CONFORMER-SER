@@ -1,7 +1,7 @@
 <#
 cola_articulo.ps1 -- corridas que faltan para el articulo, en orden y reanudable.
 
-Bloques (detalle y lecturas en docs\ESTUDIOS_SOTA.md, secciones 9 y 11):
+Bloques (detalle y lecturas en docs\ESTUDIOS_SOTA.md, secciones 9, 11 y 12):
   A  numero del articulo: 5 semillas del modelo final (98), como las 25 corridas de Zhao
   B  ablaciones del modelo final: 107 prosodia, 109 fusion, 108 aumentacion
   C  lineas base unimodales con varias semillas (71 audio, 73 texto)
@@ -11,6 +11,8 @@ Bloques (detalle y lecturas en docs\ESTUDIOS_SOTA.md, secciones 9 y 11):
   F  familia clasica (eGeMAPS + GloVe, misma fusion): 111-119. Opcional, se pide con
      -Bloques F. La primera vez necesita -Glove <glove.840B.300d.zip> para los caches
      (docs\ESTUDIOS_SOTA.md, seccion 11).
+  G  alineacion contrastiva audio-texto sobre el 98: 120, 121, 122 con 3 semillas.
+     Opcional, con -Bloques G. Antes del 122 revisa la nota de la seccion 12.
 
 Cada tarea se salta si su resumen ya existe y esta completo. Si encuentra un resumen
 PARCIAL se detiene y dice como reanudarlo, en vez de adivinar.
@@ -75,7 +77,17 @@ $tareas = @(
     @{ B = "F"; N = "119 clasico MELD solo audio s42";   R = (Resumen 119 "_seed42");  A = "--study 119 --protocol fixed --seed 42";  X = 118 },
     @{ B = "F"; N = "119 clasico MELD solo audio s123";  R = (Resumen 119 "_seed123"); A = "--study 119 --protocol fixed --seed 123"; X = 118 },
     @{ B = "F"; N = "114 clasico IEMOCAP + compuerta"; R = (Resumen 114 ""); A = "--study 114 --loso"; X = 113 },
-    @{ B = "F"; N = "115 clasico IEMOCAP + ViT";       R = (Resumen 115 ""); A = "--study 115 --loso"; X = 113 }
+    @{ B = "F"; N = "115 clasico IEMOCAP + ViT";       R = (Resumen 115 ""); A = "--study 115 --loso"; X = 113 },
+    # ---- G: alineacion contrastiva (3 semillas cada uno, como el 98) ------------------
+    @{ B = "G"; N = "120 contrastiva con memoria s42";    R = (Resumen 120 "");         A = "--study 120 --loso" },
+    @{ B = "G"; N = "121 contrastiva con prototipos s42"; R = (Resumen 121 "");         A = "--study 121 --loso" },
+    @{ B = "G"; N = "120 contrastiva con memoria s123";   R = (Resumen 120 "_seed123"); A = "--study 120 --loso --seed 123" },
+    @{ B = "G"; N = "121 contrastiva con prototipos s123"; R = (Resumen 121 "_seed123"); A = "--study 121 --loso --seed 123" },
+    @{ B = "G"; N = "120 contrastiva con memoria s456";   R = (Resumen 120 "_seed456"); A = "--study 120 --loso --seed 456" },
+    @{ B = "G"; N = "121 contrastiva con prototipos s456"; R = (Resumen 121 "_seed456"); A = "--study 121 --loso --seed 456" },
+    @{ B = "G"; N = "122 contrastiva + co-atencion s42";  R = (Resumen 122 "");         A = "--study 122 --loso" },
+    @{ B = "G"; N = "122 contrastiva + co-atencion s123"; R = (Resumen 122 "_seed123"); A = "--study 122 --loso --seed 123" },
+    @{ B = "G"; N = "122 contrastiva + co-atencion s456"; R = (Resumen 122 "_seed456"); A = "--study 122 --loso --seed 456" }
 )
 
 $extraidos = @{}

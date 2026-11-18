@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–119`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–122`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -193,6 +193,21 @@ TRAIN-fold statistics and cropped from the same segment as the waveform; batches
 | 115 | 74 | both classic encoders, ViT stream on |
 | 116 / 117 | 105 / 78 | CREMA-D A + T / audio-only |
 | 118 / 119 | 106 / 80 | MELD A + T / audio-only (`--protocol fixed`) |
+
+### Studies 120–122 — contrastive audio–text alignment (on 98)
+
+`model.alineacion` adds two projection heads over the pooled audio / text vectors that
+enter the fusion and a training-only loss returned as `outputs['loss_contrastive']`
+(weighted by `training.loss.contrastive_weight`, which must be > 0; heads get their own lr
+via `training.learning_rate_alignment`). `tipo: memoria` = symmetric InfoNCE with a FIFO
+queue of past vectors (batch 4 alone gives ≤ 3 negatives); `tipo: prototipos` = supervised
+contrast against EMA class prototypes of the other modality (`src/models/alignment.py`).
+
+| Study | Base | Change |
+|-------|------|--------|
+| 120 | 98 | InfoNCE audio↔text with a 512-vector memory queue |
+| 121 | 98 | contrast against class prototypes of the other modality |
+| 122 | 120 | + frame↔token co-attention (as 101) |
 
 Read-only helpers: `scripts/demo_emocion.py` (live demo: 71 / 73 / 98 side by side on one utterance) and
 `scripts/comparar_estudios.py A B` (paired per-fold comparison with the adoption rule).

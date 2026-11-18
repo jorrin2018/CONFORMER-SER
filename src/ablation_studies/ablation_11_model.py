@@ -297,6 +297,30 @@ class Ablation11Model(ConformerMultimodalModel):
                 ffn_mult=int(cm_cfg.get("ffn_mult", 2)),
             )
 
+        # alineacion: perdida contrastiva audio <-> texto sobre los vectores que entran a
+        #   la fusion (estudios 120-122). Ver src/models/alignment.py. Solo entrenamiento.
+        al_cfg = model_config.get("alineacion", {}) or {}
+        self.alineacion = None
+        if al_cfg.get("enabled", False):
+            from src.models.alignment import AlineacionContrastiva
+            peso = float(((config.get("training", {}) or {}).get("loss", {}) or {})
+                         .get("contrastive_weight", 0.0) or 0.0)
+            if peso <= 0:
+                # Sin peso, train_epoch descarta la perdida y el estudio saldria identico
+                # a su base sin que nada avise.
+                raise ValueError("model.alineacion.enabled necesita "
+                                 "training.loss.contrastive_weight > 0")
+            self.alineacion = AlineacionContrastiva(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                tipo=str(al_cfg.get("tipo", "memoria")),
+                dim=int(al_cfg.get("dim", 128)),
+                temperatura=float(al_cfg.get("temperatura", 0.07)),
+                memoria=int(al_cfg.get("memoria", 512)),
+                num_classes=self.num_classes,
+                momento_prototipos=float(al_cfg.get("momento_prototipos", 0.9)),
+            )
+
     def _audio_frame_mask(self, audio_lengths: torch.Tensor, num_frames: int) -> torch.Tensor:
         """(B,) muestras reales -> (B, num_frames) mascara float de frames reales."""
         fn = getattr(self.audio_encoder, "_get_feat_extract_output_lengths", None)
@@ -426,6 +450,10 @@ class Ablation11Model(ConformerMultimodalModel):
             audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
         text_features = text_seq[:, 0, :]  # CLS (B, H_t)
 
+        loss_contrastive = None
+        if getattr(self, "alineacion", None) is not None and self.training:
+            loss_contrastive = self.alineacion(audio_pooled, text_features, labels)
+
         # -----------------------------
         # Visión: Mel-espectrograma -> imagen -> ViT
         # -----------------------------
@@ -472,6 +500,8 @@ class Ablation11Model(ConformerMultimodalModel):
         # Logits de los clasificadores por rama que alimentan la deteccion de
         # conflicto. Se sacan para que train_epoch pueda ponerles una perdida
         # auxiliar: sin ella nunca reciben gradiente (los consume un argmax).
+        if loss_contrastive is not None:
+            salida["loss_contrastive"] = loss_contrastive
         rama = getattr(self.fusion, "branch_logits", None)
         if rama is not None:
             salida["branch_logits"] = rama

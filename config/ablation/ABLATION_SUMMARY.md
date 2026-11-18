@@ -185,7 +185,7 @@ Ablación controlada respecto al **estudio 45** (*Conflict-Aware Cross-Attention
 | 62 | ablation_62_attention_pooling | Ablation34Model |
 | 63 | ablation_63_finetuned_45 | Ablation34Model |
 
-> **Rango válido: `1-50` y `52-119`.** No existe el estudio 51. La fuente de verdad es
+> **Rango válido: `1-50` y `52-122`.** No existe el estudio 51. La fuente de verdad es
 > `create_ablation_model()` en `scripts/run_ablation.py`.
 
 ### Configs sin ruta de código (no ejecutables)

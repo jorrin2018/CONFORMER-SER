@@ -3345,3 +3345,15 @@ MATLAB; COVAREP se puede recoger de los `.mat` si se corre en MATLAB.
 Decisión registrada: los BiLSTM se entrenan a 1e-3 (con 3e-5 una red desde cero apenas se
 mueve); la fusión y la cabeza se quedan a 5e-6 como en la base. Plan, comandos y lecturas:
 `docs/ESTUDIOS_SOTA.md`, sección 11. Tests: `tests/test_classic_studies.py` (38).
+
+### 16.9 ALINEACIÓN CONTRASTIVA (18 nov 2026): estudios 120-122
+
+Motivación medida, no de moda: la ablación de MGCMA atribuye +2.6 pp a sus módulos de
+alineación (77.62 → 80.24) con encoders de la misma escala que los nuestros, y nuestra
+co-atención sin pérdida (101) no movió nada. Tres estudios sobre el 98: InfoNCE con cola
+de 512 negativos (120), contrastiva contra prototipos de clase de la otra rama (121) y la
+mejor de las dos con la co-atención del 101 (122). La cola/prototipos esquivan el problema
+de batch 4 de la sección 10. La pérdida va por el gancho ya existente
+`outputs['loss_contrastive']` × `training.loss.contrastive_weight`, que el modelo exige > 0
+para no repetir el fallo silencioso del estudio 75. Plan y lecturas:
+`docs/ESTUDIOS_SOTA.md`, sección 12. Tests: `tests/test_alignment_studies.py` (16).

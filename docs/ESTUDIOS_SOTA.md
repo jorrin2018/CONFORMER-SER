@@ -403,3 +403,65 @@ wav y el prompt de prosodia pasan a ser lo que más tarda.
 Archivos: `src/models/classic_encoders.py`, `src/data/classic_features.py`,
 `scripts/extraer_clasicas.py`, `config/ablation/ablation_111..119_*.yaml`,
 `tests/test_classic_studies.py`.
+
+## 12. Alineación contrastiva audio–texto (estudios 120-122, 18 nov 2026)
+
+### Por qué
+
+Los trabajos bimodales con mayor UA en IEMOCAP alinean las dos ramas con pérdidas
+contrastivas. MGCMA (2024, wav2vec 2.0 base + BERT base, la misma escala que CAMF) reporta
+en su ablación:
+
+| Variante | UA (%) |
+|---|---|
+| Sin ningún módulo de alineación | 77.62 |
+| Sin alineación por distribución | 79.07 |
+| Sin alineación por token | 79.14 |
+| Sin alineación por instancia | 79.38 |
+| Completo | 80.24 |
+
+Sus tres módulos juntos: +2.6 pp (una corrida, sin semillas). En CAMF ya se midió la parte
+que **no** es contrastiva: la co-atención frame ↔ token del 101 dio −0.04 pp. Lo que falta
+probar es la pérdida.
+
+### Qué cambia (un factor: el módulo de alineación)
+
+Dos cabezas de proyección (768 → 384 → 128, normalizadas) sobre el vector de audio y el de
+texto que entran a la fusión, y una pérdida que solo existe en entrenamiento
+(`outputs['loss_contrastive']`, peso `training.loss.contrastive_weight: 0.1`; las cabezas a
+`learning_rate_alignment: 1e-4`). Validación, test y selección del modelo no cambian.
+
+| Estudio | Base | Pérdida |
+|---|---|---|
+| 120 | 98 | InfoNCE simétrica audio ↔ texto (la de instancia de MGCMA), τ = 0.07, negativos del batch **y de una cola de 512 vectores** de batches anteriores |
+| 121 | 98 | contrastiva supervisada: el audio contra los 4 prototipos de clase del texto y al revés (medias móviles, momento 0.9) |
+| 122 | 120 | + co-atención frames ↔ tokens del 101 (la alineación por token de MGCMA es atención) |
+
+**Por qué cola o prototipos.** Con batch 4 (lo que cabe en la RTX 3070) la contrastiva
+clásica tiene a lo sumo 3 negativos por ancla, y acumular gradiente no lo arregla
+(sección 10 de `REWRITE_NOTES.md`). La cola y los prototipos no dependen del batch.
+
+### Corridas
+
+Tres semillas por estudio, para compararlo con las tres del 98:
+
+```powershell
+.\scripts\cola_articulo.ps1 -Bloques G -SoloListar
+.\scripts\cola_articulo.ps1 -Bloques G
+python scripts\comparar_estudios.py 120 98 --semillas 42 123 456
+python scripts\comparar_estudios.py 121 98 --semillas 42 123 456
+```
+
+El 122 va al final de la cola. **Antes de correrlo:** si el 121 superó al 120, cambia en
+su config el bloque `alineacion` por el del 121.
+
+### Lecturas, escritas antes de correr
+
+- **120 o 121 − 98 > 0.86 pp en ≥ 4/5 folds (3 semillas):** se adopta; si +1.5 a +2.5,
+  CAMF entra al grupo de 78–79 % UA de la tabla del estado del arte.
+- **Los dos dentro de la banda:** la ganancia de MGCMA no se transporta a CAMF con estos
+  encoders y este protocolo; se reporta como resultado nulo, junto al del 101.
+- **122 − 120 > 0.86:** la co-atención aporta *con* la pérdida aunque sola no aportara.
+
+Archivos: `src/models/alignment.py`, `config/ablation/ablation_120..122_*.yaml`,
+`tests/test_alignment_studies.py`.
