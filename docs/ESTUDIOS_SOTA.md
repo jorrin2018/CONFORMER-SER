@@ -284,3 +284,23 @@ como "transcripción + descripción prosódica".
 
 Si hay que recortar: A y B son imprescindibles; de D, Yoon (random) y MELD 7 clases son
 los que más pide un revisor.
+
+## 10. Demo en vivo y comparación rápida (18 nov 2026)
+
+Dos scripts que solo leen checkpoints y resúmenes; no entrenan nada.
+
+```powershell
+# Demo: el mismo enunciado por solo audio (71), solo texto (73) y la fusión (98).
+# Modelos del fold S5: nunca vieron a los hablantes de la sesión 5.
+python scripts\demo_emocion.py                       # 5 enunciados al azar de S5
+python scripts\demo_emocion.py --clase happy --n 4   # donde más se nota la fusión
+python scripts\demo_emocion.py --utt Ses05F_impro03_F012
+python scripts\demo_emocion.py --wav mi_audio.wav --texto "I can't believe you did that"
+python scripts\demo_emocion.py --wav mi_audio.wav --asr     # transcribe con Whisper
+python scripts\demo_emocion.py --grabar 4 --asr             # micrófono (pip install sounddevice soundfile)
+# Si la GPU está entrenando: --device cpu
+
+# Comparación pareada por fold con la regla de decisión del repo
+python scripts\comparar_estudios.py 107 98
+python scripts\comparar_estudios.py 98 74 --semillas 42 123 456
+```

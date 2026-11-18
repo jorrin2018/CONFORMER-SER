@@ -170,6 +170,8 @@ pre-registered readings: [`docs/ESTUDIOS_SOTA.md`](docs/ESTUDIOS_SOTA.md). Pre-f
 (before 18/11/2026 they overwrote the `standard` summary of the same study). The ordered,
 resumable queue of remaining paper runs is `scripts\cola_articulo.ps1` (`-SoloListar` to see
 what is missing).
+Read-only helpers: `scripts/demo_emocion.py` (live demo: 71 / 73 / 98 side by side on one utterance) and
+`scripts/comparar_estudios.py A B` (paired per-fold comparison with the adoption rule).
 
 `create_ablation_optimizer` puts parameters named `crossmodal.*` in their own group only
 when `learning_rate_crossmodal` is set (warns otherwise: new layers at lr_fusion 5e-6
