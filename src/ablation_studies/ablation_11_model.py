@@ -26,6 +26,19 @@ from src.models.fusion import TriModalCrossAttentionFusion
 from .classification_heads import LSTMClassificationHead
 
 
+class _SinVision(nn.Module):
+    """Marcador para vision_stream: "remove": sin pesos, solo expone config.hidden_size
+    para que los constructores heredados (Ablation25/34) no cambien. Ejecutarlo es un error."""
+
+    def __init__(self, hidden_size: int = 768):
+        super().__init__()
+        from types import SimpleNamespace
+        self.config = SimpleNamespace(hidden_size=hidden_size)
+
+    def forward(self, *a, **k):
+        raise RuntimeError("vision_stream: remove -- la rama mel no existe en este modelo")
+
+
 class Ablation11Model(ConformerMultimodalModel):
     """
     Modelo trimodal:
@@ -113,13 +126,22 @@ class Ablation11Model(ConformerMultimodalModel):
         # Rama Visual: ViT sobre Mel-espectrograma
         # -----------------------------
         vit_name = model_config.get("vision_encoder", "google/vit-base-patch16-224")
+        # vision_stream: "remove" (estudios 123-126) quita la rama mel de la ARQUITECTURA:
+        #   el ViT no se carga y la fusion es de dos tokens (src/models/bimodal_fusion.py).
+        #   Se lee aqui, antes de cargar el ViT, para no gastar memoria en el.
+        self._vision_stream = str(model_config.get("vision_stream", "on"))
+        if self._vision_stream not in ("on", "off", "remove"):
+            raise ValueError(f"model.vision_stream={self._vision_stream!r}; use 'on', 'off' o 'remove'")
         # Antes habia aqui un `except Exception` que, si el checkpoint no cargaba,
         # seguia con ViTModel(ViTConfig()) -- pesos ALEATORIOS -- sin avisar. Es el
         # mismo defecto que el 20/10/2026 dejo la rama de audio en ruido (REWRITE_NOTES
         # sec. 13): un encoder que no carga tiene que parar la corrida.
         errores = []
         self.vision_encoder = None
-        for kwargs in ({"use_safetensors": True}, {}):
+        if self._vision_stream == "remove":
+            self.vision_encoder = _SinVision(int(model_config.get("vision_hidden_size", 768)))
+            errores = None
+        for kwargs in (({"use_safetensors": True}, {}) if errores is not None else ()):
             try:
                 self.vision_encoder = ViTModel.from_pretrained(vit_name, **kwargs)
                 break
@@ -276,9 +298,6 @@ class Ablation11Model(ConformerMultimodalModel):
         #   que vision_proj(0) = su sesgo, un token constante aprendido. Mismos
         #   parametros, misma fusion de tres tokens; lo unico que desaparece es lo que
         #   el ViT ve del log-mel. Es la ablacion audio+texto del 74 (estudio 98).
-        self._vision_stream = str(model_config.get("vision_stream", "on"))
-        if self._vision_stream not in ("on", "off"):
-            raise ValueError(f"model.vision_stream={self._vision_stream!r}; use 'on' u 'off'")
         # crossmodal_attention: co-atencion frames de audio <-> tokens de texto ANTES
         #   del pooling (estudio 101). Ver src/models/crossmodal.py.
         cm_cfg = model_config.get("crossmodal_attention", {}) or {}
@@ -286,7 +305,31 @@ class Ablation11Model(ConformerMultimodalModel):
         if cm_cfg.get("enabled", False) and (self.uses_classic_audio or self._texto_clasico):
             raise ValueError("crossmodal_attention necesita secuencias por frame/token; "
                              "los encoders clasicos devuelven el vector ya agrupado")
-        if cm_cfg.get("enabled", False):
+        # tipo "mult" (estudios 124 y 126): transformador transmodal bidireccional de MulT,
+        #   src/models/mult.py. Cambia la dimension de las secuencias a d_model, asi que la
+        #   fusion se construye con esas dimensiones (_dims_fusion) y el texto se agrupa
+        #   con la media de los tokens reales en vez del [CLS].
+        self._dims_fusion = None
+        self._crossmodal_tipo = str(cm_cfg.get("tipo", "coatencion"))
+        if cm_cfg.get("enabled", False) and self._crossmodal_tipo == "mult":
+            from src.models.mult import MulTTransmodal
+            self.crossmodal = MulTTransmodal(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                d_model=int(cm_cfg.get("d_model", 256)),
+                num_heads=int(cm_cfg.get("num_heads", 8)),
+                num_layers=int(cm_cfg.get("num_layers", 4)),
+                dropout=float(cm_cfg.get("dropout", 0.1)),
+                attn_dropout=float(cm_cfg.get("attn_dropout", 0.1)),
+                embed_dropout=float(cm_cfg.get("embed_dropout", 0.1)),
+                ffn_mult=int(cm_cfg.get("ffn_mult", 4)),
+                kernel=int(cm_cfg.get("kernel", 1)),
+            )
+            self._dims_fusion = (self.crossmodal.d, self.crossmodal.d)
+        elif cm_cfg.get("enabled", False):
+            if self._crossmodal_tipo != "coatencion":
+                raise ValueError(f"model.crossmodal_attention.tipo={self._crossmodal_tipo!r}; "
+                                 "usa 'coatencion' (101) o 'mult'")
             from src.models.crossmodal import CrossModalCoAttention
             self.crossmodal = CrossModalCoAttention(
                 audio_dim=audio_hidden_size,
@@ -400,6 +443,7 @@ class Ablation11Model(ConformerMultimodalModel):
         expert_g: Optional[torch.Tensor] = None,
         audio_feats: Optional[torch.Tensor] = None,
         audio_feats_lengths: Optional[torch.Tensor] = None,
+        expert_feats: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward trimodal:
@@ -448,7 +492,12 @@ class Ablation11Model(ConformerMultimodalModel):
                 audio_features, frame_mask.to(audio_features.dtype))  # (B, H_a)
         else:
             audio_pooled = self.pool_audio_features(audio_features)  # (B, H_a)
-        text_features = text_seq[:, 0, :]  # CLS (B, H_t)
+        if getattr(self, "_crossmodal_tipo", None) == "mult" and self.crossmodal is not None:
+            # Tras MulT la posicion 0 ya no es un [CLS] entrenado: media de tokens reales.
+            m = text_attention_mask.unsqueeze(-1).to(text_seq.dtype)
+            text_features = (text_seq * m).sum(1) / m.sum(1).clamp(min=1.0)
+        else:
+            text_features = text_seq[:, 0, :]  # CLS (B, H_t)
 
         loss_contrastive = None
         if getattr(self, "alineacion", None) is not None and self.training:
@@ -457,7 +506,9 @@ class Ablation11Model(ConformerMultimodalModel):
         # -----------------------------
         # Visión: Mel-espectrograma -> imagen -> ViT
         # -----------------------------
-        if getattr(self, "_vision_stream", "on") == "off":
+        if getattr(self, "_vision_stream", "on") == "remove":
+            vision_features = None  # estudios 123-126: no hay rama mel
+        elif getattr(self, "_vision_stream", "on") == "off":
             # Estudio 98: sin la informacion del ViT (ver __init__).
             vision_features = audio_pooled.new_zeros(
                 audio_pooled.size(0), self.vision_encoder.config.hidden_size)
@@ -476,7 +527,9 @@ class Ablation11Model(ConformerMultimodalModel):
         # -----------------------------
         # Fusión trimodal
         # -----------------------------
-        if getattr(self, "uses_expert_gate", False):
+        if vision_features is None:
+            logits = self.fusion(audio_pooled, text_features, expert_feats=expert_feats)
+        elif getattr(self, "uses_expert_gate", False):
             logits = self.fusion(audio_pooled, text_features, vision_features,
                                  expert_g=expert_g)
         else:
@@ -495,8 +548,9 @@ class Ablation11Model(ConformerMultimodalModel):
             "loss": loss,
             "audio_features": audio_pooled,
             "text_features": text_features,
-            "vision_features": vision_features,
         }
+        if vision_features is not None:
+            salida["vision_features"] = vision_features
         # Logits de los clasificadores por rama que alimentan la deteccion de
         # conflicto. Se sacan para que train_epoch pueda ponerles una perdida
         # auxiliar: sin ella nunca reciben gradiente (los consume un argmax).

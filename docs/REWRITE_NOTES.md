@@ -3357,3 +3357,14 @@ de batch 4 de la sección 10. La pérdida va por el gancho ya existente
 `outputs['loss_contrastive']` × `training.loss.contrastive_weight`, que el modelo exige > 0
 para no repetir el fallo silencioso del estudio 75. Plan y lecturas:
 `docs/ESTUDIOS_SOTA.md`, sección 12. Tests: `tests/test_alignment_studies.py` (16).
+
+### 16.10 REVISIÓN DE NOVIEMBRE (estudios 123-126)
+
+Conclusión de la presentación: quitar la rama mel, quitar el detector simple y probar el
+cross-fitting dentro de la arquitectura, e implementar la etapa transmodal de MulT. Se
+implementaron como opciones nuevas con la base intacta: `vision_stream: remove`
+(fusión de dos tokens, `FusionBimodal`), `detector_conflicto: crossfit` (pesos por
+enunciado desde 14 rasgos de expertos fuera de muestra, inicializado en ½, ½) y
+`crossmodal_attention.tipo: mult` (fuente fija de bajo nivel, pre-LN, 4 capas). Plan y
+lecturas: `docs/ESTUDIOS_SOTA.md`, sección 13. Tests: `tests/test_review_studies.py` (14)
+y una corrida de humo de `create_dataloaders` + tres pasos de entrenamiento del 126.

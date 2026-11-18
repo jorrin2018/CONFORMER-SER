@@ -209,7 +209,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
     elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
                           87, 88, 89, 90, 91, 92, 93, 94, 97, 98, 99, 100, 101, 102, 103,
                           104, 105, 106, 107, 108, 109, 110,
-                          113, 114, 115, 116, 118, 120, 121, 122):
+                          113, 114, 115, 116, 118, 120, 121, 122, 123, 124, 125, 126):
         # 111-119: la misma fusion con encoders clasicos (src/models/classic_encoders.py).
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
@@ -256,7 +256,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-122 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-126 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1716,7 +1716,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-122; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-126; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1901,13 +1901,18 @@ def main():
         (120, "config/ablation/ablation_120_contrastive_memory.yaml"),  # 98 + InfoNCE audio<->texto con cola de 512 negativos
         (121, "config/ablation/ablation_121_contrastive_prototypes.yaml"),  # 98 + contrastiva contra prototipos de clase de la otra rama
         (122, "config/ablation/ablation_122_contrastive_token_alignment.yaml"),  # 120 + co-atencion frames<->tokens (101)
+        # 123-126: revision de noviembre -- sin rama mel, MulT y detector con cross-fitting.
+        (123, "config/ablation/ablation_123_bimodal_audio_text.yaml"),  # 98 con la rama mel fuera de la arquitectura (2 tokens)
+        (124, "config/ablation/ablation_124_bimodal_mult.yaml"),  # 123 + atencion transmodal bidireccional de MulT
+        (125, "config/ablation/ablation_125_bimodal_crossfit_detector.yaml"),  # 123 + detector con expertos fuera de muestra
+        (126, "config/ablation/ablation_126_bimodal_mult_crossfit.yaml"),  # 124 + detector con cross-fitting
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-122 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-126 (there is no study 51)")
             return
     
     # Run each study

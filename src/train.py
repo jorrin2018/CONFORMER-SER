@@ -496,6 +496,28 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
             ds.expert_gate = gate
             logger.info(f"Compuerta de expertos: g = 1 en el {100 * tasa:.1f} % de {nombre}")
 
+    # Detector de conflicto con cross-fitting (125-126): 14 rasgos por utterance de los
+    # expertos de audio y texto, fuera de muestra, desde cache/experts/fold_S<k>.json.
+    det_cfg = (config.get('model', {}) or {}).get('detector_conflicto', {}) or {}
+    if det_cfg.get('tipo', 'ninguno') == 'crossfit':
+        from src.data.expert_gate import load_expert_features
+        tests = config['dataset']['test_sessions']
+        if len(tests) != 1:
+            raise ValueError("detector_conflicto: crossfit necesita UNA sesion de test (LOSO)")
+        textos = {d['utterance_id']: d['transcription']
+                  for ds in (train_dataset, val_dataset, test_dataset) for d in ds.data}
+        rasgos, meta_r = load_expert_features(det_cfg.get('expert_cache_dir', 'cache/experts'),
+                                              tests[0], textos)
+        for nombre, ds in (('train', train_dataset), ('val', val_dataset), ('test', test_dataset)):
+            faltan = [d['utterance_id'] for d in ds.data if d['utterance_id'] not in rasgos]
+            if faltan:
+                raise KeyError(f"{len(faltan)} utterances de {nombre} sin rasgos de los expertos "
+                               f"(p. ej. {faltan[:3]}): el cache no corresponde a este fold/corpus")
+            ds.expert_feats = rasgos
+        logger.info(f"Detector con cross-fitting: rasgos de expertos del fold {meta_r['fold']} "
+                    f"({len(meta_r['rasgos'])} por utterance, normalizados con "
+                    f"{meta_r['n_train']} de train)")
+
     # Encoders clasicos (111-119): descriptores acusticos por utterance desde el cache de
     # scripts/extraer_clasicas.py, normalizados con estadisticas del TRAIN de este fold.
     clasico_cfg = (config.get('model', {}) or {}).get('clasico') or {}

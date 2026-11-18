@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–122`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–126`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -208,6 +208,26 @@ contrast against EMA class prototypes of the other modality (`src/models/alignme
 | 120 | 98 | InfoNCE audio↔text with a 512-vector memory queue |
 | 121 | 98 | contrast against class prototypes of the other modality |
 | 122 | 120 | + frame↔token co-attention (as 101) |
+
+### Studies 123–126 — November review: audio + text only, MulT, cross-fitted detector
+
+`model.vision_stream: remove` drops the mel/ViT stream from the architecture (the ViT is
+never loaded; `_SinVision` placeholder) and `Ablation34Model` builds `FusionBimodal`
+(two tokens, `src/models/bimodal_fusion.py`). `model.detector_conflicto.tipo: crossfit`
+replaces the simple conflict detector: a small net maps 14 out-of-fold expert features
+per utterance (`src/data/expert_gate.load_expert_features`, batch key `expert_feats`) to
+per-sample branch weights, zero-initialised so it starts at fixed (½, ½);
+`training.learning_rate_detector` gives it its own lr. `model.crossmodal_attention.tipo:
+mult` is MulT's crossmodal stage (`src/models/mult.py`): bidirectional, source fixed at its
+low-level sequence, pre-LN, sinusoidal positions; it changes the fusion input dims to
+`d_model` and text is mean-pooled instead of [CLS].
+
+| Study | Base | Change |
+|-------|------|--------|
+| 123 | 98 | mel stream removed, 2-token fusion, fixed weights |
+| 124 | 123 | + MulT crossmodal transformer A↔T (4 layers, d 256) |
+| 125 | 123 | + cross-fitted conflict detector |
+| 126 | 124 | + cross-fitted conflict detector |
 
 Read-only helpers: `scripts/demo_emocion.py` (live demo: 71 / 73 / 98 side by side on one utterance) and
 `scripts/comparar_estudios.py A B` (paired per-fold comparison with the adoption rule).

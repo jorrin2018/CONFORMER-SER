@@ -57,29 +57,56 @@ class Ablation34Model(Ablation25Model):
         audio_hidden_size = self.audio_encoder.config.hidden_size
         text_hidden_size = self.text_encoder.config.hidden_size
         vision_hidden_size = self.vision_encoder.config.hidden_size
+        # MulT (124, 126) cambia la dimension de las secuencias antes del pooling.
+        if getattr(self, "_dims_fusion", None):
+            audio_hidden_size, text_hidden_size = self._dims_fusion
 
-        self.fusion = ConflictAwareCrossAttentionFusion(
-            audio_dim=audio_hidden_size,
-            text_dim=text_hidden_size,
-            vision_dim=vision_hidden_size,
-            hidden_dim=self.hidden_dim,
-            num_classes=self.num_classes,
-            num_heads=model_config.get("fusion_num_heads", 4),
-            num_layers=model_config.get("fusion_num_layers", 3),
-            dropout=model_config.get("dropout", 0.3),
-            conflict_threshold=conflict_config.get("conflict_threshold", 0.3),
-            conflict_detection_method=conflict_config.get(
-                "conflict_detection_method", "prediction_divergence"
-            ),
-            # Hasta el 18/09/2026 esta clave solo se leia en la ruta BIMODAL: en la
-            # trimodal la compuerta estaba siempre activa y poner enabled: false no
-            # hacia nada. Una ablacion hecha con esa clave habria salido identica y
-            # habriamos concluido "la compuerta no aporta" por el motivo equivocado.
-            conflict_aware_enabled=conflict_config.get("enabled", True),
-            conflict_source=conflict_config.get("conflict_source", "aux"),
-        )
-        # Lo lee multimodal_forward para pasar 'expert_g' del batch.
-        self.uses_expert_gate = conflict_config.get("conflict_source", "aux") == "experts"
+        self.uses_expert_feats = False
+        if getattr(self, "_vision_stream", "on") == "remove":
+            # Estudios 123-126: fusion de DOS tokens, sin rama mel ni detector simple.
+            if conflict_config.get("enabled", False):
+                raise ValueError(
+                    "vision_stream: remove no admite el detector simple "
+                    "(model.conflict_aware.enabled); usa model.detector_conflicto")
+            from src.models.bimodal_fusion import FusionBimodal
+            det_cfg = model_config.get("detector_conflicto", {}) or {}
+            self.fusion = FusionBimodal(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                hidden_dim=self.hidden_dim,
+                num_classes=self.num_classes,
+                num_heads=model_config.get("fusion_num_heads", 4),
+                num_layers=model_config.get("fusion_num_layers", 3),
+                dropout=model_config.get("dropout", 0.3),
+                detector=str(det_cfg.get("tipo", "ninguno")),
+                detector_oculto=int(det_cfg.get("oculto", 32)),
+            )
+            # Lo lee multimodal_forward para pasar 'expert_feats' del batch.
+            self.uses_expert_feats = self.fusion.detector is not None
+            self.uses_expert_gate = False
+        else:
+            self.fusion = ConflictAwareCrossAttentionFusion(
+                audio_dim=audio_hidden_size,
+                text_dim=text_hidden_size,
+                vision_dim=vision_hidden_size,
+                hidden_dim=self.hidden_dim,
+                num_classes=self.num_classes,
+                num_heads=model_config.get("fusion_num_heads", 4),
+                num_layers=model_config.get("fusion_num_layers", 3),
+                dropout=model_config.get("dropout", 0.3),
+                conflict_threshold=conflict_config.get("conflict_threshold", 0.3),
+                conflict_detection_method=conflict_config.get(
+                    "conflict_detection_method", "prediction_divergence"
+                ),
+                # Hasta el 18/09/2026 esta clave solo se leia en la ruta BIMODAL: en la
+                # trimodal la compuerta estaba siempre activa y poner enabled: false no
+                # hacia nada. Una ablacion hecha con esa clave habria salido identica y
+                # habriamos concluido "la compuerta no aporta" por el motivo equivocado.
+                conflict_aware_enabled=conflict_config.get("enabled", True),
+                conflict_source=conflict_config.get("conflict_source", "aux"),
+            )
+            # Lo lee multimodal_forward para pasar 'expert_g' del batch.
+            self.uses_expert_gate = conflict_config.get("conflict_source", "aux") == "experts"
         fusion_output_dim = self.hidden_dim // 2
 
         head_type = model_config.get("classification_head_type", "lstm")
@@ -274,6 +301,7 @@ class Ablation34Model(Ablation25Model):
         expert_g: Optional[torch.Tensor] = None,
         audio_feats: Optional[torch.Tensor] = None,
         audio_feats_lengths: Optional[torch.Tensor] = None,
+        expert_feats: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         if self.fusion_type == "gated_interactive_attention":
             return self._forward_bimodal(audio, text_input_ids, text_attention_mask, labels)
@@ -281,7 +309,8 @@ class Ablation34Model(Ablation25Model):
         return super().forward(audio, text_input_ids, text_attention_mask, labels,
                                audio_lengths=audio_lengths, expert_g=expert_g,
                                audio_feats=audio_feats,
-                               audio_feats_lengths=audio_feats_lengths)
+                               audio_feats_lengths=audio_feats_lengths,
+                               expert_feats=expert_feats)
 
     def _forward_bimodal(
         self,

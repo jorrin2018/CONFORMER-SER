@@ -465,3 +465,67 @@ su config el bloque `alineacion` por el del 121.
 
 Archivos: `src/models/alignment.py`, `config/ablation/ablation_120..122_*.yaml`,
 `tests/test_alignment_studies.py`.
+
+## 13. Revisión de noviembre: sin rama mel, MulT y detector con cross-fitting (estudios 123-126)
+
+### Lo que se acordó
+
+Conclusiones de la presentación de avances (noviembre de 2026):
+
+1. **Quitar la rama mel** de la arquitectura y quedarse con audio y texto.
+2. **Quitar el detector de conflicto simple** (clasificadores auxiliares + argmax +
+   `confidence_net`) y probar en su lugar el **cross-fitting**, que fue lo único que mejoró
+   en la prueba sin reentrenar (76.13 % frente a 74.63 % del promedio, 4 de 5 folds).
+3. **Implementar la primera parte de MulT** (Tsai et al., ACL 2019): la atención
+   transmodal bidireccional.
+
+### Qué cambia
+
+| Estudio | Base | Cambio |
+|---|---|---|
+| 123 | 98 | `vision_stream: remove`: el ViT no se carga y la fusión es de **dos tokens** (el 98 dejaba un tercer token constante). Pesos fijos ½, ½. |
+| 124 | 123 | + transformador transmodal de MulT: texto → audio y audio → texto, 4 capas, d = 256 |
+| 125 | 123 | + detector con cross-fitting |
+| 126 | 124 | + detector con cross-fitting (la propuesta completa) |
+
+**Detector con cross-fitting.** Por enunciado recibe 14 rasgos de los expertos de audio y
+texto (log-probabilidades, entropía, probabilidad máxima, si coinciden y número de
+palabras), siempre **fuera de muestra**: para los enunciados con los que el experto se
+entrenó se usa la predicción del modelo interno que no los vio. Una red pequeña los
+convierte en el peso de cada rama. Arranca exactamente en pesos fijos (½, ½) y solo se
+aparta si eso baja la pérdida. Los rasgos salen de `cache\experts\fold_S*.json`, que ya
+existe para IEMOCAP.
+
+**MulT, etapa transmodal.** Cada frame de audio atiende a los tokens del texto y cada
+token a los frames, con la **fuente fija en su secuencia de bajo nivel** (como el
+artículo), pre-LayerNorm, proyección Conv1d a d = 256, escala √d y posiciones
+sinusoidales. Es lo que lo distingue de la co-atención del 101 (una capa, las dos
+secuencias se actualizan a la vez), que dio −0.04 pp. La salida entra a la fusión de dos
+tokens; el texto se agrupa con la media de los tokens reales.
+
+### Corridas
+
+```powershell
+.\scripts\cola_articulo.ps1 -Bloques H -SoloListar
+.\scripts\cola_articulo.ps1 -Bloques H
+python scripts\comparar_estudios.py 123 98  --semillas 42 123 456
+python scripts\comparar_estudios.py 124 123 --semillas 42 123 456
+python scripts\comparar_estudios.py 125 123 --semillas 42 123 456
+python scripts\comparar_estudios.py 126 124 --semillas 42 123 456
+```
+
+### Lecturas, escritas antes de correr
+
+- **123 − 98 dentro de la banda:** quitar el token constante no cambia nada; el modelo
+  del artículo pasa a ser el 123 (más simple y más barato).
+- **124 − 123 > 0.86 pp en ≥ 4/5 folds:** la atención transmodal de MulT aporta donde la
+  co-atención de una capa no lo hizo.
+- **125 − 123 > 0.86 pp en ≥ 4/5 folds:** el detector con cross-fitting funciona dentro de
+  la arquitectura, no solo como ensamble posterior; H3 se reformula como "decidir el peso
+  de cada rama con predictores fuera de muestra".
+- **Limitación a declarar:** en inferencia el detector necesita las predicciones de los
+  expertos de audio y texto, es decir, correr dos modelos más.
+
+Archivos: `src/models/bimodal_fusion.py`, `src/models/mult.py`,
+`src/data/expert_gate.py` (`load_expert_features`), `config/ablation/ablation_123..126_*.yaml`,
+`tests/test_review_studies.py`.

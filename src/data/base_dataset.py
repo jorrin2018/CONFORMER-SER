@@ -366,6 +366,10 @@ class BaseSERDataset(Dataset):
                                             self.max_audio_length)
             item['audio_feats'] = feats
             item['audio_feats_len'] = largo
+        rasgos = getattr(self, 'expert_feats', None)
+        if rasgos is not None:
+            # Detector con cross-fitting (125-126): rasgos de los expertos fuera de muestra.
+            item['expert_feats'] = torch.tensor(rasgos[sample['utterance_id']], dtype=torch.float32)
         gate = getattr(self, 'expert_gate', None)
         if gate is not None:
             # KeyError a proposito: una utterance sin prediccion de los expertos no

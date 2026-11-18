@@ -49,6 +49,9 @@ def create_ablation_optimizer(
     # co-atencion: grupo propio solo si el config lo pide.
     lr_alignment = training_config.get('learning_rate_alignment')
     lr_alignment = None if lr_alignment is None else float(lr_alignment)
+    # Red del detector de conflicto con cross-fitting (estudios 125-126).
+    lr_detector = training_config.get('learning_rate_detector')
+    lr_detector = None if lr_detector is None else float(lr_detector)
     weight_decay = training_config.get('weight_decay', 0.1)
     adam_epsilon = float(training_config.get('adam_epsilon', 1e-8))
 
@@ -79,6 +82,7 @@ def create_ablation_optimizer(
         classifier_params = []
         crossmodal_params = []
         alignment_params = []
+        detector_params = []
 
         use_classifier_lr = training_config.get('learning_rate_classifier') is not None
 
@@ -93,6 +97,8 @@ def create_ablation_optimizer(
                 crossmodal_params.append(param)
             elif lr_alignment is not None and name.startswith('alineacion.'):
                 alignment_params.append(param)
+            elif lr_detector is not None and name.startswith('fusion.detector.'):
+                detector_params.append(param)
             elif 'audio_encoder' in name or name == 'wavlm_layer_logits':
                 audio_params.append(param)
             elif 'text_encoder' in name:
@@ -121,6 +127,15 @@ def create_ablation_optimizer(
                 "training.learning_rate_crossmodal: entrenan con lr_fusion "
                 f"({lr_fusion}) y, al ser capas nuevas, apenas se moveran.",
                 UserWarning, stacklevel=2)
+        if detector_params:
+            param_groups.append({'params': detector_params, 'lr': lr_detector,
+                                 'weight_decay': weight_decay})
+        elif any(n.startswith('fusion.detector.') for n, q in model.named_parameters()
+                 if q.requires_grad):
+            warnings.warn(
+                "El modelo tiene detector de conflicto con cross-fitting pero el config no "
+                "define training.learning_rate_detector: entrena con lr_fusion "
+                f"({lr_fusion}).", UserWarning, stacklevel=2)
         if alignment_params:
             param_groups.append({'params': alignment_params, 'lr': lr_alignment,
                                  'weight_decay': weight_decay})

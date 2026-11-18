@@ -30,6 +30,11 @@ def model_uses_classic_audio(model) -> bool:
     return bool(getattr(inner, "uses_classic_audio", False))
 
 
+def model_uses_expert_feats(model) -> bool:
+    inner = getattr(model, "module", model)
+    return bool(getattr(inner, "uses_expert_feats", False))
+
+
 def multimodal_forward(model, audio: torch.Tensor, text_input_ids: torch.Tensor,
                        text_attention_mask: torch.Tensor,
                        labels: Optional[torch.Tensor] = None,
@@ -50,6 +55,14 @@ def multimodal_forward(model, audio: torch.Tensor, text_input_ids: torch.Tensor,
                 "(conflict_source: experts) pero el batch no trae 'expert_g'. Los "
                 "dataloaders tienen que salir de src.train.create_dataloaders.")
         kwargs["expert_g"] = g.to(audio.device)
+    if model_uses_expert_feats(model):
+        f = None if batch is None else batch.get("expert_feats")
+        if f is None:
+            raise RuntimeError(
+                "El modelo usa el detector con cross-fitting pero el batch no trae "
+                "'expert_feats'. Los dataloaders tienen que salir de "
+                "src.train.create_dataloaders con model.detector_conflicto en el config.")
+        kwargs["expert_feats"] = f.to(audio.device)
     if model_uses_classic_audio(model):
         feats = None if batch is None else batch.get("audio_feats")
         if feats is None:
