@@ -63,7 +63,13 @@ class Ablation11Model(ConformerMultimodalModel):
                 "text_unfreeze_last_n_layers", 2
             ),
             audio_pooling=model_config.get("audio_pooling", "mean"),
+            config=config,
         )
+        # Estudios 111-119: encoder clasico de audio (descriptores por frame, no forma
+        # de onda). multimodal_forward pasa 'audio_feats' del batch cuando esto es True.
+        from src.models.classic_encoders import es_clasico
+        self.uses_classic_audio = es_clasico(model_config.get("audio_encoder"))
+        self._texto_clasico = es_clasico(model_config.get("text_encoder"))
 
         # -----------------------------
         # SpeechCue: nueve tokens nuevos
@@ -74,6 +80,8 @@ class Ablation11Model(ConformerMultimodalModel):
         # resto del encoder este congelado: son "los nueve embeddings" del
         # articulo.
         tokenizer_len = config.get("text", {}).get("_tokenizer_len")
+        if tokenizer_len and self._texto_clasico:
+            raise ValueError("SpeechCue no esta implementado con el encoder GloVe")
         if tokenizer_len:
             emb = self.text_encoder.get_input_embeddings()
             current = emb.weight.shape[0]
@@ -253,6 +261,13 @@ class Ablation11Model(ConformerMultimodalModel):
         if self._weighted_hidden_states:
             self.audio_encoder_layer_logits = build_layer_weights(self.audio_encoder)
 
+        if self.uses_classic_audio and (self._weighted_hidden_states
+                                        or self._audio_masked_pooling):
+            # El encoder clasico ya agrupa solo frames reales y no tiene capas ocultas
+            # que ponderar: las dos opciones no significan nada con el.
+            raise ValueError("audio_weighted_hidden_states / audio_masked_pooling no "
+                             "aplican al encoder clasico de audio")
+
         # -----------------------------
         # Estudios 98 y 101 (ambos opt-in; por defecto = el 74 tal cual)
         # -----------------------------
@@ -268,6 +283,9 @@ class Ablation11Model(ConformerMultimodalModel):
         #   del pooling (estudio 101). Ver src/models/crossmodal.py.
         cm_cfg = model_config.get("crossmodal_attention", {}) or {}
         self.crossmodal = None
+        if cm_cfg.get("enabled", False) and (self.uses_classic_audio or self._texto_clasico):
+            raise ValueError("crossmodal_attention necesita secuencias por frame/token; "
+                             "los encoders clasicos devuelven el vector ya agrupado")
         if cm_cfg.get("enabled", False):
             from src.models.crossmodal import CrossModalCoAttention
             self.crossmodal = CrossModalCoAttention(
@@ -356,6 +374,8 @@ class Ablation11Model(ConformerMultimodalModel):
         labels: Optional[torch.Tensor] = None,
         audio_lengths: Optional[torch.Tensor] = None,
         expert_g: Optional[torch.Tensor] = None,
+        audio_feats: Optional[torch.Tensor] = None,
+        audio_feats_lengths: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward trimodal:
@@ -366,7 +386,12 @@ class Ablation11Model(ConformerMultimodalModel):
         # -----------------------------
         # Audio (WavLM optional: weighted hidden states)
         # -----------------------------
-        if self._weighted_hidden_states and self.audio_encoder_layer_logits is not None:
+        if getattr(self, "uses_classic_audio", False):
+            # Estudios 111-119: (B, 1, H) con el vector ya agrupado sobre frames reales.
+            if audio_feats is None:
+                raise RuntimeError("El encoder clasico de audio necesita audio_feats")
+            audio_features = self.audio_encoder(audio_feats, audio_feats_lengths).last_hidden_state
+        elif self._weighted_hidden_states and self.audio_encoder_layer_logits is not None:
             audio_features = weighted_hidden_states(
                 self.audio_encoder, audio, self.audio_encoder_layer_logits
             )

@@ -201,13 +201,16 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         model = Ablation34Model(config)
     elif study_number == 43:
         model = Ablation43Model(config)
-    elif study_number in (66, 67, 68, 69, 70, 71, 73, 78, 80, 82, 84, 86, 95, 96):
+    elif study_number in (66, 67, 68, 69, 70, 71, 73, 78, 80, 82, 84, 86, 95, 96,
+                          111, 112, 117, 119):
         # Lineas base unimodales con el mismo regimen que el 45.
         from src.ablation_studies.unimodal_baseline import UnimodalBaselineModel
         model = UnimodalBaselineModel(config)
     elif study_number in (44, 45, 46, 55, 56, 57, 64, 65, 72, 74, 75, 76, 77, 79, 81, 83, 85,
                           87, 88, 89, 90, 91, 92, 93, 94, 97, 98, 99, 100, 101, 102, 103,
-                          104, 105, 106, 107, 108, 109, 110):
+                          104, 105, 106, 107, 108, 109, 110,
+                          113, 114, 115, 116, 118):
+        # 111-119: la misma fusion con encoders clasicos (src/models/classic_encoders.py).
         # Ablations 44-46, 55-57: Conflict-Aware Cross-Attention (trimodal) with alternative heads.
         # 55-57: mismo diseño que 45 (MultiScaleTemporal) con distinto audio_encoder (WavLM, HuBERT, Emotion2Vec).
         # 87-94: el 72 con las variantes que alinean el codigo con la presentacion
@@ -253,7 +256,7 @@ def create_ablation_model(study_number: int, config: dict, device: str, logger):
         # Ablation 63: Fine-tuned Study 45 (lower dropout, lower label smoothing)
         model = Ablation34Model(config)
     else:
-        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-110 (study 51 does not exist).")
+        raise ValueError(f"Invalid study number: {study_number}. Must be 1-50 or 52-119 (study 51 does not exist).")
     
     model = model.to(device)
     print_model_summary(model, logger)
@@ -1713,7 +1716,7 @@ def main():
     """Main function to run all ablation studies."""
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
-                        help='Run specific study (1-50, 52-110; there is no study 51). If not specified, runs all.')
+                        help='Run specific study (1-50, 52-119; there is no study 51). If not specified, runs all.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1883,13 +1886,24 @@ def main():
         (108, "config/ablation/ablation_108_no_audio_augment.yaml"),  # 98 sin aumentacion de audio
         (109, "config/ablation/ablation_109_concat_fusion.yaml"),  # 98 con fusion por concatenacion (0 capas de atencion entre tokens)
         (110, "config/ablation/ablation_110_meld_7class_no_vision.yaml"),  # 81 (MELD, 7 clases) sin la rama ViT; --protocol fixed
+        # 111-119: familia clasica (eGeMAPS + GloVe, BiLSTM desde cero) con la fusion del
+        # 98. Antes: python scripts\extraer_clasicas.py --study 113|116|118 --glove <zip>
+        (111, "config/ablation/ablation_111_clasico_iemocap_audio.yaml"),  # 71 con eGeMAPS + BiLSTM
+        (112, "config/ablation/ablation_112_clasico_iemocap_text.yaml"),  # 73 con GloVe + BiLSTM
+        (113, "config/ablation/ablation_113_clasico_iemocap_fusion.yaml"),  # 98 con los dos encoders clasicos
+        (114, "config/ablation/ablation_114_clasico_iemocap_gate.yaml"),  # 113 con la compuerta entrenada del 75
+        (115, "config/ablation/ablation_115_clasico_iemocap_vit.yaml"),  # 74 con los dos encoders clasicos (ViT encendido)
+        (116, "config/ablation/ablation_116_clasico_cremad_fusion.yaml"),  # 105 (CREMA-D) con encoders clasicos
+        (117, "config/ablation/ablation_117_clasico_cremad_audio.yaml"),  # 78 (CREMA-D, solo audio) con encoder clasico
+        (118, "config/ablation/ablation_118_clasico_meld_fusion.yaml"),  # 106 (MELD) con encoders clasicos; --protocol fixed
+        (119, "config/ablation/ablation_119_clasico_meld_audio.yaml"),  # 80 (MELD, solo audio) con encoder clasico; --protocol fixed
     ]
     
     # Filter studies if specific one requested
     if args.study is not None:
         studies = [s for s in studies if s[0] == args.study]
         if not studies:
-            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-110 (there is no study 51)")
+            print(f"Error: Study {args.study} not found. Valid studies: 1-50, 52-119 (there is no study 51)")
             return
     
     # Run each study

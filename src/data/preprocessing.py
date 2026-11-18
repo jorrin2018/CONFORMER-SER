@@ -146,7 +146,8 @@ class TextPreprocessor:
         truncation: bool = True,
         apply_text_augment: bool = False,
         text_augmentation_config: Optional[Dict] = None,
-        additional_tokens: Optional[list] = None
+        additional_tokens: Optional[list] = None,
+        glove_cache: Optional[str] = None,
     ):
         """
         Args:
@@ -155,7 +156,19 @@ class TextPreprocessor:
             padding: Padding strategy
             truncation: Whether to truncate sequences
         """
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        from src.models.classic_encoders import GloveTokenizer, es_clasico
+        if es_clasico(model_name):
+            # Encoders clasicos (111-119): vocabulario GloVe del corpus, no un tokenizer
+            # de HuggingFace. Ni SpeechCue ni el aumento por tokens aplican aqui.
+            if additional_tokens or apply_text_augment:
+                raise ValueError(f"text.model_name={model_name!r} no admite SpeechCue "
+                                 "ni apply_text_augment")
+            if not glove_cache:
+                raise ValueError(f"text.model_name={model_name!r} necesita "
+                                 "model.clasico.glove_cache en el config")
+            self.tokenizer = GloveTokenizer(glove_cache)
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         # SpeechCue's nine symbols are added as real tokens, so the existing
         # word-piece vocabulary is untouched and the encoder gains exactly nine
         # embeddings. The caller must then resize the text encoder to

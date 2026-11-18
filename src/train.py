@@ -272,6 +272,9 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
         logger.info(f"SpeechCue enabled: {len(speechcue_stats)} cached utterances "
                     f"from {cache_path}")
 
+    # Encoders clasicos (111-119): vocabulario GloVe para el tokenizer de texto.
+    glove_cache = ((config.get('model', {}) or {}).get('clasico', {}) or {}).get('glove_cache')
+
     # Text preprocessor only if not audio-only
     text_preprocessor = None
     if not audio_only:
@@ -283,7 +286,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
             max_length=text_config.get('max_length', config['text']['max_length']),
             apply_text_augment=apply_text_augment,
             text_augmentation_config=text_augment_config,
-            additional_tokens=speechcue_tokens
+            additional_tokens=speechcue_tokens,
+            glove_cache=glove_cache,
         )
         text_preprocessor.train()
         if use_speechcue:
@@ -415,7 +419,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
             apply_text_augment=False,  # No augmentation for val
-            additional_tokens=speechcue_tokens
+            additional_tokens=speechcue_tokens,
+            glove_cache=glove_cache,
         )
         val_text_preprocessor.eval()
     
@@ -453,7 +458,8 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
             model_name=text_config.get('model_name', config['text']['model_name']),
             max_length=text_config.get('max_length', config['text']['max_length']),
             apply_text_augment=False,  # No augmentation for test
-            additional_tokens=speechcue_tokens
+            additional_tokens=speechcue_tokens,
+            glove_cache=glove_cache,
         )
         test_text_preprocessor.eval()
     
@@ -489,6 +495,25 @@ def create_dataloaders(config: dict, logger, audio_only: bool = False):
             tasa = check_coverage(gate, [d['utterance_id'] for d in ds.data], nombre)
             ds.expert_gate = gate
             logger.info(f"Compuerta de expertos: g = 1 en el {100 * tasa:.1f} % de {nombre}")
+
+    # Encoders clasicos (111-119): descriptores acusticos por utterance desde el cache de
+    # scripts/extraer_clasicas.py, normalizados con estadisticas del TRAIN de este fold.
+    clasico_cfg = (config.get('model', {}) or {}).get('clasico') or {}
+    if clasico_cfg.get('audio_cache') and str(config['model'].get('audio_encoder', '')).startswith('clasico:'):
+        from src.data.classic_features import ClassicAudioStore
+        store = ClassicAudioStore(clasico_cfg['audio_cache'])
+        for nombre, ds in (('train', train_dataset), ('val', val_dataset), ('test', test_dataset)):
+            faltan = store.faltantes([d['utterance_id'] for d in ds.data])
+            if faltan:
+                raise KeyError(
+                    f"{len(faltan)} utterances de {nombre} no estan en {store.ruta} "
+                    f"(p. ej. {faltan[:3]}). Regenera el cache con scripts/extraer_clasicas.py.")
+        store.ajustar_normalizacion([d['utterance_id'] for d in train_dataset.data])
+        for ds in (train_dataset, val_dataset, test_dataset):
+            ds.classic_audio = store
+        logger.info(f"Descriptores clasicos: {store.meta.get('fuente')} ({store.dim}/frame, "
+                    f"{store.fps:g} fps) desde {store.ruta}; normalizacion con "
+                    f"{len(train_dataset)} utterances de train")
 
     # Choose collate function based on model type
     collate_fn_to_use = collate_fn_audio_only if audio_only else collate_fn

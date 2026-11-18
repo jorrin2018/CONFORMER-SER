@@ -296,6 +296,11 @@ def collate_fn(batch: List[Dict]) -> Dict:
     extra = {}
     if 'expert_g' in batch[0]:
         extra['expert_g'] = torch.tensor([float(item['expert_g']) for item in batch])
+    if 'audio_feats' in batch[0]:
+        # Encoders clasicos (111-119): descriptores por frame y su longitud real.
+        extra['audio_feats'] = torch.stack([item['audio_feats'] for item in batch])
+        extra['audio_feats_lengths'] = torch.tensor(
+            [int(item['audio_feats_len']) for item in batch], dtype=torch.long)
     return {
         **extra,
         'audio': audio,

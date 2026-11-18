@@ -3325,3 +3325,23 @@ trabajo: `docs/ESTUDIOS_SOTA.md`, sección 9.
 Bug corregido: `--protocol random` sobrescribía el resumen LOSO del mismo estudio
 (`kfold_summary_ablation_NN.json`). Ahora usa el sufijo `_random`. No afectó a ningún
 resultado: el protocolo aleatorio no se había corrido todavía.
+
+### 16.8 FAMILIA CLÁSICA (18 nov 2026): estudios 111-119, eGeMAPS / COVAREP + GloVe
+
+Pregunta de Jorge: ¿y si en vez de wav2vec2 y DistilBERT usamos COVAREP y GloVe, con la
+misma fusión? Respuesta: no como modelo principal (se pierde la comparación con el estado
+del arte, que es todo SSL + PLM), sí como **segunda familia de encoders** para probar que
+el eje léxico es de los datos y no del encoder, y para darle otra oportunidad a la
+compuerta (H3) y al ViT (H1) con ramas débiles.
+
+Implementación sin tocar la fusión: los encoders clásicos imitan la interfaz de HF y
+devuelven `last_hidden_state` de forma (B, 1, H) con el vector ya agrupado (media y máximo
+enmascarados del BiLSTM), así `mean(dim=1)` del audio y `[:, 0, :]` del texto lo devuelven
+tal cual sin que el relleno entre. Los descriptores salen de un cache por corpus
+(`scripts/extraer_clasicas.py`), normalizados con estadísticas del train de cada fold y
+recortados del mismo segmento que la forma de onda. eGeMAPS por defecto porque no necesita
+MATLAB; COVAREP se puede recoger de los `.mat` si se corre en MATLAB.
+
+Decisión registrada: los BiLSTM se entrenan a 1e-3 (con 3e-5 una red desde cero apenas se
+mueve); la fusión y la cabeza se quedan a 5e-6 como en la base. Plan, comandos y lecturas:
+`docs/ESTUDIOS_SOTA.md`, sección 11. Tests: `tests/test_classic_studies.py` (38).

@@ -25,6 +25,11 @@ def model_uses_expert_gate(model) -> bool:
     return bool(getattr(inner, "uses_expert_gate", False))
 
 
+def model_uses_classic_audio(model) -> bool:
+    inner = getattr(model, "module", model)
+    return bool(getattr(inner, "uses_classic_audio", False))
+
+
 def multimodal_forward(model, audio: torch.Tensor, text_input_ids: torch.Tensor,
                        text_attention_mask: torch.Tensor,
                        labels: Optional[torch.Tensor] = None,
@@ -45,4 +50,13 @@ def multimodal_forward(model, audio: torch.Tensor, text_input_ids: torch.Tensor,
                 "(conflict_source: experts) pero el batch no trae 'expert_g'. Los "
                 "dataloaders tienen que salir de src.train.create_dataloaders.")
         kwargs["expert_g"] = g.to(audio.device)
+    if model_uses_classic_audio(model):
+        feats = None if batch is None else batch.get("audio_feats")
+        if feats is None:
+            raise RuntimeError(
+                "El modelo usa el encoder clasico de audio (descriptores por frame) pero "
+                "el batch no trae 'audio_feats'. Los dataloaders tienen que salir de "
+                "src.train.create_dataloaders con model.clasico en el config.")
+        kwargs["audio_feats"] = feats.to(audio.device)
+        kwargs["audio_feats_lengths"] = batch["audio_feats_lengths"].to(audio.device)
     return model(audio, text_input_ids, text_attention_mask, labels, **kwargs)

@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel
 
+from src.models.classic_encoders import build_classic_encoder, es_clasico
 from src.models.conformer import (_cargar_encoder_preentrenado, apply_finetuning_policy,
                                   build_layer_weights, weighted_hidden_states)
 from .classification_heads import MultiScaleTemporalClassificationHead
@@ -80,7 +81,11 @@ class UnimodalBaselineModel(nn.Module):
             # Mismo cargador que el trimodal: safetensors primero (transformers >= 5
             # con torch < 2.6 rechaza los .bin) y falla en vez de seguir con pesos
             # aleatorios. Antes era AutoModel.from_pretrained(name) a secas.
-            self.audio_encoder = _cargar_encoder_preentrenado(name, "audio")
+            if es_clasico(name):
+                # Estudios 111, 117, 119: descriptores acusticos + BiLSTM.
+                self.audio_encoder = build_classic_encoder(name, "audio", config)
+            else:
+                self.audio_encoder = _cargar_encoder_preentrenado(name, "audio")
             apply_finetuning_policy(
                 self.audio_encoder,
                 freeze_all=mc.get("freeze_audio_encoder", False),
@@ -89,7 +94,11 @@ class UnimodalBaselineModel(nn.Module):
             )
         elif self.modality == "text":
             name = mc.get("text_encoder", "distilbert-base-uncased")
-            self.text_encoder = _cargar_encoder_preentrenado(name, "texto")
+            if es_clasico(name):
+                # Estudio 112: GloVe + BiLSTM.
+                self.text_encoder = build_classic_encoder(name, "texto", config)
+            else:
+                self.text_encoder = _cargar_encoder_preentrenado(name, "texto")
             tokenizer_len = config.get("text", {}).get("_tokenizer_len")
             if tokenizer_len:
                 emb = self.text_encoder.get_input_embeddings()
@@ -123,6 +132,11 @@ class UnimodalBaselineModel(nn.Module):
             self.modality == "audio"
             and bool(mc.get("audio_weighted_hidden_states", False))
         )
+        # multimodal_forward pasa 'audio_feats' del batch cuando esto es True.
+        self.uses_classic_audio = (self.modality == "audio"
+                                   and getattr(self.audio_encoder, "es_clasico", False))
+        if self.uses_classic_audio and self._weighted_hidden_states:
+            raise ValueError("audio_weighted_hidden_states no aplica al encoder clasico")
         self.audio_encoder_layer_logits = (
             build_layer_weights(self.audio_encoder) if self._weighted_hidden_states else None
         )
@@ -166,9 +180,15 @@ class UnimodalBaselineModel(nn.Module):
         text_input_ids: Optional[torch.Tensor] = None,
         text_attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        audio_feats: Optional[torch.Tensor] = None,
+        audio_feats_lengths: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         if self.modality == "audio":
-            if self._weighted_hidden_states:
+            if self.uses_classic_audio:
+                if audio_feats is None:
+                    raise RuntimeError("El encoder clasico de audio necesita audio_feats")
+                feats = self.audio_encoder(audio_feats, audio_feats_lengths).last_hidden_state
+            elif self._weighted_hidden_states:
                 feats = weighted_hidden_states(
                     self.audio_encoder, audio, self.audio_encoder_layer_logits)
             else:

@@ -1,13 +1,16 @@
 <#
 cola_articulo.ps1 -- corridas que faltan para el articulo, en orden y reanudable.
 
-Bloques (detalle y lecturas en docs\ESTUDIOS_SOTA.md, seccion 9):
+Bloques (detalle y lecturas en docs\ESTUDIOS_SOTA.md, secciones 9 y 11):
   A  numero del articulo: 5 semillas del modelo final (98), como las 25 corridas de Zhao
   B  ablaciones del modelo final: 107 prosodia, 109 fusion, 108 aumentacion
   C  lineas base unimodales con varias semillas (71 audio, 73 texto)
   D  protocolos de los trabajos relacionados: Yoon (random), Pepino (70),
      Chen & Rudnicky (99), Wu (100, ASR), MELD 7 clases (110 / 82), CREMA-D random
   E  opcional: 103 (RoBERTa-base)
+  F  familia clasica (eGeMAPS + GloVe, misma fusion): 111-119. Opcional, se pide con
+     -Bloques F. La primera vez necesita -Glove <glove.840B.300d.zip> para los caches
+     (docs\ESTUDIOS_SOTA.md, seccion 11).
 
 Cada tarea se salta si su resumen ya existe y esta completo. Si encuentra un resumen
 PARCIAL se detiene y dice como reanudarlo, en vez de adivinar.
@@ -16,13 +19,15 @@ Uso, desde la raiz del repo con el venv activado:
     .\scripts\cola_articulo.ps1 -SoloListar      # que falta, sin correr nada
     .\scripts\cola_articulo.ps1                  # corre todo lo que falta
     .\scripts\cola_articulo.ps1 -Bloques A,B     # solo esos bloques
+    .\scripts\cola_articulo.ps1 -Bloques F -Glove D:\DOCTORADO\RECURSOS\glove.840B.300d.zip
 
 Ojo: en PowerShell las variables no distinguen mayusculas ($S y $s son la misma).
 #>
 param(
     [switch]$SoloListar,
     [string[]]$Bloques = @("A", "B", "C", "D"),
-    [string]$Device = "cuda"
+    [string]$Device = "cuda",
+    [string]$Glove = ""
 )
 
 $ErrorActionPreference = "Continue"
@@ -58,8 +63,22 @@ $tareas = @(
     @{ B = "D"; N = "CREMA-D aleatorio: 105"; R = (Resumen 105 "_random"); A = "--study 105 --loso --protocol random" },
     @{ B = "D"; N = "CREMA-D aleatorio: 78";  R = (Resumen 78 "_random");  A = "--study 78 --loso --protocol random" },
     # ---- E: opcional ----------------------------------------------------------------
-    @{ B = "E"; N = "103 RoBERTa-base"; R = (Resumen 103 ""); A = "--study 103 --loso"; C = 103 }
+    @{ B = "E"; N = "103 RoBERTa-base"; R = (Resumen 103 ""); A = "--study 103 --loso"; C = 103 },
+    # ---- F: familia clasica (X = estudio con el que se extraen los caches del corpus) --
+    @{ B = "F"; N = "113 clasico IEMOCAP audio+texto"; R = (Resumen 113 ""); A = "--study 113 --loso"; X = 113 },
+    @{ B = "F"; N = "111 clasico IEMOCAP solo audio";  R = (Resumen 111 ""); A = "--study 111 --loso"; X = 113 },
+    @{ B = "F"; N = "112 clasico IEMOCAP solo texto";  R = (Resumen 112 ""); A = "--study 112 --loso"; X = 113 },
+    @{ B = "F"; N = "116 clasico CREMA-D audio+texto"; R = (Resumen 116 ""); A = "--study 116 --loso"; X = 116 },
+    @{ B = "F"; N = "117 clasico CREMA-D solo audio";  R = (Resumen 117 ""); A = "--study 117 --loso"; X = 116 },
+    @{ B = "F"; N = "118 clasico MELD audio+texto s42";  R = (Resumen 118 "_seed42");  A = "--study 118 --protocol fixed --seed 42";  X = 118 },
+    @{ B = "F"; N = "118 clasico MELD audio+texto s123"; R = (Resumen 118 "_seed123"); A = "--study 118 --protocol fixed --seed 123"; X = 118 },
+    @{ B = "F"; N = "119 clasico MELD solo audio s42";   R = (Resumen 119 "_seed42");  A = "--study 119 --protocol fixed --seed 42";  X = 118 },
+    @{ B = "F"; N = "119 clasico MELD solo audio s123";  R = (Resumen 119 "_seed123"); A = "--study 119 --protocol fixed --seed 123"; X = 118 },
+    @{ B = "F"; N = "114 clasico IEMOCAP + compuerta"; R = (Resumen 114 ""); A = "--study 114 --loso"; X = 113 },
+    @{ B = "F"; N = "115 clasico IEMOCAP + ViT";       R = (Resumen 115 ""); A = "--study 115 --loso"; X = 113 }
 )
+
+$extraidos = @{}
 
 function Estado($t) {
     if (-not (Test-Path $t.R)) { return "falta" }
@@ -85,6 +104,14 @@ foreach ($t in $tareas) {
             python scripts\transcribe_asr.py --config config\ablation\ablation_100_asr_transcripts.yaml --device $Device
             if ($LASTEXITCODE -ne 0) { Write-Host "Fallo la transcripcion; se detiene la cola." -ForegroundColor Red; break }
         }
+    }
+    if ($t.X -and -not $extraidos.ContainsKey($t.X)) {
+        # Caches de la familia clasica; incremental: si ya existen no se rehacen.
+        $ex = @("scripts\extraer_clasicas.py", "--study", $t.X)
+        if ($Glove) { $ex += @("--glove", $Glove) }
+        python @ex
+        if ($LASTEXITCODE -ne 0) { Write-Host "Fallo la extraccion de caracteristicas clasicas; se detiene la cola." -ForegroundColor Red; break }
+        $extraidos[$t.X] = $true
     }
     if ($t.C) {
         python scripts\check_sota_studies.py --study $t.C --fold 1 --device $Device

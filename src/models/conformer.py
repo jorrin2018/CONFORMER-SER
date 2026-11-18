@@ -19,6 +19,7 @@ from transformers import (
 from typing import Dict, Optional
 
 from .emotion2vec_encoder import Emotion2VecEncoder, _is_emotion2vec_model
+from .classic_encoders import build_classic_encoder, es_clasico
 from .fusion import (
     FusionModule, CrossAttentionFusion, GatedFusion, GIAFusion,
     TriModalHierarchicalFusion, TriModalTensorFusion, TriModalBilinearFusion,
@@ -93,6 +94,15 @@ def apply_finetuning_policy(encoder, freeze_all: bool, unfreeze_last_n: int,
     Returns:
         (total_params, trainable_params)
     """
+    if getattr(encoder, "es_clasico", False):
+        # Encoders clasicos (111-119): BiLSTM desde cero, nada que congelar. Los
+        # vectores GloVe ya vienen congelados de fabrica (ClassicTextEncoder).
+        total = sum(p.numel() for p in encoder.parameters())
+        trainable = sum(p.numel() for p in encoder.parameters() if p.requires_grad)
+        print(f"[finetune] {name}: encoder clasico, la politica de congelado no aplica -- "
+              f"{trainable:,}/{total:,} params trainable")
+        return total, trainable
+
     partial = bool(unfreeze_last_n and unfreeze_last_n > 0)
 
     if not partial and not freeze_all:
@@ -201,7 +211,8 @@ class ConformerMultimodalModel(nn.Module):
         audio_unfreeze_last_n_layers: int = 0,
         freeze_text_encoder: bool = False,
         text_unfreeze_last_n_layers: int = 0,
-        audio_pooling: str = "mean"
+        audio_pooling: str = "mean",
+        config: Optional[Dict] = None,
     ):
         """
         Args:
@@ -233,6 +244,10 @@ class ConformerMultimodalModel(nn.Module):
                     "Emotion2Vec encoder requested but FunASR is not installed. "
                     "Install with: pip install funasr"
                 ) from e
+        elif es_clasico(audio_encoder_name):
+            # Estudios 111-119: descriptores acusticos + BiLSTM (classic_encoders.py).
+            self.audio_encoder = build_classic_encoder(audio_encoder_name, "audio", config)
+            audio_hidden_size = self.audio_encoder.config.hidden_size
         else:
             # Falla si no carga. Ver _cargar_encoder_preentrenado: el fallback a
             # pesos aleatorios que habia aqui produjo un estudio entero invalido.
@@ -252,7 +267,10 @@ class ConformerMultimodalModel(nn.Module):
         # Text encoder (BERT/DistilBERT)
         # Falla si no carga, por el mismo motivo que el de audio. Antes caia a un
         # bert-base-uncased SIN pesos, que ademas no es el encoder que dice el config.
-        self.text_encoder = _cargar_encoder_preentrenado(text_encoder_name, "texto")
+        if es_clasico(text_encoder_name):
+            self.text_encoder = build_classic_encoder(text_encoder_name, "texto", config)
+        else:
+            self.text_encoder = _cargar_encoder_preentrenado(text_encoder_name, "texto")
         text_hidden_size = self.text_encoder.config.hidden_size
         
         apply_finetuning_policy(

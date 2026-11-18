@@ -43,7 +43,7 @@ tensorboard
 
 # Descriptores eGeMAPS — necesario para el estudio de ablacion 38
 #   (rama residual OpenSMILE). Import en src/models/opensmile_extractor.py
-# opensmile
+# opensmile   (tambien para los estudios 111-119: scripts/extraer_clasicas.py)
 
 # Optimizaciones de entrenamiento (opcionales, detectadas en tiempo de
 # ejecucion por scripts/run_ablation.py; sin ellas se usa la ruta estandar)

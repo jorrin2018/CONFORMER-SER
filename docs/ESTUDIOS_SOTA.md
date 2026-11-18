@@ -304,3 +304,102 @@ python scripts\demo_emocion.py --grabar 4 --asr             # micrófono (pip in
 python scripts\comparar_estudios.py 107 98
 python scripts\comparar_estudios.py 98 74 --semillas 42 123 456
 ```
+
+## 11. Familia clásica: eGeMAPS / COVAREP + GloVe con la misma fusión (estudios 111-119, 18 nov 2026)
+
+### Por qué
+
+El aporte del artículo es el **eje léxico**: la ganancia de la fusión crece con lo que
+informa el texto (CREMA-D −0.99, IEMOCAP +6.76, MELD +12.22 con wav2vec2 + DistilBERT). Un
+revisor puede preguntar si eso es una propiedad de los **datos** o de los encoders
+preentrenados. Repetir el eje con una familia de encoders completamente distinta
+(descriptores acústicos hechos a mano y vectores de palabra estáticos, la de MulT / MCTN /
+MISA) separa las dos cosas. Además, con ramas más débiles y más distintas, la compuerta de
+conflicto (H3) y el ViT sobre log-mel (H1) tienen otra oportunidad.
+
+**No es para superar el estado del arte.** El UA absoluto quedará bastante por debajo del
+98; lo que se compara es el signo y el orden de la ganancia de la fusión en los tres corpus.
+
+### Qué cambia (un solo factor: el encoder de cada rama)
+
+| Rama | Base (98) | Familia clásica |
+|---|---|---|
+| Audio | wav2vec2-base, 6 bloques afinados | openSMILE eGeMAPSv02: 25 descriptores por frame (10 ms) → BiLSTM 2×256 → media y máximo sobre frames reales |
+| Texto | DistilBERT, 4 bloques afinados, [CLS] | GloVe 840B 300-d **congelado** → BiLSTM 2×256 → media y máximo sobre tokens reales |
+| Tasa del encoder | 3e-5 / 2e-5 (afinar) | 1e-3 (BiLSTM desde cero) |
+
+Todo lo demás es idéntico a la base: fusión de 3 capas sobre los vectores de rama, cabeza
+MultiScaleTemporal, pérdida, tasa de la fusión (5e-6), folds, validación y selección de
+modelo. El prompt de prosodia sigue (sus palabras tienen vector GloVe). Las contracciones se
+parten como en GloVe (`don't` → `do n't`), así que la negación no se pierde.
+
+Lo que **no** se aplica a los descriptores: el aumento sobre la forma de onda (ruido,
+velocidad, enmascarado); se calcularon una vez sobre el audio limpio. Sí se recortan del
+mismo segmento que la forma de onda y se normalizan con media y desviación del **train de
+cada fold**.
+
+| Estudio | Base | Qué es | Comparar con |
+|---|---|---|---|
+| 111 | 71 | IEMOCAP solo audio (eGeMAPS) | — |
+| 112 | 73 | IEMOCAP solo texto (GloVe) | — |
+| 113 | 98 | IEMOCAP audio + texto | **113 − 111** (ganancia de la fusión) |
+| 114 | 113 | + compuerta de conflicto entrenada (la del 75) | 114 − 113 (H3) |
+| 115 | 74 | audio + texto + ViT sobre log-mel | 115 − 113 (H1) |
+| 116 | 105 | CREMA-D audio + texto | **116 − 117** |
+| 117 | 78 | CREMA-D solo audio | — |
+| 118 | 106 | MELD audio + texto (`--protocol fixed`, 2 semillas) | **118 − 119** |
+| 119 | 80 | MELD solo audio (`--protocol fixed`, 2 semillas) | — |
+
+### Preparación (una vez)
+
+```powershell
+pip install opensmile
+# GloVe 840B (unos 2 GB): https://nlp.stanford.edu/data/glove.840B.300d.zip
+# No hace falta descomprimirlo. glove.6B.300d.zip (822 MB) también sirve.
+
+# Un cache por corpus (descriptores + vocabulario GloVe del corpus). Es incremental:
+# si el cache existe no se rehace. Del orden de 80 ms por utterance en CPU.
+python scripts\extraer_clasicas.py --study 113 --glove D:\DOCTORADO\RECURSOS\glove.840B.300d.zip
+python scripts\extraer_clasicas.py --study 116 --glove D:\DOCTORADO\RECURSOS\glove.840B.300d.zip
+python scripts\extraer_clasicas.py --study 118 --glove D:\DOCTORADO\RECURSOS\glove.840B.300d.zip
+```
+
+Los caches quedan en `cache\clasicas\` (`<corpus>_egemaps.pt` y `glove_<corpus>.pt`). El
+script imprime la cobertura de GloVe y las palabras más frecuentes sin vector.
+
+**COVAREP (opcional, necesita MATLAB).** Es la fuente de MulT / MISA. Se corre
+`COVAREP_feature_extraction` en MATLAB sobre las carpetas de wav (frames de 10 ms) y luego
+`python scripts\extraer_clasicas.py --study 113 --fuente covarep` recoge los `.mat`. Para no
+mezclarlo con eGeMAPS, cambia en el config `model.clasico.fuente: covarep` y
+`audio_cache: cache/clasicas/iemocap_covarep.pt`, y guarda esa variante con otro número de
+estudio. La dimensión del encoder se lee del cache, no hay que tocar nada más.
+
+### Corridas
+
+```powershell
+.\scripts\cola_articulo.ps1 -Bloques F -SoloListar
+.\scripts\cola_articulo.ps1 -Bloques F -Glove D:\DOCTORADO\RECURSOS\glove.840B.300d.zip
+# o a mano:
+python scripts\run_ablation.py --study 113 --loso --device cuda
+python scripts\run_ablation.py --study 118 --protocol fixed --seed 42 --device cuda
+python scripts\comparar_estudios.py 113 111
+```
+
+Son mucho más baratas que el 98: no hay 95 M de parámetros que afinar; la lectura de los
+wav y el prompt de prosodia pasan a ser lo que más tarda.
+
+### Lecturas, escritas antes de correr
+
+- **El eje es del corpus**: 116 − 117 dentro de la banda, 113 − 111 > 0.86 en ≥ 4/5 folds y
+  118 − 119 la mayor de las tres. Se reporta como una segunda familia de encoders con el
+  mismo orden: el resultado deja de depender de wav2vec2 / DistilBERT.
+- **El eje cambia de orden**: se reporta tal cual; el artículo pasa a decir que la ganancia
+  depende del corpus *y* del encoder, con las dos tablas.
+- **114 − 113 > 0.86 en ≥ 4/5 folds**: la compuerta sirve cuando las ramas son débiles; se
+  reporta como condición de uso (no como mejora general) junto al empate con wav2vec2.
+- **115 − 113 > 0.86 en ≥ 4/5 folds**: el log-mel + ViT complementa a los descriptores de
+  bajo nivel aunque no a wav2vec2; matiza H1.
+
+Archivos: `src/models/classic_encoders.py`, `src/data/classic_features.py`,
+`scripts/extraer_clasicas.py`, `config/ablation/ablation_111..119_*.yaml`,
+`tests/test_classic_studies.py`.

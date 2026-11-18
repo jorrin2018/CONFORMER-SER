@@ -257,6 +257,7 @@ class BaseSERDataset(Dataset):
 
         # Load only the needed segment when possible to reduce host-memory pressure
         # on Windows and avoid full-file allocations for long utterances.
+        inicio_s = 0.0  # inicio del segmento, para recortar igual los descriptores clasicos
         try:
             metadata = torchaudio.info(audio_path)
             original_sr = int(metadata.sample_rate)
@@ -271,6 +272,7 @@ class BaseSERDataset(Dataset):
                     start_frame = random.randint(0, total_frames - max_frames_in_original_sr)
                 else:
                     start_frame = 0
+                inicio_s = start_frame / original_sr if original_sr > 0 else 0.0
                 waveform, sr = torchaudio.load(
                     audio_path,
                     frame_offset=start_frame,
@@ -356,6 +358,14 @@ class BaseSERDataset(Dataset):
             'emotion': sample['emotion'],
             'utterance_id': sample['utterance_id']
         }
+        clasico = getattr(self, 'classic_audio', None)
+        if clasico is not None:
+            # Encoders clasicos (111-119): descriptores del MISMO segmento que la forma
+            # de onda. KeyError a proposito si la utterance no esta en el cache.
+            feats, largo = clasico.segmento(sample['utterance_id'], inicio_s,
+                                            self.max_audio_length)
+            item['audio_feats'] = feats
+            item['audio_feats_len'] = largo
         gate = getattr(self, 'expert_gate', None)
         if gate is not None:
             # KeyError a proposito: una utterance sin prediccion de los expertos no

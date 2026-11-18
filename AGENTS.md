@@ -81,7 +81,7 @@ is the most common failure in this repo.
 
 ## 4. Ablation studies
 
-- **Valid study numbers: `1–50` and `52–110`.** There is **no study 51**.
+- **Valid study numbers: `1–50` and `52–119`.** There is **no study 51**.
   The range is enforced by `create_ablation_model()` in `scripts/run_ablation.py`.
 - Many studies **reuse the same model class** with a different YAML. `create_ablation_model()` is
   the single source of truth for the study number → model class mapping — read it before assuming
@@ -170,6 +170,30 @@ pre-registered readings: [`docs/ESTUDIOS_SOTA.md`](docs/ESTUDIOS_SOTA.md). Pre-f
 (before 18/11/2026 they overwrote the `standard` summary of the same study). The ordered,
 resumable queue of remaining paper runs is `scripts\cola_articulo.ps1` (`-SoloListar` to see
 what is missing).
+### Studies 111–119 — classic encoder family (eGeMAPS / COVAREP + GloVe)
+
+Same fusion, head, fusion optimiser, folds and model selection as the base; ONLY the
+encoders change: per-frame acoustic descriptors (openSMILE eGeMAPSv02 by default, COVAREP
+optional) and frozen GloVe 840B vectors, each followed by a 2×256 BiLSTM trained from
+scratch at lr 1e-3 (`src/models/classic_encoders.py`). The encoders mimic the HF interface
+(`config.hidden_size`, `.last_hidden_state` of shape (B, 1, H) holding the already-pooled
+vector), so `Ablation34Model` and `UnimodalBaselineModel` are reused unchanged. Audio
+descriptors come from a per-corpus cache (`src/data/classic_features.py`), z-normalised with
+TRAIN-fold statistics and cropped from the same segment as the waveform; batches carry
+`audio_feats` / `audio_feats_lengths` and `multimodal_forward` passes them when
+`model.uses_classic_audio`. Build the caches once per corpus before training:
+`python scripts\extraer_clasicas.py --study 113|116|118 --glove <glove.840B.300d.zip>`.
+
+| Study | Base | Change |
+|-------|------|--------|
+| 111 | 71 | audio-only, eGeMAPS + BiLSTM |
+| 112 | 73 | text-only, GloVe + BiLSTM |
+| 113 | 98 | both classic encoders (A + T) |
+| 114 | 113 | + trained conflict gate (as 75) |
+| 115 | 74 | both classic encoders, ViT stream on |
+| 116 / 117 | 105 / 78 | CREMA-D A + T / audio-only |
+| 118 / 119 | 106 / 80 | MELD A + T / audio-only (`--protocol fixed`) |
+
 Read-only helpers: `scripts/demo_emocion.py` (live demo: 71 / 73 / 98 side by side on one utterance) and
 `scripts/comparar_estudios.py A B` (paired per-fold comparison with the adoption rule).
 

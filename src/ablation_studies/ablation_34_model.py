@@ -272,12 +272,16 @@ class Ablation34Model(Ablation25Model):
         labels: Optional[torch.Tensor] = None,
         audio_lengths: Optional[torch.Tensor] = None,
         expert_g: Optional[torch.Tensor] = None,
+        audio_feats: Optional[torch.Tensor] = None,
+        audio_feats_lengths: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         if self.fusion_type == "gated_interactive_attention":
             return self._forward_bimodal(audio, text_input_ids, text_attention_mask, labels)
 
         return super().forward(audio, text_input_ids, text_attention_mask, labels,
-                               audio_lengths=audio_lengths, expert_g=expert_g)
+                               audio_lengths=audio_lengths, expert_g=expert_g,
+                               audio_feats=audio_feats,
+                               audio_feats_lengths=audio_feats_lengths)
 
     def _forward_bimodal(
         self,
