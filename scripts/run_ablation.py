@@ -71,6 +71,7 @@ from src.ablation_studies.ablation_30_dirichlet import Ablation30Model
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
 from src.utils.logger import setup_logger, TensorBoardLogger, ExperimentTracker, print_model_summary
 from src.utils.losses import create_loss_function, log_loss_contract_traceability
+from src.utils.local_paths import apply_local_paths
 from src.train import (
     create_dataloaders,
     train_epoch,
@@ -105,7 +106,9 @@ def load_ablation_config(config_path: str, base_config: dict) -> dict:
             merged_config[key].update(value)
         else:
             merged_config[key] = value
-    
+
+    # Per-machine dataset path (config/local_paths.yaml, gitignored)
+    apply_local_paths(merged_config)
     return merged_config
 
 

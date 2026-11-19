@@ -27,6 +27,7 @@ audio, text and vision streams. Everything else in the repo exists to train, abl
 CONFORMER-SER/
 ├── config/
 │   ├── config.yaml                 # baseline config (set dataset.data_path here)
+│   ├── local_paths.example.yaml    # template for local_paths.yaml: per-machine corpus paths (gitignored)
 │   ├── config_audio_only.yaml
 │   ├── experiment_lightweight.yaml
 │   └── ablation/                   # 68 ablation YAMLs + ABLATION_SUMMARY.md (canonical catalog)
@@ -92,6 +93,10 @@ is the most common failure in this repo.
   `ablation_phase2_49_wavlm_multiscale_head_FUTURE.yaml` have **no code path** in
   `run_ablation.py`. A YAML file existing does *not* mean the study is runnable.
 - Studies **20, 29, 41** run K-Fold / LOSO cross-validation instead of the standard split.
+- **`load_base_config()` needs `checkpoints/20251029_190659/config.json`, which is not in git.**
+  YAMLs 66–84 define every key the base supplies, so a minimal base (4-class `emotions` +
+  `num_classes`) gives them the same effective config. Studies 01–12, `34_kfold` and 58–62 do
+  inherit keys from the original base and need the real file.
 
 ### Recent series (58–63)
 
