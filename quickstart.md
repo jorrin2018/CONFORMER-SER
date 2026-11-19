@@ -88,8 +88,17 @@ dataset:
   data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
-Los YAML de `config\ablation\` pueden sobrescribir esta ruta; si cambias de máquina, revisa también
-el YAML del estudio que vayas a lanzar.
+Los YAML de `config\ablation\` traen su propia `data_path`. Para cambiar de máquina sin editarlos,
+copia `config\local_paths.example.yaml` como `config\local_paths.yaml` (ignorado por git):
+
+```yaml
+datasets:
+  iemocap: "F:\\DOCTORADO\\DATASETS\\EMOTION\\IEMOCAP\\archive\\IEMOCAP_full_release"
+```
+
+Si existe, sustituye `dataset.data_path` de todos los configs de ese corpus al cargarlos, y el
+`config.json` de cada corrida guarda la ruta realmente usada. Una ruta inexistente hace fallar la
+carga en vez de volver a la del YAML.
 
 ---
 
@@ -201,7 +210,7 @@ python src\inference.py `
 | Síntoma | Causa habitual | Solución |
 |---|---|---|
 | `CUDA out of memory` | Batch demasiado grande para la GPU | Baja `training.batch_size` en el YAML (p. ej. a `4`) |
-| Dataset no encontrado | `dataset.data_path` mal configurado | Revísalo en `config\config.yaml` **y** en el YAML de ablación |
+| Dataset no encontrado | `dataset.data_path` mal configurado | Revisa `config\local_paths.yaml`; si no existe, `config\config.yaml` **y** el YAML de ablación |
 | CUDA no disponible | `torch` instalado sin soporte CUDA | `python setup_check.py` y `nvidia-smi`; reinstala torch desde pytorch.org |
 | Un checkpoint de ablación falla con `evaluate.py` | `evaluate.py` es solo para la línea base | Usa `evaluate_ensemble.py` o `run_test_only.py` |
 | `Invalid study number` | Estudio fuera de rango o inexistente (51) | Rangos válidos: `1-50`, `52-65` |

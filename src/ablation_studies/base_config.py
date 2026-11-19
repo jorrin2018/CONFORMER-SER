@@ -41,6 +41,9 @@ def load_base_config() -> Dict[str, Any]:
 
     config['dataset']['emotions'] = new_emotions
     config['model']['num_classes'] = 4
-    
+
+    # Per-machine dataset path (config/local_paths.yaml, gitignored)
+    from src.utils.local_paths import apply_local_paths
+    apply_local_paths(config)
     return config
 

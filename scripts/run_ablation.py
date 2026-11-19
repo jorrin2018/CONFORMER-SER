@@ -71,6 +71,7 @@ from src.ablation_studies.ablation_30_dirichlet import Ablation30Model
 from src.utils.metrics import EmotionMetrics, compute_class_weights, plot_training_curves
 from src.utils.logger import setup_logger, TensorBoardLogger, ExperimentTracker, print_model_summary
 from src.utils.losses import create_loss_function, log_loss_contract_traceability
+from src.utils.local_paths import apply_local_paths
 from src.train import (
     create_dataloaders,
     train_epoch,
@@ -105,6 +106,10 @@ def load_ablation_config(config_path: str, base_config: dict) -> dict:
             merged_config[key].update(value)
         else:
             merged_config[key] = value
+
+    # Ruta por maquina (config/local_paths.yaml, ignorado por git). Va ANTES que
+    # CAMF_IEMOCAP_PATH para que --iemocap-path, explicito en la linea de comandos, gane.
+    apply_local_paths(merged_config)
 
     # Otra maquina (PC del laboratorio): la ruta de IEMOCAP de los YAML es la de la PC de
     # Jorge. --iemocap-path (o la variable CAMF_IEMOCAP_PATH) la sustituye SOLO en los

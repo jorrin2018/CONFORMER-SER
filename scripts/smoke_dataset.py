@@ -56,6 +56,8 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config, encoding="utf-8"))
+    from src.utils.local_paths import apply_local_paths
+    apply_local_paths(cfg)
     ds_cfg = cfg["dataset"]
     print(f"\n  config    : {args.config}")
     print(f"  data_path : {ds_cfg['data_path']}\n")

@@ -1,0 +1,14 @@
+# Rutas de datasets POR MAQUINA.
+#
+# Copiar como config/local_paths.yaml (ignorado por git) y ajustar. Si existe, cada
+# entrada sustituye dataset.data_path de los configs del corpus correspondiente al
+# cargarlos, y el config.json de cada corrida guarda la ruta realmente usada.
+# Sin este fichero se usan las rutas escritas en los YAML.
+#
+# Claves = valor de dataset.corpus (ausente en el YAML = iemocap).
+# Usar comillas SIMPLES: dentro de comillas dobles YAML interpreta "\D" como escape.
+datasets:
+  iemocap: 'F:\DOCTORADO\DATASETS\EMOTION\IEMOCAP\archive\IEMOCAP_full_release'
+  # cremad:  'D:\DOCTORADO\DATASETS\CREMA-D'
+  # meld:    'D:\DOCTORADO\DATASETS\MELD'
+  # ravdess: 'D:\DOCTORADO\DATASETS\RAVDESS'

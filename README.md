@@ -96,6 +96,19 @@ dataset:
   data_path: "D:\\ruta\\a\\IEMOCAP_full_release"
 ```
 
+Cada YAML de `config\ablation\` trae su propia `data_path`, escrita para la máquina donde se creó.
+Para no editarlos todos al cambiar de PC, copia `config\local_paths.example.yaml` como
+`config\local_paths.yaml` (ignorado por git) y pon ahí las rutas de tu máquina:
+
+```yaml
+datasets:
+  iemocap: "F:\\DOCTORADO\\DATASETS\\EMOTION\\IEMOCAP\\archive\\IEMOCAP_full_release"
+```
+
+Si existe, sustituye `dataset.data_path` de todos los configs de ese corpus al cargarlos (línea
+base, ablaciones, `run_test_only.py`, `setup_check.py`), y el `config.json` de cada corrida guarda
+la ruta realmente usada. Una ruta que no existe hace fallar la carga en vez de volver a la del YAML.
+
 ### 4. Verificación
 
 ```powershell

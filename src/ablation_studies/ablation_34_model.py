@@ -15,7 +15,7 @@ from transformers import AutoModel, AutoConfig
 
 from .ablation_25_enhanced_cross_attention import Ablation25Model
 from src.models.fusion import ConflictAwareCrossAttentionFusion, GatedInteractiveAttentionFusion
-from src.models.conformer import apply_finetuning_policy
+from src.models.conformer import apply_finetuning_policy, _cargar_encoder_preentrenado
 from .classification_heads import (
     LSTMClassificationHead,
     MultiScaleTemporalClassificationHead,
@@ -177,14 +177,10 @@ class Ablation34Model(Ablation25Model):
         self.audio_pooling = audio_pooling
 
         # Audio encoder (WavLM / Wav2Vec2 via AutoModel)
-        try:
-            self.audio_encoder = AutoModel.from_pretrained(audio_encoder_name)
-            audio_hidden_size = self.audio_encoder.config.hidden_size
-        except Exception as e:
-            print(f"Warning: Could not load {audio_encoder_name}: {e}. Using config.")
-            cfg = AutoConfig.from_pretrained(audio_encoder_name)
-            self.audio_encoder = AutoModel.from_config(cfg)
-            audio_hidden_size = cfg.hidden_size
+        # Sin fallback a pesos aleatorios: un encoder que no carga para la corrida
+        # (REWRITE_NOTES seccion 13).
+        self.audio_encoder = _cargar_encoder_preentrenado(audio_encoder_name, 'audio')
+        audio_hidden_size = self.audio_encoder.config.hidden_size
 
         apply_finetuning_policy(
             self.audio_encoder,
@@ -195,14 +191,8 @@ class Ablation34Model(Ablation25Model):
         )
 
         # Text encoder
-        try:
-            self.text_encoder = AutoModel.from_pretrained(text_encoder_name)
-            text_hidden_size = self.text_encoder.config.hidden_size
-        except Exception as e:
-            print(f"Warning: Could not load {text_encoder_name}: {e}. Using config.")
-            cfg = AutoConfig.from_pretrained(text_encoder_name)
-            self.text_encoder = AutoModel.from_config(cfg)
-            text_hidden_size = cfg.hidden_size
+        self.text_encoder = _cargar_encoder_preentrenado(text_encoder_name, 'texto')
+        text_hidden_size = self.text_encoder.config.hidden_size
 
         apply_finetuning_policy(
             self.text_encoder,
