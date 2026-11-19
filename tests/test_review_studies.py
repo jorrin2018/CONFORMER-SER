@@ -219,8 +219,31 @@ def test_load_expert_features_uses_oof_for_train(tmp_path):
 
 
 def test_iemocap_path_override_only_touches_iemocap(monkeypatch):
+    # Sin config/local_paths.yaml de esta maquina: el test no depende de donde corre.
+    from src.utils import local_paths
+    monkeypatch.setattr(local_paths, "_cache", {})
     monkeypatch.setenv("CAMF_IEMOCAP_PATH", r"E:\LAB\IEMOCAP_full_release")
     assert _cfg(123)["dataset"]["data_path"] == r"E:\LAB\IEMOCAP_full_release"
     assert _cfg(105)["dataset"]["data_path"] == "D:\\DOCTORADO\\DATASETS\\CREMA-D"
     monkeypatch.delenv("CAMF_IEMOCAP_PATH")
     assert _cfg(123)["dataset"]["data_path"].startswith("D:\\DOCTORADO")
+
+
+def test_local_paths_precedence(monkeypatch, tmp_path):
+    """local_paths.yaml sustituye la ruta del YAML; --iemocap-path / CAMF_IEMOCAP_PATH gana."""
+    from src.utils import local_paths
+    monkeypatch.setattr(local_paths, "_cache", {"iemocap": str(tmp_path)})
+    monkeypatch.delenv("CAMF_IEMOCAP_PATH", raising=False)
+    assert _cfg(123)["dataset"]["data_path"] == str(tmp_path)
+    assert _cfg(105)["dataset"]["data_path"] == r"D:\DOCTORADO\DATASETS\CREMA-D"
+    monkeypatch.setenv("CAMF_IEMOCAP_PATH", r"E:\LAB\IEMOCAP_full_release")
+    assert _cfg(123)["dataset"]["data_path"] == r"E:\LAB\IEMOCAP_full_release"
+
+
+def test_local_paths_missing_dir_fails(monkeypatch, tmp_path):
+    """Una ruta local que no existe para la carga en vez de volver a la del YAML."""
+    from src.utils import local_paths
+    monkeypatch.setattr(local_paths, "_cache", {"iemocap": str(tmp_path / "no_existe")})
+    monkeypatch.delenv("CAMF_IEMOCAP_PATH", raising=False)
+    with pytest.raises(FileNotFoundError):
+        _cfg(123)

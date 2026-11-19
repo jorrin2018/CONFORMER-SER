@@ -94,7 +94,7 @@ is the most common failure in this repo.
   `run_ablation.py`. A YAML file existing does *not* mean the study is runnable.
 - Studies **20, 29, 41** run K-Fold / LOSO cross-validation instead of the standard split.
 - **`load_base_config()` needs `checkpoints/20251029_190659/config.json`, which is not in git.**
-  YAMLs 66–84 define every key the base supplies, so a minimal base (4-class `emotions` +
+  IEMOCAP YAMLs 66–126 define every key the base supplies, so a minimal base (4-class `emotions` +
   `num_classes`) gives them the same effective config. Studies 01–12, `34_kfold` and 58–62 do
   inherit keys from the original base and need the real file.
 
