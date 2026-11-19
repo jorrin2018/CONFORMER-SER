@@ -143,16 +143,7 @@ def check_dataset_path():
         import yaml
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
-
-        # Ruta por maquina (config/local_paths.yaml). Se carga por ruta para no
-        # arrastrar src/utils/__init__ (torch, sklearn) si el entorno esta incompleto.
-        import importlib.util
-        _spec = importlib.util.spec_from_file_location(
-            "local_paths", os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        "src", "utils", "local_paths.py"))
-        _lp = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_lp)
-        _lp.apply_local_paths(config)
+        
         data_path = config['dataset']['data_path']
         print(f"Dataset path from config: {data_path}")
         

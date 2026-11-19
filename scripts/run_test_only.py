@@ -53,9 +53,6 @@ def main():
     # Load config (saved at training time)
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
-    # Per-machine dataset path (config/local_paths.yaml, gitignored)
-    from src.utils.local_paths import apply_local_paths
-    apply_local_paths(config)
     # Ensure required keys exist
     config.setdefault("evaluation", {})
     config["evaluation"].setdefault("batch_size", config.get("training", {}).get("batch_size", 8))

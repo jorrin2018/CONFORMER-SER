@@ -83,8 +83,6 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config, encoding="utf-8"))
-    from src.utils.local_paths import apply_local_paths
-    apply_local_paths(cfg)
     sessions = [int(x) for x in args.sessions.split(",")]
     out = Path(args.out)
 

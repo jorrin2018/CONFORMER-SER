@@ -24,9 +24,6 @@ wheels/
 .installed.cfg
 *.egg
 
-# --- Rutas de datasets por maquina (plantilla: config/local_paths.example.yaml)
-config/local_paths.yaml
-
 # --- Entornos virtuales ----------------------------------------------------
 env/
 ENV/
