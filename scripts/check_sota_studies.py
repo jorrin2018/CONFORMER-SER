@@ -15,6 +15,10 @@ real del fold, y comprueba lo que cada estudio dice que cambia:
   107  sin prompt de prosodia: el dataset no construye el extractor de prosodia.
   108  sin aumentacion de audio.        109  fusion sin capas de atencion entre ramas.
   110  MELD a 7 clases sin ViT (split oficial).
+  123  sin rama mel: el ViT no se carga y la fusion es de dos tokens.
+  124  + MulT: capas transmodales con su grupo de lr, que se mueven tras un paso.
+  125  + detector con cross-fitting: el batch trae los 14 rasgos de los expertos.
+  126  MulT + detector.
 
 Ademas, para todos: un paso de optimizacion con perdida finita y, en CUDA, el pico de
 memoria de ese paso con el batch del config, para saber si cabe en tu GPU.
@@ -81,7 +85,8 @@ def fold_config(study: int, fold: int, tiny: bool, seed: int) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--study", type=int, required=True, choices=range(98, 111))
+    ap.add_argument("--study", type=int, required=True,
+                    choices=list(range(98, 111)) + [123, 124, 125, 126])
     ap.add_argument("--fold", type=int, default=1)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="cuda")
@@ -160,6 +165,21 @@ def main() -> int:
             cortos = [i for i in range(len(L)) if int(L[i]) < batch["audio"].shape[1]]
             ok(all(torch.count_nonzero(batch["audio"][i, int(L[i]):]) == 0 for i in cortos),
                f"relleno en ceros exactos ({len(cortos)} enunciados cortos en el batch)")
+    if args.study in (123, 124, 125, 126):
+        from src.models.bimodal_fusion import FusionBimodal
+        ok(model._vision_stream == "remove", "vision_stream = remove (sin rama mel)")
+        ok(isinstance(model.fusion, FusionBimodal), "fusion de dos tokens")
+        ok(sum(p.numel() for p in model.vision_encoder.parameters()) == 0, "el ViT no se cargo")
+    if args.study in (124, 126):
+        from src.models.mult import MulTTransmodal
+        ok(isinstance(model.crossmodal, MulTTransmodal), "atencion transmodal de MulT")
+    if args.study in (125, 126):
+        ok(bool(getattr(model, "uses_expert_feats", False)), "el modelo usa el detector con cross-fitting")
+        if not args.no_data:
+            ok("expert_feats" in batch and batch["expert_feats"].shape[-1] == 14,
+               "el batch trae los 14 rasgos de los expertos")
+        else:
+            batch["expert_feats"] = torch.randn(batch["audio"].shape[0], 14)
     if args.study in (98, 105, 106, 107, 108, 109, 110):
         llamadas = []
         model.vision_encoder.register_forward_hook(lambda *a: llamadas.append(1))
@@ -167,7 +187,7 @@ def main() -> int:
     audio, ids, mask, y = (batch[k].to(dev) for k in
                            ("audio", "text_input_ids", "text_attention_mask", "labels"))
     opt = create_ablation_optimizer(model, cfg, args.study)
-    if args.study == 101:
+    if args.study in (101, 124, 126):
         cm = [p for n, p in model.named_parameters() if n.startswith("crossmodal.")]
         ok(bool(cm), f"capas crossmodal: {sum(p.numel() for p in cm):,} parametros")
         lr = [g["lr"] for g in opt.param_groups
@@ -190,7 +210,7 @@ def main() -> int:
     if args.study in (98, 105, 106, 107, 108, 109, 110):
         ok(not llamadas, "el ViT no se ejecuto")
         ok(int(torch.count_nonzero(out["vision_features"])) == 0, "vector de vision = 0")
-    if args.study == 101:
+    if args.study in (101, 124, 126):
         ok(any(not torch.equal(a, p) for a, p in zip(antes, cm)), "los pesos crossmodal se movieron")
 
     n = sum(p.numel() for p in model.parameters())

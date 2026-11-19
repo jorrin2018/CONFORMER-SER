@@ -216,3 +216,11 @@ def test_load_expert_features_uses_oof_for_train(tmp_path):
     assert np.isclose(crudo[13], np.log1p(3))  # "i don't know" -> 3 palabras, sin la etiqueta
     with pytest.raises(FileNotFoundError):
         load_expert_features(tmp_path, 4, textos)
+
+
+def test_iemocap_path_override_only_touches_iemocap(monkeypatch):
+    monkeypatch.setenv("CAMF_IEMOCAP_PATH", r"E:\LAB\IEMOCAP_full_release")
+    assert _cfg(123)["dataset"]["data_path"] == r"E:\LAB\IEMOCAP_full_release"
+    assert _cfg(105)["dataset"]["data_path"] == "D:\\DOCTORADO\\DATASETS\\CREMA-D"
+    monkeypatch.delenv("CAMF_IEMOCAP_PATH")
+    assert _cfg(123)["dataset"]["data_path"].startswith("D:\\DOCTORADO")

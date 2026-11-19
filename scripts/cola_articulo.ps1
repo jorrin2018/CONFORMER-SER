@@ -31,8 +31,11 @@ param(
     [switch]$SoloListar,
     [string[]]$Bloques = @("A", "B", "C", "D"),
     [string]$Device = "cuda",
-    [string]$Glove = ""
+    [string]$Glove = "",
+    [string]$Filtro = ""
 )
+# -Filtro: expresion regular sobre el nombre de la tarea. Permite repartir un bloque entre
+# dos ventanas en una GPU grande, p. ej. -Filtro "s42|s123" en una y -Filtro "s456" en otra.
 
 $ErrorActionPreference = "Continue"
 $ck = "checkpoints"
@@ -115,6 +118,7 @@ function Estado($t) {
 
 foreach ($t in $tareas) {
     if ($Bloques -notcontains $t.B) { continue }
+    if ($Filtro -and ($t.N -notmatch $Filtro)) { continue }
     $estado = Estado $t
     if ($estado -eq "hecho") { Write-Host "[hecho]   $($t.B)  $($t.N)"; continue }
     if ($estado -ne "falta") {

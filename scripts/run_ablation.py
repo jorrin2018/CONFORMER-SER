@@ -105,7 +105,16 @@ def load_ablation_config(config_path: str, base_config: dict) -> dict:
             merged_config[key].update(value)
         else:
             merged_config[key] = value
-    
+
+    # Otra maquina (PC del laboratorio): la ruta de IEMOCAP de los YAML es la de la PC de
+    # Jorge. --iemocap-path (o la variable CAMF_IEMOCAP_PATH) la sustituye SOLO en los
+    # estudios de IEMOCAP; CREMA-D y MELD no se tocan. Queda escrita en el config.json
+    # de cada fold, asi que la corrida sigue siendo reproducible.
+    ruta = os.environ.get('CAMF_IEMOCAP_PATH')
+    ds = merged_config.get('dataset')
+    if ruta and isinstance(ds, dict) and (ds.get('corpus') or 'iemocap').lower() == 'iemocap':
+        ds['data_path'] = ruta
+
     return merged_config
 
 
@@ -1717,6 +1726,9 @@ def main():
     parser = argparse.ArgumentParser(description='Run ablation studies')
     parser.add_argument('--study', type=int, default=None,
                         help='Run specific study (1-50, 52-126; there is no study 51). If not specified, runs all.')
+    parser.add_argument('--iemocap-path', type=str, default=None, dest='iemocap_path',
+                        help='Ruta de IEMOCAP_full_release en ESTA maquina (sustituye la del YAML '
+                             'en los estudios de IEMOCAP). Equivale a la variable CAMF_IEMOCAP_PATH.')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--experiment_name', type=str, default=None,
@@ -1766,6 +1778,13 @@ def main():
                              'pero el camino que toma es el de k-fold con limpieza de '
                              'cache entre folds, que es el que se usa desde el 12/09.')
     args = parser.parse_args()
+    if args.iemocap_path:
+        if not Path(args.iemocap_path).is_dir():
+            print(f"Error: --iemocap-path {args.iemocap_path!r} no es una carpeta")
+            return
+        os.environ['CAMF_IEMOCAP_PATH'] = args.iemocap_path
+    if os.environ.get('CAMF_IEMOCAP_PATH'):
+        print(f"IEMOCAP desde {os.environ['CAMF_IEMOCAP_PATH']} (en lugar de la ruta del YAML)")
     global _KEEP_LAST_MODEL
     _KEEP_LAST_MODEL = bool(args.keep_last_model)
     
